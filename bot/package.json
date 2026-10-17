@@ -1,0 +1,20 @@
+{
+  "name": "bot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run index.ts",
+    "check-types": "tsc --noEmit",
+    "build": "bun build --compile index.ts --outfile dist/sc-bot",
+    "vs:easy": "DIFFICULTY=easy bun run index.ts",
+    "vs:medium": "DIFFICULTY=medium bun run index.ts",
+    "vs:hard": "DIFFICULTY=hard bun run index.ts"
+  },
+  "dependencies": {
+    "@sc-bot/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^7.0.2"
+  }
+}

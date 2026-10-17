@@ -1,0 +1,63 @@
+{
+  "name": "@sc-bot/core",
+  "version": "0.9.0-beta.1",
+  "description": "A lightweight node.js framework to facilitate writing agents (or 'bots') for Starcraft II in JavaScript.",
+  "main": "index.ts",
+  "scripts": {
+    "check-types": "tsc --noEmit",
+    "test": "bun test --pass-with-no-tests",
+    "capture:fixtures": "bun scripts/capture-fixtures.ts",
+    "generate:data": "bun scripts/generate-data.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/node-sc2/core.git"
+  },
+  "author": "Jared Kantrowitz <me@jkantr.com>",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/array.prototype.flat": "^1.2.5",
+    "@types/bluebird": "^3.5.42",
+    "@types/bresenham": "^0.0.3",
+    "@types/bun": "^1.4.3",
+    "@types/create-error": "^0.3.33",
+    "@types/debug": "^4.1.13",
+    "@types/hull.js": "^1.0.4",
+    "@types/lodash.filter": "^4.6.9",
+    "@types/lodash.xor": "^4.5.9",
+    "@types/pathfinding": "^0.1.0",
+    "@types/shortid": "^2.2.0",
+    "@types/yargs": "^12",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@node-sc2/proto": "^0.6.0-alpha.0",
+    "array.prototype.flat": "^1.2.3",
+    "bluebird": "^3.5.3",
+    "bresenham": "0.0.4",
+    "chalk": "^3.0.0",
+    "convert-hrtime": "^2.0.0",
+    "create-error": "^0.3.1",
+    "debug": "^4.1.0",
+    "find-process": "^1.2.1",
+    "hull.js": "^0.2.10",
+    "lodash.filter": "^4.6.0",
+    "lodash.xor": "^4.5.0",
+    "memoizee": "^0.4.14",
+    "pascal-case": "^2.0.1",
+    "pathfinding": "github:jbrown123/PathFinding.js",
+    "promise.map": "0.0.2",
+    "protobufjs": "^6.8.8",
+    "range": "0.0.3",
+    "shortid": "^2.2.14",
+    "uint1array": "^1.1.1",
+    "yargs": "^12.0.5"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./constants/*": "./constants/*.ts",
+    "./types": "./types.ts"
+  },
+  "private": true
+}

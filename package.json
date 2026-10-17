@@ -1,0 +1,17 @@
+{
+  "name": "sc-bot",
+  "private": true,
+  "packageManager": "bun@1.4.3",
+  "workspaces": [
+    "bot",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "check-types": "turbo run check-types",
+    "test": "turbo run test"
+  },
+  "devDependencies": {
+    "turbo": "^2.11.9"
+  }
+}
