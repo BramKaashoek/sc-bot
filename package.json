@@ -11,6 +11,7 @@
         "check-types": "turbo run check-types",
         "test": "turbo run test",
         "match": "./scripts/match.sh",
+        "vs:watch": "./scripts/watch.sh",
         "vs:easy": "bun run --cwd bot vs:easy",
         "vs:medium": "bun run --cwd bot vs:medium",
         "vs:hard": "bun run --cwd bot vs:hard",

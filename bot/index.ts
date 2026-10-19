@@ -57,17 +57,26 @@ bot.use(combatSystem);
 bot.use(militarySystem);
 bot.use(logSystem);
 
-const engine = createEngine({ force: true });
+const sc2Host = process.env.SC2_HOST;
+const engine = createEngine(
+    sc2Host ? { host: sc2Host, port: Number(process.env.SC2_PORT ?? 5000), launch: false } : { force: true },
+);
+const mapName = process.env.MAP ?? 'Ladder2018Season4/BlueshiftLE';
 
 // Under a ladder manager (--LadderServer etc.) the engine skips createGame and only joins, so the AI player is ignored.
 await engine.connect();
-const [world, results] = await engine.runGame(process.env.MAP ?? 'Ladder2018Season4/BlueshiftLE', [
-    createPlayer({ race: Race.TERRAN }, bot),
-    createPlayer({
-        race: Race[raceName as keyof typeof Race],
-        difficulty: Difficulty[difficultyName as keyof typeof Difficulty],
-    }),
-]);
+// a remote SC2 needs a .SC2Map path; without it core falls back to a Battle.net map lookup
+const [world, results] = await engine.runGame(
+    sc2Host && !mapName.endsWith('.SC2Map') ? `${mapName}.SC2Map` : mapName,
+    [
+        createPlayer({ race: Race.TERRAN }, bot),
+        createPlayer({
+            race: Race[raceName as keyof typeof Race],
+            difficulty: Difficulty[difficultyName as keyof typeof Difficulty],
+        }),
+    ],
+    { realtime: Boolean(process.env.REALTIME) },
+);
 
 const ownResult = results.find((result) => result.playerId === world.agent.playerId);
 console.log(
