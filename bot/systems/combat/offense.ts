@@ -1,0 +1,185 @@
+import { Units, type ResourceManager } from '@sc-bot/core';
+import { Alliance } from '@sc-bot/core/constants/enums';
+import { log } from '../log.ts';
+import type { CombatState, OffenseTarget, Tag } from './types.ts';
+import { getFreeUnits, getUnitsCost } from './utils.ts';
+
+export const getOffenseTargets = ({
+    resources,
+    scoutedEmpty,
+}: {
+    resources: ResourceManager;
+    scoutedEmpty: CombatState['scoutedEmpty'];
+}): OffenseTarget[] => {
+    const TOWN_SIZE_LIMIT = 25;
+    const MEMORY_SECONDS = 60;
+    const DEFENDER_COST_OFFSET = 100;
+
+    const { units, map } = resources.get();
+    const enemyArmy = units
+        .getAll(Alliance.ENEMY)
+        .filter(
+            (unit) => unit.isCombatUnit() && (unit.isCurrent() || (unit.isMemory() && unit.age() < MEMORY_SECONDS)),
+        );
+
+    const enemyBases = map.getOccupiedExpansions(Alliance.ENEMY).map((expansion) => ({
+        pos: expansion.townhallPosition,
+        buildings: units.getEnemyStructures().closerThan(TOWN_SIZE_LIMIT, expansion.townhallPosition),
+        units: enemyArmy.closerThan(TOWN_SIZE_LIMIT, expansion.townhallPosition),
+    }));
+
+    // TODO: cluster scattered and score appropriately
+    const enemyScatteredBuildings = units
+        .getEnemyStructures()
+        .filter((building) => !building.isFlying || map.isPathable(building.pos))
+        .filter((building) => !enemyBases.some((base) => building.distanceTo(base.pos) < TOWN_SIZE_LIMIT))
+        .map((building) => ({
+            pos: building.pos,
+            buildings: new Units(building),
+            units: enemyArmy.closerThan(TOWN_SIZE_LIMIT, building.pos),
+        }));
+
+    const offenseTargets = [...enemyBases, ...enemyScatteredBuildings]
+        .map((target) => ({
+            ...target,
+            // add offset so every undefended target does not outrank every defended one
+            score: getUnitsCost(target.buildings) / (getUnitsCost(target.units) + DEFENDER_COST_OFFSET),
+        }))
+        .sort((a, b) => b.score - a.score);
+    if (offenseTargets.length > 0) {
+        return offenseTargets;
+    }
+
+    if (scoutedEmpty[map.getExpansions().indexOf(map.getEnemyMain())] === undefined) {
+        return [{ pos: map.getEnemyMain().townhallPosition, buildings: new Units(), units: new Units(), score: 1 }];
+    }
+
+    return [];
+};
+
+export const attackTargets = async ({
+    resources,
+    offenseTargets,
+    attacks,
+    defenses,
+    scoutedEmpty,
+    scoutTag,
+    setState,
+}: {
+    resources: ResourceManager;
+    offenseTargets: OffenseTarget[];
+    attacks: CombatState['attacks'];
+    defenses: CombatState['defenses'];
+    scoutedEmpty: CombatState['scoutedEmpty'];
+    scoutTag: Tag | undefined;
+    setState: (state: Partial<CombatState>) => void;
+}) => {
+    const MIN_ATTACK_SIZE = 9;
+    const { units, actions, map, frame } = resources.get();
+    const nextAttacks = { ...attacks };
+    const nextScoutedEmpty = { ...scoutedEmpty };
+
+    // clean up failed or complete attacks
+    for (const attack of Object.entries(attacks)) {
+        const [positionString, { unitTags }] = attack;
+        const alive = units.getCombatUnits().tagsIn(unitTags);
+
+        if (!alive.length) {
+            delete nextAttacks[positionString];
+        }
+    }
+
+    // retreat if necessary
+    for (const attack of Object.entries(nextAttacks)) {
+        const [positionString, { unitTags }] = attack;
+        const alive = units.getCombatUnits().tagsIn(unitTags);
+        const aliveCost = getUnitsCost(alive);
+        const enemies = units.getCombatUnits(Alliance.ENEMY).closerThan(15, alive.center);
+        const enemiesCost = getUnitsCost(enemies);
+
+        if (enemiesCost < aliveCost * 1.2) {
+            continue;
+        }
+
+        await actions.move(alive, map.getCombatRally());
+        delete nextAttacks[positionString];
+        log(
+            { resources },
+            `attack: retreating from ${positionString} | ${alive.length} units | cost ${aliveCost} vs enemy ${enemiesCost}`,
+            'red',
+        );
+    }
+
+    // continue ongoing attacks
+    for (const attack of Object.entries(nextAttacks)) {
+        const [positionString, { unitTags }] = attack;
+        const alive = units.getCombatUnits().tagsIn(unitTags);
+
+        if (!alive.every((unit) => unit.isIdle())) continue;
+
+        const nearbyEnemies = units
+            .getAlive(Alliance.ENEMY)
+            .closerThan(25, alive[0].pos)
+            .filter((enemy) => !enemy.isFlying || map.isPathable(enemy.pos))
+            .sortedByDistanceTo(alive[0].pos);
+
+        // mop up
+        if (nearbyEnemies.length) {
+            await actions.attackMove(alive, nearbyEnemies[0].pos);
+            continue;
+        }
+
+        // no enemies left
+        const expansionIndex = map
+            .getExpansions()
+            .findIndex(
+                (expansion) => `${expansion.townhallPosition.x},${expansion.townhallPosition.y}` === positionString,
+            );
+        if (expansionIndex !== -1) {
+            nextScoutedEmpty[expansionIndex] = frame.getGameLoop();
+        }
+
+        // go home
+        await actions.attackMove(alive, map.getCombatRally());
+        delete nextAttacks[positionString];
+        log({ resources }, `attack: done at ${positionString}, ${alive.length} units returning`, 'green');
+    }
+
+    // reinforce existing attacks if necessary
+    for (const attack of Object.entries(nextAttacks)) {
+        const [positionString, { unitTags }] = attack;
+        const alive = units.getCombatUnits().tagsIn(unitTags);
+        const availableUnits = getFreeUnits({ resources, attacks: nextAttacks, defenses, scoutTag: scoutTag });
+
+        if (!alive.every((unit) => unit.isIdle()) && availableUnits.length > MIN_ATTACK_SIZE) {
+            const [x, y] = positionString.split(',');
+            await actions.attackMove(availableUnits, { x: Number(x), y: Number(y) });
+            nextAttacks[positionString] = { unitTags: [...unitTags, ...availableUnits.map((unit) => unit.tag)] };
+            log({ resources }, `attack: reinforcing ${positionString} with ${availableUnits.length} units`, 'yellow');
+        }
+    }
+
+    // start new attack if none currently exist
+    if (!Object.keys(nextAttacks).length && offenseTargets.length) {
+        const firstTargetPos = offenseTargets[0].pos;
+        const availableUnits = getFreeUnits({ resources, attacks: nextAttacks, defenses, scoutTag: scoutTag });
+
+        // TODO: compare to required amount of units instead of flat value
+        if (
+            availableUnits.length > MIN_ATTACK_SIZE &&
+            getUnitsCost(availableUnits) > 1.2 * getUnitsCost(offenseTargets[0].units)
+        ) {
+            await actions.attackMove(availableUnits, offenseTargets[0].pos);
+            nextAttacks[`${firstTargetPos.x},${firstTargetPos.y}`] = {
+                unitTags: availableUnits.map((unit) => unit.tag),
+            };
+            log(
+                { resources },
+                `attack: launching at ${firstTargetPos.x},${firstTargetPos.y} | ${availableUnits.length} units | cost ${getUnitsCost(availableUnits)} vs enemy ${getUnitsCost(offenseTargets[0].units)}`,
+                'yellow',
+            );
+        }
+    }
+
+    setState({ attacks: nextAttacks, scoutedEmpty: nextScoutedEmpty });
+};

@@ -1,0 +1,45 @@
+import { styleText } from 'node:util';
+import { createSystem, type Unit, type World } from '@sc-bot/core';
+import { UnitTypeId, UpgradeId } from '@sc-bot/core/constants/index';
+import { Alliance } from '@sc-bot/core/constants/enums';
+
+const LOOPS_PER_GAME_SECOND = 22.4;
+
+export const formatGameTime = (gameLoop: number) => {
+    const seconds = Math.floor(gameLoop / LOOPS_PER_GAME_SECOND);
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+};
+
+type Style = Parameters<typeof styleText>[0];
+
+export const log = (world: Pick<World, 'resources'>, message: string, style?: Style) => {
+    const time = styleText('dim', formatGameTime(world.resources.get().frame.getGameLoop()));
+    console.log(`${time} | ${style ? styleText(style, message) : message}`);
+};
+
+const nameOf = (unit: Unit) => UnitTypeId[unit.unitType] ?? `unit type ${unit.unitType}`;
+
+export default createSystem({
+    name: 'Log',
+    async onUnitCreated(world, unit) {
+        if (!unit.isStructure()) log(world, `created ${nameOf(unit)}`, 'cyan');
+    },
+    async onBuildingConstructionStarted(world, building) {
+        log(world, `building ${nameOf(building)}`);
+    },
+    async onBuildingConstructionComplete(world, building) {
+        log(world, `built ${nameOf(building)}`, 'green');
+    },
+    async onUnitDestroyed(world, unit) {
+        if (unit.isMineralField()) {
+            log(world, `mined out ${nameOf(unit)}`, 'dim');
+            return;
+        }
+        const kind = unit.isStructure() ? 'building' : 'unit';
+        const lost = unit.alliance === Alliance.SELF;
+        log(world, `${lost ? 'lost' : 'killed'} ${kind} ${nameOf(unit)}`, lost ? 'red' : 'yellow');
+    },
+    async onUpgradeComplete(world, upgradeId) {
+        log(world, `researched ${UpgradeId[upgradeId] ?? `upgrade ${upgradeId}`}`, 'green');
+    },
+});

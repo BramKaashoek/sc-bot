@@ -1,20 +1,25 @@
 {
-  "name": "bot",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "bun run index.ts",
-    "check-types": "tsc --noEmit",
-    "build": "bun build --compile index.ts --outfile dist/sc-bot",
-    "vs:easy": "DIFFICULTY=easy bun run index.ts",
-    "vs:medium": "DIFFICULTY=medium bun run index.ts",
-    "vs:hard": "DIFFICULTY=hard bun run index.ts"
-  },
-  "dependencies": {
-    "@sc-bot/core": "workspace:*"
-  },
-  "devDependencies": {
-    "@types/bun": "latest",
-    "typescript": "^7.0.2"
-  }
+    "name": "bot",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "bun run index.ts",
+        "check-types": "tsc --noEmit",
+        "build": "bun build --compile index.ts --outfile dist/sc-bot",
+        "vs:easy": "DIFFICULTY=easy bun run index.ts",
+        "vs:medium": "DIFFICULTY=medium bun run index.ts",
+        "vs:hard": "DIFFICULTY=hard bun run index.ts",
+        "vs:harder": "DIFFICULTY=harder bun run index.ts",
+        "vs:veryhard": "DIFFICULTY=veryhard bun run index.ts",
+        "arena": "bun run build && mkdir -p ../../local-play-bootstrap/bots/bart_bot && cp dist/sc-bot ../../local-play-bootstrap/bots/bart_bot/bart_bot"
+    },
+    "dependencies": {
+        "@sc-bot/core": "workspace:*",
+        "debug": "^4"
+    },
+    "devDependencies": {
+        "@types/bun": "latest",
+        "@types/debug": "^4.1.13",
+        "typescript": "^7.0.2"
+    }
 }
