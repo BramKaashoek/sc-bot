@@ -5,24 +5,25 @@ import { BARRACKS, SUPPLYDEPOT, SUPPLYDEPOTLOWERED } from '@sc-bot/core/constant
 import { getStrategy } from '../strategy/index.ts';
 import type { Strategy } from '../strategy/types.ts';
 
-
 export const getWallBarracksPosition = (map: MapResource, strategy: Strategy): Point2D | null => {
     const ramp = map.getMainBaseRamp();
-    if (!ramp) { return null }
-    const barracksStrategy = strategy.production.find((production) => production.unitType === BARRACKS);
-    const barracksGetsAddon = (barracksStrategy?.reactors ?? 0) + (barracksStrategy?.techLabs ?? 0) > 0;
+    if (!ramp) {
+        return null;
+    }
+    const barracksGetsAddon = strategy.production.some(
+        (production) => production.unitType === BARRACKS && (production.reactors ?? 0) + (production.techLabs ?? 0) > 0,
+    );
     return barracksGetsAddon ? ramp.barracksCorrectPlacement : ramp.barracksInMiddle;
-
-}
+};
 
 export const buildWall = async (agent: Agent, resources: ResourceManager) => {
     const { units, actions, map } = resources.get();
-    const strategy = getStrategy()
+    const strategy = getStrategy();
     const ramp = map.getMainBaseRamp();
 
     if (!ramp) return;
 
-    const barracksPosition = getWallBarracksPosition(map, strategy)
+    const barracksPosition = getWallBarracksPosition(map, strategy);
     if (!barracksPosition) return;
 
     const barracks = units.getById(BARRACKS).closerThan(1, barracksPosition);

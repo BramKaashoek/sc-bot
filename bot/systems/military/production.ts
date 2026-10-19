@@ -10,24 +10,32 @@ export const buildProduction = async (agent: Agent, resources: ResourceManager) 
 
     for (const { unitType, count, ...addons } of strategy.production) {
         const current = units.getById(unitType).ready.length + agent.alreadyPending(unitType);
+        if (current >= count) {
+            continue;
+        }
 
         // if there is NO barracks at wall position yet
         if (unitType === BARRACKS) {
             const wallPosition = getWallBarracksPosition(map, strategy);
-            if (wallPosition && !units.getById(BARRACKS).closerThan(1, wallPosition).length && !units.getPendingAt(BARRACKS, wallPosition).length) {
-                continue
-            }
-        }
-
-        if (agent.hasTechFor(unitType) && agent.canAfford(unitType) && current < count) {
-            const position = await actions.findPlacement(unitType, buildAnchor(map, 10), {
-                addonPlace: (addons.reactors ?? 0) + (addons.techLabs ?? 0) > 0,
-            });
-
-            if (position) {
-                await actions.build(unitType, position);
+            if (
+                wallPosition &&
+                !units.getById(BARRACKS).closerThan(1, wallPosition).length &&
+                !units.getPendingAt(BARRACKS, wallPosition).length
+            ) {
                 return;
             }
         }
+
+        if (!agent.hasTechFor(unitType) || !agent.canAfford(unitType)) {
+            return;
+        }
+
+        const position = await actions.findPlacement(unitType, buildAnchor(map, 10), {
+            addonPlace: (addons.reactors ?? 0) + (addons.techLabs ?? 0) > 0,
+        });
+        if (position) {
+            await actions.build(unitType, position);
+        }
+        return;
     }
 };

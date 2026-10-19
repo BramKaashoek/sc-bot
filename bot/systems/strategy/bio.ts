@@ -13,9 +13,11 @@ import type { Strategy } from './types.ts';
 export const bio: Strategy = {
     name: 'bio',
     production: [
-        { unitType: BARRACKS, count: 5, reactors: 3, techLabs: 2 },
+        { unitType: BARRACKS, count: 1, reactors: 1 },
+        { unitType: BARRACKS, count: 3, reactors: 2, techLabs: 1 },
         { unitType: FACTORY, count: 1 },
         { unitType: STARPORT, count: 1, reactors: 1 },
+        { unitType: BARRACKS, count: 5, reactors: 3, techLabs: 2 },
         { unitType: ENGINEERINGBAY, count: 1 },
     ],
     army: {

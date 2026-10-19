@@ -16,21 +16,16 @@ export const trainMarine = (agent: Agent, resources: ResourceManager) => {
     return Promise.all(idleBarracks.map((barracks) => actions.train(MARINE, barracks)));
 };
 
-
 export const trainArmy = async (agent: Agent, resources: ResourceManager) => {
     const { units } = resources.get();
-    const strategy = getStrategy()
+    const strategy = getStrategy();
 
-    const existing: { [key: string]: number } = {}
+    const existing: { [key: string]: number } = {};
     for (const [unitType, weight] of Object.entries(strategy.army)) {
-        existing[unitType] = (units.getById(Number(unitType)).length + agent.alreadyPending(Number(unitType))) / weight
+        existing[unitType] = (units.getById(Number(unitType)).length + agent.alreadyPending(Number(unitType))) / weight;
     }
 
     for (const [unitType] of Object.entries(existing).sort((a, b) => a[1] - b[1])) {
-        await agent.train(Number(unitType))
+        await agent.train(Number(unitType));
     }
-
-}
-
-
-
+};
