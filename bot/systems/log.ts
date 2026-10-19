@@ -17,15 +17,30 @@ export const log = (world: Pick<World, 'resources'>, message: string, style?: St
     console.log(`${time} | ${style ? styleText(style, message) : message}`);
 };
 
+const posOf = ({ x, y }: { x?: number; y?: number }) => `${x},${y}`;
+
+let wallLogged = false;
+
 const nameOf = (unit: Unit) => UnitTypeId[unit.unitType] ?? `unit type ${unit.unitType}`;
 
 export default createSystem({
     name: 'Log',
+    async onStep(world) {
+        if (wallLogged) return;
+        wallLogged = true;
+        const ramp = world.resources.get().map.getMainBaseRamp();
+        const barracks = ramp?.barracksCorrectPlacement;
+        log(
+            world,
+            `wall: barracks at ${barracks ? posOf(barracks) : 'none'} | depots at ${ramp?.cornerDepots.map(posOf).join(' and ') ?? 'none'}`,
+            'dim',
+        );
+    },
     async onUnitCreated(world, unit) {
         if (!unit.isStructure()) log(world, `created ${nameOf(unit)}`, 'cyan');
     },
     async onBuildingConstructionStarted(world, building) {
-        log(world, `building ${nameOf(building)}`);
+        log(world, `building ${nameOf(building)} at ${posOf(building.pos)}`);
     },
     async onBuildingConstructionComplete(world, building) {
         log(world, `built ${nameOf(building)}`, 'green');
