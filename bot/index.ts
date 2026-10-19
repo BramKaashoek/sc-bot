@@ -4,7 +4,7 @@ import { Alliance, Difficulty, Race } from '@sc-bot/core/constants/enums';
 import buildSystem from './systems/build.ts';
 import combatSystem from './systems/combat/index.ts';
 import economySystem from './systems/economy.ts';
-import militarySystem from './systems/military.ts';
+import militarySystem from './systems/military/index.ts';
 import logSystem, { formatGameTime } from './systems/log.ts';
 
 // system errors are only reported through debug(), and the arena passes no DEBUG env

@@ -1,51 +1,30 @@
-import { type Agent, createSystem, type Point2D, type ResourceManager } from '@sc-bot/core';
+import type { Agent, MapResource, Point2D, ResourceManager } from '@sc-bot/core';
 import { MORPH_SUPPLYDEPOT_LOWER, MORPH_SUPPLYDEPOT_RAISE } from '@sc-bot/core/constants/ability';
 import { Alliance } from '@sc-bot/core/constants/enums';
-import { BARRACKS, MARINE, SUPPLYDEPOT, SUPPLYDEPOTLOWERED } from '@sc-bot/core/constants/unit-type';
-import { buildAnchor } from './anchor.ts';
+import { BARRACKS, SUPPLYDEPOT, SUPPLYDEPOTLOWERED } from '@sc-bot/core/constants/unit-type';
+import { getStrategy } from '../strategy/index.ts';
+import type { Strategy } from '../strategy/types.ts';
 
-export default createSystem({
-    name: 'Military',
-    async onStep({ agent, resources }) {
-        await buildWall(agent, resources);
-        await buildBaracks(agent, resources);
-        await trainMarine(agent, resources);
-        await manageWall(agent, resources);
-    },
-});
 
-const trainMarine = (agent: Agent, resources: ResourceManager) => {
-    const { units, actions } = resources.get();
-
-    if ((agent.minerals ?? 0) < 500 || !agent.canFeed(MARINE)) return;
-
-    const idleBarracks = units.getById(BARRACKS, {
-        noQueue: true,
-        alliance: Alliance.SELF,
-    }).ready;
-    return Promise.all(idleBarracks.map((barracks) => actions.train(MARINE, barracks)));
-};
-
-const buildBaracks = async (agent: Agent, resources: ResourceManager) => {
-    const BARRACKS_TARGET = 3;
-
-    const { units, actions, map } = resources.get();
-
-    const barracksCount = units.getById(BARRACKS).ready.length + agent.alreadyPending(BARRACKS);
-
-    if (barracksCount < BARRACKS_TARGET && agent.hasTechFor(BARRACKS) && agent.canAfford(BARRACKS)) {
-        const position = await actions.findPlacement(BARRACKS, buildAnchor(map, 10), { addonPlace: true });
-        if (position) await actions.build(BARRACKS, position);
-    }
-};
-
-const buildWall = async (agent: Agent, resources: ResourceManager) => {
-    const { units, actions, map } = resources.get();
+export const getWallBarracksPosition = (map: MapResource, strategy: Strategy): Point2D | null => {
     const ramp = map.getMainBaseRamp();
+    if (!ramp) { return null }
+    const barracksStrategy = strategy.production.find((production) => production.unitType === BARRACKS);
+    const barracksGetsAddon = (barracksStrategy?.reactors ?? 0) + (barracksStrategy?.techLabs ?? 0) > 0;
+    return barracksGetsAddon ? ramp.barracksCorrectPlacement : ramp.barracksInMiddle;
+
+}
+
+export const buildWall = async (agent: Agent, resources: ResourceManager) => {
+    const { units, actions, map } = resources.get();
+    const strategy = getStrategy()
+    const ramp = map.getMainBaseRamp();
+
     if (!ramp) return;
 
-    const barracksPosition = ramp.barracksCorrectPlacement;
+    const barracksPosition = getWallBarracksPosition(map, strategy)
     if (!barracksPosition) return;
+
     const barracks = units.getById(BARRACKS).closerThan(1, barracksPosition);
     const [leftPosition, rightPosition] = ramp.cornerDepots;
     const allDepots = units.getById([SUPPLYDEPOT, SUPPLYDEPOTLOWERED]);
@@ -70,7 +49,7 @@ const buildWall = async (agent: Agent, resources: ResourceManager) => {
     }
 };
 
-const manageWall = async (_agent: Agent, resources: ResourceManager) => {
+export const manageWall = async (_agent: Agent, resources: ResourceManager) => {
     const RAISE_DISTANCE = 10;
     const LOWER_DISTANCE = 15;
 
