@@ -32,7 +32,10 @@ describe('cellsInFootprint', () => {
 
     it('lists the 2x2 cells to the left and below the center', () => {
         expect(cellsInFootprint(center, { w: 2, h: 2 })).toEqual([
-            { x: 10, y: 10 }, { x: 9, y: 10 }, { x: 10, y: 9 }, { x: 9, y: 9 },
+            { x: 10, y: 10 },
+            { x: 9, y: 10 },
+            { x: 10, y: 9 },
+            { x: 9, y: 9 },
         ]);
     });
 
@@ -40,16 +43,26 @@ describe('cellsInFootprint', () => {
         const withoutSelf = cellsInFootprint(center, { w: 3, h: 3 }, false);
 
         expect(cellsInFootprint(center, { w: 3, h: 3 })).toEqual([
-            { x: 10, y: 10 }, { x: 9, y: 10 }, { x: 10, y: 9 }, { x: 9, y: 9 },
-            { x: 11, y: 10 }, { x: 11, y: 9 }, { x: 9, y: 11 }, { x: 10, y: 11 }, { x: 11, y: 11 },
+            { x: 10, y: 10 },
+            { x: 9, y: 10 },
+            { x: 10, y: 9 },
+            { x: 9, y: 9 },
+            { x: 11, y: 10 },
+            { x: 11, y: 9 },
+            { x: 9, y: 11 },
+            { x: 10, y: 11 },
+            { x: 11, y: 11 },
         ]);
         expect(withoutSelf).toHaveLength(8);
         expect(withoutSelf).not.toContainEqual(center);
     });
 
     it('covers a full 5x5 square exactly once for a 5x5 footprint', () => {
-        const expected = Array.from({ length: 5 }, (_, row) => Array.from({ length: 5 }, (_, col) => ({ x: 8 + col, y: 8 + row }))).flat();
-        const byPosition = (left: { x: number; y: number }, right: { x: number; y: number }) => left.y - right.y || left.x - right.x;
+        const expected = Array.from({ length: 5 }, (_, row) =>
+            Array.from({ length: 5 }, (_, col) => ({ x: 8 + col, y: 8 + row })),
+        ).flat();
+        const byPosition = (left: { x: number; y: number }, right: { x: number; y: number }) =>
+            left.y - right.y || left.x - right.x;
 
         expect(cellsInFootprint(center, { w: 5, h: 5 }).sort(byPosition)).toEqual(expected);
     });

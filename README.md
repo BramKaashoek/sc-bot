@@ -1,6 +1,6 @@
 # sc-bot
 
-StarCraft II bot on Bun. `bot/` is the bot, `packages/core` is a TypeScript port of [`@node-sc2/core`](https://github.com/node-sc2/core), consumed as `@sc-bot/core`.
+StarCraft II bot on Bun. `bot/` is the bot, `packages/core` is a TypeScript port of [`@node-sc2/core`](https://github.com/node-sc2/core), extended towards python-sc2 parity and consumed as `@sc-bot/core` (see [its readme](packages/core/readme.md)).
 
 ```sh
 bun install
@@ -21,8 +21,8 @@ mkdir -p ~/Documents/"StarCraft II"
 echo "executable = $PWD/StarCraft II/Versions/Base75689/SC2_x64" > ~/Documents/"StarCraft II"/ExecuteInfo.txt
 ```
 
-- The launcher finds SC2 through `~/Documents/StarCraft II/ExecuteInfo.txt`.
-- The install folder must be named `StarCraft II` (with the space): the maps folder is derived from that path segment (`packages/core/engine/launcher.ts`).
+- The launcher finds SC2 through `~/Documents/StarCraft II/ExecuteInfo.txt`, then the `SC2PATH` env var (install root), then `~/StarCraftII`.
+- With `ExecuteInfo.txt`, the install folder must be named `StarCraft II` (with the space): the install root, and so the maps folder, is derived from that path segment (`packages/core/engine/launcher.ts`).
 - Check that `Base75689` matches the folder in `StarCraft II/Versions/`.
 - Map packs unzip into subfolders, so a map is addressed as `<pack>/<map>`, e.g. `Ladder2018Season4/BlueshiftLE`.
 
@@ -62,13 +62,15 @@ cp -r /path/to/mark_bot $A/bots/mark_bot
 cp "StarCraft II/Maps/Ladder2018Season4/BlueshiftLE.SC2Map" $A/maps/
 
 # match: Bot1 ID, name, race, type, Bot2 ID, name, race, type, map
-echo '1,bart_bot,T,linux,2,mark_bot,T,python,BlueshiftLE' >> $A/matches
+echo '1,bart_bot,T,cpplinux,2,mark_bot,T,python,BlueshiftLE' >> $A/matches
 
 cd $A && docker compose up
 ```
 
+- `bun run match` (repo root) does it all: pulls the buddy repo (`../sc2_bot`, override with `BUDDY=`), rebuilds and deploys both bots, runs the match and prints `results.json`.
+- After the first setup, `bun run arena` in `bot/` rebuilds and redeploys your bot. It assumes `local-play-bootstrap` is cloned next to `sc-bot`.
 - Every non-`#` line in `matches` is played. Comment out the bundled example match and finished ones.
-- How a bot is started depends on the files in its folder: `run.py` runs with python, `<name>.dll` with dotnet, `<name>.jar` with java, `<name>.js` with node, `<name>.exe` with wine, and a bare `<name>` file runs as a binary. The type column should still match: `python`, `nodejs`, `java`, `dotnetcore`, `linux`, `wine`.
+- How a bot is started depends on the files in its folder: `run.py` runs with python, `<name>.dll` with dotnet, `<name>.jar` with java, `<name>.js` with node, `<name>.exe` with wine, and a bare `<name>` file runs as a binary. The type column should still match: `python`, `nodejs`, `java`, `dotnetcore`, `cpplinux` (native binary, `linux` is rejected by arenaclient v0.8.0), `wine`.
 - Races are `T`, `Z`, `P` or `R`.
 - Results go to `results.json`, replays to `replays/` and logs to `logs/` (your bot's stdout/stderr are under `logs/bot_controller1/`).
 - To test without a friend, copy the bundled `bots/basic_bot` into the opponent's folder.

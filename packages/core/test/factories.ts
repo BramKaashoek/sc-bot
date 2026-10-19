@@ -6,7 +6,7 @@ const TOY_MAP_SIZE = { x: 32, y: 32 };
 
 let nextTag = 1;
 
-export function rawUnit(overrides: SC2APIProtocol.Unit = {}): SC2APIProtocol.Unit {
+export function rawUnit(overrides: SC2APIProtocol.Unit = {}): SC2APIProtocol.Unit & { tag: string } {
     return {
         displayType: DisplayType.VISIBLE,
         alliance: Alliance.SELF,
@@ -46,7 +46,10 @@ export function rawUnit(overrides: SC2APIProtocol.Unit = {}): SC2APIProtocol.Uni
     };
 }
 
-export function packBits(size: SC2APIProtocol.Size2DI, isSet: (x: number, y: number) => boolean): SC2APIProtocol.ImageData {
+export function packBits(
+    size: SC2APIProtocol.Size2DI,
+    isSet: (x: number, y: number) => boolean,
+): SC2APIProtocol.ImageData {
     const width = size.x!;
     const height = size.y!;
     const bytes = new Uint8Array(Math.ceil((width * height) / 8));
@@ -69,7 +72,12 @@ type ObservationOverrides = {
     mapSize?: SC2APIProtocol.Size2DI;
 };
 
-export function observation({ gameLoop = 0, units = [], playerCommon = {}, mapSize = TOY_MAP_SIZE }: ObservationOverrides = {}): SC2APIProtocol.ResponseObservation {
+export function observation({
+    gameLoop = 0,
+    units = [],
+    playerCommon = {},
+    mapSize = TOY_MAP_SIZE,
+}: ObservationOverrides = {}): SC2APIProtocol.ResponseObservation {
     return {
         actions: [],
         actionErrors: [],
@@ -127,18 +135,20 @@ export function unitTypeData(unitId: number, overrides: SC2APIProtocol.UnitTypeD
     };
 }
 
-export function toyFixture(): Fixture {
+export function toyFixture({ enemyStart = true, ownTownhall = true, race = Race.TERRAN } = {}): Fixture {
     const mapSize = TOY_MAP_SIZE;
     const isInterior = (x: number, y: number) => x > 0 && y > 0 && x < mapSize.x - 1 && y < mapSize.y - 1;
 
     const baseUnits = (townhallX: number, mineralX: number, geyserY: number, owned: boolean) => [
-        ...[13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5].map(mineralY => rawUnit({
-            alliance: Alliance.NEUTRAL,
-            owner: 16,
-            unitType: UnitType.MINERALFIELD,
-            pos: { x: mineralX, y: mineralY, z: 10 },
-            mineralContents: 1800,
-        })),
+        ...[13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5].map((mineralY) =>
+            rawUnit({
+                alliance: Alliance.NEUTRAL,
+                owner: 16,
+                unitType: UnitType.MINERALFIELD,
+                pos: { x: mineralX, y: mineralY, z: 10 },
+                mineralContents: 1800,
+            }),
+        ),
         rawUnit({
             alliance: Alliance.NEUTRAL,
             owner: 16,
@@ -146,10 +156,21 @@ export function toyFixture(): Fixture {
             pos: { x: townhallX, y: geyserY, z: 10 },
             vespeneContents: 2250,
         }),
-        ...(owned ? [
-            rawUnit({ unitType: UnitType.COMMANDCENTER, pos: { x: townhallX, y: 16.5, z: 10 }, health: 1500, healthMax: 1500 }),
-            ...[14.5, 16.5, 18.5].map(workerY => rawUnit({ pos: { x: 4.5, y: workerY, z: 10 } })),
-        ] : []),
+        ...(owned
+            ? [
+                  ...(ownTownhall
+                      ? [
+                            rawUnit({
+                                unitType: UnitType.COMMANDCENTER,
+                                pos: { x: townhallX, y: 16.5, z: 10 },
+                                health: 1500,
+                                healthMax: 1500,
+                            }),
+                        ]
+                      : []),
+                  ...[14.5, 16.5, 18.5].map((workerY) => rawUnit({ pos: { x: 4.5, y: workerY, z: 10 } })),
+              ]
+            : []),
     ];
 
     const units: SC2APIProtocol.UnitTypeData[] = [];
@@ -192,7 +213,7 @@ export function toyFixture(): Fixture {
         gameInfo: {
             mapName: 'Toy',
             playerInfo: [
-                { playerId: 1, type: PlayerType.PARTICIPANT, raceRequested: Race.TERRAN, raceActual: Race.TERRAN },
+                { playerId: 1, type: PlayerType.PARTICIPANT, raceRequested: race, raceActual: race },
                 { playerId: 2, type: PlayerType.COMPUTER, raceRequested: Race.TERRAN },
             ],
             startRaw: {
@@ -201,17 +222,14 @@ export function toyFixture(): Fixture {
                 placementGrid: packBits(mapSize, isInterior),
                 terrainHeight: fillBytes(mapSize, 200),
                 playableArea: { p0: { x: 1, y: 1 }, p1: { x: mapSize.x - 1, y: mapSize.y - 1 } },
-                startLocations: [{ x: 23.5, y: 16.5 }],
+                startLocations: enemyStart ? [{ x: 23.5, y: 16.5 }] : [],
             },
         },
         data: { units, abilities: [], upgrades: [], buffs: [], effects: [] },
         observations: {
             0: observation({
                 gameLoop: 0,
-                units: [
-                    ...baseUnits(8.5, 2, 24.5, true),
-                    ...baseUnits(23.5, 30, 8.5, false),
-                ],
+                units: [...baseUnits(8.5, 2, 24.5, true), ...baseUnits(23.5, 30, 8.5, false)],
             }),
         },
     };

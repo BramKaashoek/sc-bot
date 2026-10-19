@@ -1,6 +1,15 @@
 import type { AAShape, Footprint, Point2D, UnitTypeId } from '../../types.ts';
 import * as UnitType from '../../constants/unit-type.ts';
-import { structureTypes, flyingStructureTypes, townhallTypes, mineralFieldTypes } from '../../constants/groups.ts';
+import { Attribute } from '../../constants/enums.ts';
+import {
+    structureTypes,
+    flyingStructureTypes,
+    townhallTypes,
+    mineralFieldTypes,
+    addonTypes,
+} from '../../constants/groups.ts';
+
+export type FootprintData = Pick<SC2APIProtocol.ResponseData, 'units' | 'abilities'>;
 
 function MineralField(pos: Point2D): AAShape {
     return {
@@ -26,29 +35,6 @@ function Townhall(pos: Point2D): AAShape {
     };
 }
 
-const figureTheseOut = [
-    UnitType.BUNKER,
-    UnitType.CREEPTUMOR,
-    UnitType.CREEPTUMORBURROWED,
-    UnitType.CREEPTUMORQUEEN,
-    UnitType.GREATERSPIRE,
-    UnitType.KD8CHARGE, // reaper grenade
-    UnitType.MISSILETURRET,
-    UnitType.ORACLESTASISTRAP,
-    UnitType.POINTDEFENSEDRONE,
-    UnitType.SPIRE,
-
-    // how to handle uprooting and moving of these?
-    UnitType.SPINECRAWLER,
-    UnitType.SPINECRAWLERUPROOTED,
-    UnitType.SPORECRAWLER,
-    UnitType.SPORECRAWLERUPROOTED,
-
-    // doesn't affect pathing but affects placement?
-    UnitType.SUPPLYDEPOTLOWERED,
-
-];
-
 const twoByTwoUnits = [
     UnitType.AUTOTURRET,
     UnitType.BANELINGNEST,
@@ -69,15 +55,61 @@ const twoByTwoUnits = [
     UnitType.TECHLAB,
     UnitType.UNBUILDABLEBRICKSDESTRUCTIBLE,
     UnitType.UNBUILDABLEPLATESDESTRUCTIBLE,
+    UnitType.UNBUILDABLEROCKSDESTRUCTIBLE,
+    UnitType.XELNAGATOWER,
 ];
 
-function getFootprint(unitType: UnitTypeId): Footprint | undefined {
+// destructibles have no build ability, but their names carry the footprint ("Ex1" is a variant prefix, not a size)
+function footprintFromName(unitData: SC2APIProtocol.UnitTypeData): Footprint | undefined {
+    if (!(unitData.attributes ?? []).includes(Attribute.STRUCTURE)) return undefined;
+
+    const size = /(?<!Ex)(\d+)x(\d+)/.exec(unitData.name ?? '');
+    if (!size) return undefined;
+
+    const [first, second] = [Number(size[1]), Number(size[2])];
+    return unitData.name!.includes('Horizontal')
+        ? { w: Math.max(first, second), h: Math.min(first, second) }
+        : { w: first, h: second };
+}
+
+// morphed structures (lair, warpgate, lowered depot...) have no build ability, so they inherit their alias' footprint
+function footprintFromData(
+    unitType: UnitTypeId,
+    data: FootprintData,
+    seen = new Set<UnitTypeId>(),
+): Footprint | undefined {
+    // add-on build abilities report the host's combined radius, not the add-on's
+    if (addonTypes.includes(unitType) || seen.has(unitType)) return undefined;
+    seen.add(unitType);
+
+    const unitData = data.units?.[unitType];
+    if (!unitData) return undefined;
+
+    const radius = data.abilities?.[unitData.abilityId!]?.footprintRadius;
+    if (radius) return { w: radius * 2, h: radius * 2 };
+
+    const named = footprintFromName(unitData);
+    if (named) return named;
+
+    const aliases = [unitData.unitAlias, ...(unitData.techAlias ?? [])].filter((alias) => !!alias) as UnitTypeId[];
+    return aliases.reduce<Footprint | undefined>(
+        (found, alias) => found ?? footprintFromData(alias, data, seen),
+        undefined,
+    );
+}
+
+function getFootprint(unitType: UnitTypeId, data?: FootprintData): Footprint | undefined {
     if (flyingStructureTypes.includes(unitType)) {
         return {
             h: 0,
             w: 0,
         };
-    } else if (townhallTypes.includes(unitType)) {
+    }
+
+    const fromData = data && footprintFromData(unitType, data);
+    if (fromData) return fromData;
+
+    if (townhallTypes.includes(unitType)) {
         return {
             w: 5,
             h: 5,
@@ -93,7 +125,6 @@ function getFootprint(unitType: UnitTypeId): Footprint | undefined {
             h: 2,
         };
     } else if (structureTypes.includes(unitType)) {
-        // this currently isn't totally accurate, see `figureTheseOut` above
         return {
             w: 3,
             h: 3,

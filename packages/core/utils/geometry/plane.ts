@@ -14,20 +14,20 @@ function circleCenterFromPoints(A: Point2D, B: Point2D, C: Point2D): Point2D {
         x: (aSlope * bSlope * (A.y - C.y) + bSlope * (A.x + B.x) - aSlope * (B.x + C.x)) / (2 * (bSlope - aSlope)),
     };
 
-    center.y = -1 * (center.x - (A.x + B.x) / 2) / aSlope + (A.y + B.y) / 2;
-    
+    center.y = (-1 * (center.x - (A.x + B.x) / 2)) / aSlope + (A.y + B.y) / 2;
+
     return center;
 }
 
 function distanceAAShapes(shapeA: AAShape, shapeB: AAShape) {
-    const dx = Math.max(Math.abs(shapeA.pos.x - shapeB.pos.x) - ((shapeA.w / 2) + (shapeB.w / 2)), 0);
-    const dy = Math.max(Math.abs(shapeA.pos.y - shapeB.pos.y) - ((shapeA.h / 2) + (shapeB.h / 2)), 0);
+    const dx = Math.max(Math.abs(shapeA.pos.x - shapeB.pos.x) - (shapeA.w / 2 + shapeB.w / 2), 0);
+    const dy = Math.max(Math.abs(shapeA.pos.y - shapeB.pos.y) - (shapeA.h / 2 + shapeB.h / 2), 0);
     return Math.sqrt(dx * dx + dy * dy);
 }
 
 function distanceAAShapeAndPoint(shape: AAShape, point: Point2D) {
-    const dx = Math.max(Math.abs(shape.pos.x - point.x) - (shape.w / 2), 0);
-    const dy = Math.max(Math.abs(shape.pos.y - point.y) - (shape.h / 2), 0);
+    const dx = Math.max(Math.abs(shape.pos.x - point.x) - shape.w / 2, 0);
+    const dy = Math.max(Math.abs(shape.pos.y - point.y) - shape.h / 2, 0);
     return Math.sqrt(dx * dx + dy * dy);
 }
 
@@ -58,24 +58,24 @@ function cellsInFootprint(centerPoint: Point2D, footprint: Footprint, includeSel
             cells.push({ x: centerPoint.x + 2, y: centerPoint.y }); // 2 right
             if (footprint.h >= 5) {
                 cells.push({ x: centerPoint.x - 2, y: centerPoint.y - 2 }); // 2 left 2 down
-                cells.push({ x: centerPoint.x - 2, y: centerPoint.y - 1}); // 2 left 1 down
+                cells.push({ x: centerPoint.x - 2, y: centerPoint.y - 1 }); // 2 left 1 down
 
-                cells.push({ x: centerPoint.x, y: centerPoint.y - 2}); // 2 down
-                cells.push({ x: centerPoint.x - 1, y: centerPoint.y - 2}); // 2 down 1 left
-                cells.push({ x: centerPoint.x + 1, y: centerPoint.y - 2}); // 2 down 1 right
+                cells.push({ x: centerPoint.x, y: centerPoint.y - 2 }); // 2 down
+                cells.push({ x: centerPoint.x - 1, y: centerPoint.y - 2 }); // 2 down 1 left
+                cells.push({ x: centerPoint.x + 1, y: centerPoint.y - 2 }); // 2 down 1 right
 
                 cells.push({ x: centerPoint.x + 2, y: centerPoint.y - 2 }); // 2 right 2 down
-                cells.push({ x: centerPoint.x + 2, y: centerPoint.y - 1}); // 2 right 1 down
+                cells.push({ x: centerPoint.x + 2, y: centerPoint.y - 1 }); // 2 right 1 down
 
                 cells.push({ x: centerPoint.x - 2, y: centerPoint.y + 2 }); // 2 left 2 up
-                cells.push({ x: centerPoint.x - 2, y: centerPoint.y + 1}); // 2 left 1 up
+                cells.push({ x: centerPoint.x - 2, y: centerPoint.y + 1 }); // 2 left 1 up
 
-                cells.push({ x: centerPoint.x, y: centerPoint.y + 2}); // 2 up
-                cells.push({ x: centerPoint.x - 1, y: centerPoint.y + 2}); // 2 up 1 left
-                cells.push({ x: centerPoint.x + 1, y: centerPoint.y + 2}); // 2 up 1 right
+                cells.push({ x: centerPoint.x, y: centerPoint.y + 2 }); // 2 up
+                cells.push({ x: centerPoint.x - 1, y: centerPoint.y + 2 }); // 2 up 1 left
+                cells.push({ x: centerPoint.x + 1, y: centerPoint.y + 2 }); // 2 up 1 right
 
                 cells.push({ x: centerPoint.x + 2, y: centerPoint.y + 2 }); // 2 right 2 up
-                cells.push({ x: centerPoint.x + 2, y: centerPoint.y + 1}); // 2 right 1 up
+                cells.push({ x: centerPoint.x + 2, y: centerPoint.y + 1 }); // 2 right 1 up
             }
         }
 

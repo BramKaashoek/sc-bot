@@ -29,4 +29,14 @@ function createWorld(client?: NodeSC2Proto.ProtoClient): World {
 
     return world;
 }
+
+export function resetGameState(world: World): void {
+    const { map, units, events, debug } = world.resources.get();
+    Object.values(units._units).forEach((store) => store.clear());
+    Object.assign(map, MapManager(world));
+    Object.assign(events, EventChannel(world));
+    Object.assign(debug!, Debugger(world));
+    world.data.set('earmarks', []);
+}
+
 export default createWorld;

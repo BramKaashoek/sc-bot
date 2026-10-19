@@ -14,7 +14,7 @@ function createEventChannel({ resources }: World): EventChannel {
     return {
         createReader(type) {
             // by default, only subscribe to agent events
-            const readerType = type ? (type === 'build' || type === 'unit') ? 'agent' : type : 'agent';
+            const readerType = type ? (type === 'build' || type === 'unit' ? 'agent' : type) : 'agent';
             const readerId = shortid.generate();
 
             debugEventSilly(`new reader registered of type ${readerType}`);
@@ -25,22 +25,24 @@ function createEventChannel({ resources }: World): EventChannel {
             readerTypes[readerId] = readerType;
             return readerId;
         },
-    
+
         removeReader(id) {
-            readers = readers.filter(readerId => readerId !== id);
+            readers = readers.filter((readerId) => readerId !== id);
         },
-    
+
         read(readerId) {
-            debugEventSilly(`all current events: ${events.map(event => event.name)}`);
+            debugEventSilly(`all current events: ${events.map((event) => event.name)}`);
             // get all events holding this readerId
-            const unreadEvents = events.filter(event => event.readers.includes(readerId));
-            debugEventSilly(`Reading events for ${readerId}, the following are unread: ${unreadEvents.map(event => event.name)}`);
+            const unreadEvents = events.filter((event) => event.readers.includes(readerId));
+            debugEventSilly(
+                `Reading events for ${readerId}, the following are unread: ${unreadEvents.map((event) => event.name)}`,
+            );
             // remove the reader id from the event, essentially 'consuming' it
-            unreadEvents.forEach(event => event.consume(readerId));
+            unreadEvents.forEach((event) => event.consume(readerId));
 
             return unreadEvents;
         },
-    
+
         write(event, readerId) {
             const { frame } = resources.get();
 
@@ -48,8 +50,8 @@ function createEventChannel({ resources }: World): EventChannel {
             const currentFrame = frame.getGameLoop();
 
             const currentReaders = readers
-                .filter(reader => readerId ? reader !== readerId : true)
-                .filter(reader => eventType === 'all' || readerTypes[reader] === eventType);
+                .filter((reader) => (readerId ? reader !== readerId : true))
+                .filter((reader) => eventType === 'all' || readerTypes[reader] === eventType);
 
             // @TODO: possible future perf issues - consider mutating the given event argument + creating an
             // event prototype for consume / destroy / future implemented methods
@@ -60,8 +62,10 @@ function createEventChannel({ resources }: World): EventChannel {
                 gameLoop: currentFrame,
                 readers: currentReaders,
                 consume(readerId) {
-                    this.readers = this.readers.filter(r => r !== readerId);
-                    debugEventSilly(`consuming ${event.name} event for ${readerId} - ${this.readers.length} readers left to consume this event.`);
+                    this.readers = this.readers.filter((r) => r !== readerId);
+                    debugEventSilly(
+                        `consuming ${event.name} event for ${readerId} - ${this.readers.length} readers left to consume this event.`,
+                    );
 
                     // if there are no more readers, remove it from the event channel queue
                     if (this.readers.length <= 0) {
@@ -70,16 +74,13 @@ function createEventChannel({ resources }: World): EventChannel {
                     }
                 },
                 destroy() {
-                    events = events.filter(ev => ev !== this);
-                }
+                    events = events.filter((ev) => ev !== this);
+                },
             };
 
             debugEventSilly(`New ${event.name} event with these readers: ${currentReaders}`);
 
-            events = [
-                ...events,
-                newEvent,
-            ];
+            events = [...events, newEvent];
         },
     };
 }

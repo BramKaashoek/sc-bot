@@ -212,7 +212,7 @@ Changes are mainly for improving consistency and behavior
 ### Changed
 - Broke and fixed the debug resource (that isn't documented and no one actually uses yet anyway)... it's almost actually useful now. Soon.
 - Fixed builder to not accidentally build things where the nat townhall should go
-- The `frontOfNatural` map utility actually does what it's supposed to now (undocumented currently)
+- The `frontOfNatural` map utility actually does what it's supposed to now (undocumented currently; since removed)
 - `actions.attack()` and `actions.attackMove()` now can accept a unit or array of units to add consistency
 - `unitEntity#isWorker()` now actually returns true for workers of any race, including mules
 

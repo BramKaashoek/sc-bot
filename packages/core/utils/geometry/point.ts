@@ -79,7 +79,6 @@ function divide(point: Point2D, rhs: Point2D | number): Point2D {
             y: point.y / rhs.y,
         };
     }
-    
 }
 
 function areEqual(a: Point2D, b: Point2D) {
@@ -87,16 +86,18 @@ function areEqual(a: Point2D, b: Point2D) {
 }
 
 function closestPoint(pos: Point2D, points: Point2D[]): Point2D {
-    return points.map(point => ({ point, distance: distance(pos, point) }))
-            .sort((a, b) => a.distance - b.distance)
-            .map(p => p.point)[0];
+    return points
+        .map((point) => ({ point, distance: distance(pos, point) }))
+        .sort((a, b) => a.distance - b.distance)
+        .map((p) => p.point)[0];
 }
 
 function nClosestPoint(pos: Point2D, points: Point2D[], n = 1): Point2D[] {
-    return points.map(point => ({ point, distance: distance(pos, point) }))
-            .sort((a, b) => a.distance - b.distance)
-            .map(p => p.point)
-            .slice(0, n);
+    return points
+        .map((point) => ({ point, distance: distance(pos, point) }))
+        .sort((a, b) => a.distance - b.distance)
+        .map((p) => p.point)
+        .slice(0, n);
 }
 
 function avgPoints(points: Point2D[]): Point2D {
@@ -113,23 +114,22 @@ function normalize(vec: Point2D): Point2D {
     };
 }
 
-const createPoint2D = ({x, y}: Point2D): Point2D => ({ x: Math.floor(x), y: Math.floor(y) });
+const createPoint2D = ({ x, y }: Point2D): Point2D => ({ x: Math.floor(x), y: Math.floor(y) });
 
-const createPoint = ({x, y, z}: Point3D): Point3D => ({ x: Math.floor(x), y: Math.floor(y), z:  Math.floor(z) });
-
+const createPoint = ({ x, y, z }: Point3D): Point3D => ({ x: Math.floor(x), y: Math.floor(y), z: Math.floor(z) });
 
 const getAdjacents = ({ x, y }: Point2D): Point2D[] => [
-    { y: y - 1, x},
-    { y, x: x - 1},
-    { y, x: x + 1},
-    { y: y + 1, x},
+    { y: y - 1, x },
+    { y, x: x - 1 },
+    { y, x: x + 1 },
+    { y: y + 1, x },
 ];
 
 const getDiagonals = ({ x, y }: Point2D): Point2D[] => [
-    { y: y - 1, x: x - 1},
-    { y: y - 1, x: x + 1},
-    { y: y + 1, x: x - 1},
-    { y: y + 1, x: x + 1},
+    { y: y - 1, x: x - 1 },
+    { y: y - 1, x: x + 1 },
+    { y: y + 1, x: x - 1 },
+    { y: y + 1, x: x + 1 },
 ];
 
 function getNeighbors(point: Point2D, includeDiagonals = true, diagonalsOnly = false): Point2D[] {
@@ -146,7 +146,8 @@ function getNeighbors(point: Point2D, includeDiagonals = true, diagonalsOnly = f
     }
 }
 
-export {    createPoint,
+export {
+    createPoint,
     createPoint2D,
     getNeighbors,
     areEqual,
@@ -162,5 +163,5 @@ export {    createPoint,
     divide,
     normalize,
     closestPoint,
-    nClosestPoint
+    nClosestPoint,
 };

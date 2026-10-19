@@ -34,12 +34,4 @@ const HarvestGatheringRace = {
     [Race.TERRAN]: Ability.HARVEST_GATHER_SCV,
 };
 
-export {
-    GasMineRace,
-    SupplyUnitRace,
-    TownhallRace,
-    WorkerRace,
-    HarvestGatheringRace,
-};
-
-
+export { GasMineRace, SupplyUnitRace, TownhallRace, WorkerRace, HarvestGatheringRace };

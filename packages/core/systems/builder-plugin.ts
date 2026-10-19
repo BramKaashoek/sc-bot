@@ -7,7 +7,17 @@ import * as ability from '../constants/ability.ts';
 import { WorkerRace } from '../constants/race-map.ts';
 import { gasMineTypes, townhallTypes, addonTypes } from '../constants/groups.ts';
 import { Upgrade, UnitType, UnitTypeId, AbilityId, UpgradeId, Color } from '../constants/index.ts';
-import type { Agent, BuildHelper, BuildTask, BuildTaskI, EventReader, Point2D, System, Unit, World } from '../types.ts';
+import type {
+    BuildSystemObject,
+    BuildTask,
+    BuildTaskI,
+    EventReader,
+    Point2D,
+    System,
+    TaskFunctions,
+    Unit,
+    World,
+} from '../types.ts';
 
 const debugBuild = createDebug('sc2:debug:build');
 const debugDraw = createDebug('sc2:DrawDebug');
@@ -19,31 +29,28 @@ const addonHostTypes = [BARRACKS, FACTORY, STARPORT];
 
 const NOOP = () => {};
 
-// TODO(ts): BuildTaskI types opts.near as boolean, but it is a unit type id at runtime; also lacks `commanded`
-type BuildTaskRuntime = Omit<BuildTaskI, 'id' | 'qty' | 'index' | 'started' | 'status' | 'opts'> & {
+type BuildTaskRuntime = Omit<BuildTaskI, 'id' | 'qty' | 'index' | 'started' | 'status'> & {
     id: number;
     qty: number;
     index: number;
     started: number | null;
     status: BuildOrderStatus;
-    commanded?: number;
-    opts?: { near?: number; on?: number; skip?: string; target?: number };
 };
+
+type TrainTask = Omit<BuildTaskRuntime, 'id'> & { id: number | number[] };
 
 type BuildFn = (world: World, task: BuildTaskRuntime) => Promise<BuildResult>;
 
 type StepFn = (world: World, gameLoop: number, task?: BuildTaskRuntime, result?: BuildResult) => any;
 
-type Placer = { place?: (world: World, unitTypeId: number) => Point2D[] | undefined };
-
-const taskFunctions: { [index: string]: BuildHelper } = {
+const taskFunctions: TaskFunctions = {
     ability: (id, opts = {}) => ({ type: 'ability', id, qty: 1, opts }),
     build: (id, qty = 1, opts = {}) => ({ type: 'build', id, qty, opts }),
     train: (id, qty = 1, opts = {}) => ({ type: 'train', id, qty, opts }),
-    upgrade: (id) => ({ type: 'upgrade', id, qty: 1}),
+    upgrade: (id) => ({ type: 'upgrade', id, qty: 1 }),
 };
 
-function builderPlugin(system: EventReader<System>) {
+function builderPlugin(system: EventReader<System>): void {
     const buildSym = Symbol('build');
     const completeSym = Symbol('complete');
 
@@ -53,16 +60,16 @@ function builderPlugin(system: EventReader<System>) {
         ...system.buildOptions,
     };
 
-    system.pauseBuild = function() {
+    system.pauseBuild = function () {
         system.buildOptions!.paused = true;
     };
 
-    system.resumeBuild = function() {
+    system.resumeBuild = function () {
         system.buildOptions!.paused = false;
     };
 
-    system.earmarkDelay = function(delay: number) {
-        system.buildOptions!.earmarks = delay; 
+    system.earmarkDelay = function (delay: number) {
+        system.buildOptions!.earmarks = delay;
     };
 
     const buildFnSyms: { [index: string]: symbol } = {
@@ -74,11 +81,11 @@ function builderPlugin(system: EventReader<System>) {
         worker: Symbol('worker'),
     };
 
-    // TODO(ts): symbol-keyed build functions live on the system object; EventReader's string index signature can't express them
-    const buildFns = system as unknown as Record<symbol, BuildFn>;
+    const buildFns: Record<symbol, BuildFn> = {};
 
     const systemOnGameStart = system.onGameStart ? system.onGameStart.bind(system) : NOOP;
-    const systemOnStep: StepFn = system.onStep ? system.onStep.bind(system) : NOOP;
+    const { onStep } = system as unknown as BuildSystemObject;
+    const systemOnStep: StepFn = onStep ? onStep.bind(system) : NOOP;
     const buildComplete = system.buildComplete ? system.buildComplete.bind(system) : NOOP;
 
     function createTask(taskData: object, index: number, supply?: number) {
@@ -102,7 +109,8 @@ function builderPlugin(system: EventReader<System>) {
         const isZerg = agent.race === Race.ZERG;
 
         if (task.type === 'train') {
-            acc.supply = supply + (data.getUnitTypeData(task.id!).foodRequired! * task.qty!);
+            const ids = Array.isArray(task.id) ? task.id : [task.id!];
+            acc.supply = supply + Math.max(...ids.map((id) => data.getUnitTypeData(id).foodRequired!)) * task.qty!;
         } else if (task.type === 'build') {
             if (isZerg) {
                 acc.supply = acc.supply - 1;
@@ -116,25 +124,32 @@ function builderPlugin(system: EventReader<System>) {
 
     function normalizeBuildOrder(world: World, bo: BuildTask[]) {
         if (Array.isArray(bo[0])) {
-            return (bo as Array<[number, BuildTaskI]>).reduce<{ supply: number, buildOrder: object[], reducerIndex: number }>((acc, [supply, task]) => {
-                if (acc.supply >= supply) {
-                    acc.buildOrder.push(createTask(task, acc.reducerIndex));
-                    calculateSupply(world, acc, supply, task);
-                    acc.reducerIndex++;
-                    return acc;
-                } else {
-                    Array.from({ length: supply - acc.supply }).forEach(() => {
-                        acc.buildOrder.push(createTask(workerTask, acc.reducerIndex, supply));
-                        acc.supply = acc.supply + 1;
+            return (bo as Array<[number, BuildTaskI]>).reduce<{
+                supply: number;
+                buildOrder: object[];
+                reducerIndex: number;
+            }>(
+                (acc, [supply, task]) => {
+                    if (acc.supply >= supply) {
+                        acc.buildOrder.push(createTask(task, acc.reducerIndex));
+                        calculateSupply(world, acc, supply, task);
                         acc.reducerIndex++;
-                    });
+                        return acc;
+                    } else {
+                        Array.from({ length: supply - acc.supply }).forEach(() => {
+                            acc.buildOrder.push(createTask(workerTask, acc.reducerIndex, supply));
+                            acc.supply = acc.supply + 1;
+                            acc.reducerIndex++;
+                        });
 
-                    acc.buildOrder.push(createTask(task, acc.reducerIndex));
-                    acc.reducerIndex++;
-                    calculateSupply(world, acc, supply, task);
-                    return acc;
-                }
-            }, { supply: 12, buildOrder: [], reducerIndex: 0 }).buildOrder;
+                        acc.buildOrder.push(createTask(task, acc.reducerIndex));
+                        acc.reducerIndex++;
+                        calculateSupply(world, acc, supply, task);
+                        return acc;
+                    }
+                },
+                { supply: 12, buildOrder: [], reducerIndex: 0 },
+            ).buildOrder;
         } else {
             return bo.map((task, i: number) => {
                 return createTask(task, i);
@@ -142,26 +157,25 @@ function builderPlugin(system: EventReader<System>) {
         }
     }
 
-    system.onGameStart = async function(world: World) {
+    system.onGameStart = async function (world: World) {
         this.setState({
             [buildSym]: normalizeBuildOrder(world, system.buildOrder!),
         });
-        
+
         return systemOnGameStart(world);
     };
 
-
-    system.onStep = async function(world: World, gameLoop: number) {
+    system.onStep = async function (world: World, gameLoop: number) {
         if (system.buildOptions!.paused) {
             return systemOnStep(world, gameLoop);
         }
 
-        const task: BuildTaskRuntime | undefined = this.state[buildSym]
-            .find((o: BuildTaskRuntime) => 
+        const task: BuildTaskRuntime | undefined = this.state[buildSym].find(
+            (o: BuildTaskRuntime) =>
                 o.status === BuildOrder.COMMAND_GIVEN ||
                 o.status === BuildOrder.IN_PROGRESS ||
-                o.status === BuildOrder.NOT_STARTED
-            );
+                o.status === BuildOrder.NOT_STARTED,
+        );
 
         if (!task) {
             if (this.state[completeSym]) {
@@ -182,33 +196,40 @@ function builderPlugin(system: EventReader<System>) {
         }
 
         if (buildTask.touched === false) {
-            const taskName = buildTask.type === 'ability' ? AbilityId[buildTask.id]
-                    : buildTask.type === 'upgrade' ? UpgradeId[buildTask.id]
-                        : UnitTypeId[buildTask.id];
+            const taskName =
+                buildTask.type === 'ability'
+                    ? AbilityId[buildTask.id]
+                    : buildTask.type === 'upgrade'
+                      ? UpgradeId[buildTask.id]
+                      : UnitTypeId[buildTask.id];
             debugBuild(`starting new build task: ${buildTask.type} ${taskName}`);
             buildTask.started = gameLoop;
             buildTask.touched = true;
         }
 
         if (debugDraw.enabled) {
-            world.resources.get().debug!.setDrawTextScreen('buildOrder', [{
-                pos: { x: 0.85, y: 0.1 },
-                text: `Build:\n\n${this.state[buildSym].map((buildTask: BuildTaskRuntime, i: number) => {
-                    let reverseId;
-                    if (buildTask.type === 'build' || buildTask.type === 'train') {
-                        reverseId = UnitTypeId[buildTask.id];
-                    } else if (buildTask.type === 'ability') {
-                        reverseId = AbilityId[buildTask.id];
-                    } else if (buildTask.type === 'upgrade') {
-                        reverseId = UpgradeId[buildTask.id];
-                    } else {
-                        reverseId = UnitTypeId[WorkerRace[world.agent.race!]];
-                    }
+            world.resources.get().debug!.setDrawTextScreen('buildOrder', [
+                {
+                    pos: { x: 0.85, y: 0.1 },
+                    text: `Build:\n\n${this.state[buildSym]
+                        .map((buildTask: BuildTaskRuntime, i: number) => {
+                            let reverseId;
+                            if (buildTask.type === 'build' || buildTask.type === 'train') {
+                                reverseId = UnitTypeId[buildTask.id];
+                            } else if (buildTask.type === 'ability') {
+                                reverseId = AbilityId[buildTask.id];
+                            } else if (buildTask.type === 'upgrade') {
+                                reverseId = UpgradeId[buildTask.id];
+                            } else {
+                                reverseId = UnitTypeId[WorkerRace[world.agent.race!]];
+                            }
 
-                    return `${String(i).padStart(2, '0')} ${BuildOrderId[buildTask.status]}: ${buildTask.type} - ${reverseId}`;
-                }).join('\n')}`,
-                color: Color.YELLOW,
-            }]);
+                            return `${String(i).padStart(2, '0')} ${BuildOrderId[buildTask.status]}: ${buildTask.type} - ${reverseId}`;
+                        })
+                        .join('\n')}`,
+                    color: Color.YELLOW,
+                },
+            ]);
         }
 
         if (this.buildOptions!.earmarks && buildTask.status !== BuildOrder.COMMAND_GIVEN) {
@@ -225,7 +246,8 @@ function builderPlugin(system: EventReader<System>) {
                         break;
                     }
                     case 'ability': {
-                        const unitFromAbility = world.data.get('units')
+                        const unitFromAbility = world.data
+                            .get('units')
                             .find((ud: SC2APIProtocol.UnitTypeData) => ud.available && ud.abilityId === buildTask.id);
                         if (unitFromAbility) {
                             cost = world.data.getUnitTypeData(buildTask.id);
@@ -244,10 +266,9 @@ function builderPlugin(system: EventReader<System>) {
                 }
             }
         }
-        
+
         if (buildTask.status === BuildOrder.COMMAND_GIVEN) {
-            if (gameLoop - buildTask.commanded! >= 250) { // 11 seconds
-                // assume something broke and the command derped, build it (again?)!
+            if (gameLoop - buildTask.commanded! >= 250) {
                 buildTask.status = BuildOrder.NOT_STARTED;
             }
         }
@@ -317,8 +338,9 @@ function builderPlugin(system: EventReader<System>) {
             }
 
             const [main] = map.getExpansions();
-            const poweredPylons = units.getById(PYLON)
-                .filter(unit => unit.buildProgress! >= 1)
+            const poweredPylons = units
+                .getById(PYLON)
+                .filter((unit) => unit.buildProgress! >= 1)
                 .sort((a, b) => distance(a.pos!, main.townhallPosition) - distance(b.pos!, main.townhallPosition));
 
             for (const pylon of poweredPylons) {
@@ -334,19 +356,20 @@ function builderPlugin(system: EventReader<System>) {
             if (addonTypes.includes(task.id)) {
                 let target;
                 if (task.opts!.on) {
-                    [target] = units.getById(task.opts!.on!)
-                        .filter(unit => unit.isFinished() && unit.noQueue && unit.addOnTag === '0');
+                    [target] = units
+                        .getById(task.opts!.on!)
+                        .filter((unit) => unit.isFinished() && unit.noQueue && unit.addOnTag === '0');
                     debugBuild('no available units to build addon');
                     if (!target) return BuildResult.CANNOT_SATISFY;
                 } else {
-                    [target] = units.getProductionUnits(task.id)
-                        .filter(unit => unit.isFinished() && unit.noQueue && unit.addOnTag === '0');
+                    [target] = units
+                        .getProductionUnits(task.id)
+                        .filter((unit) => unit.isFinished() && unit.noQueue && unit.addOnTag === '0');
                     if (!target) return BuildResult.CANNOT_SATISFY;
                 }
 
                 try {
-                    // TODO(ts): build() takes an optional pos, addon builds pass null
-                    await actions.build(task.id, null!, target);
+                    await actions.build(task.id, null, target);
                     return BuildResult.COMMAND_SENT;
                 } catch (e) {
                     return BuildResult.ERROR;
@@ -364,13 +387,12 @@ function builderPlugin(system: EventReader<System>) {
         },
     };
 
-    buildFns[buildFnSyms.build] = async function(world: World, task: BuildTaskRuntime) {
+    buildFns[buildFnSyms.build] = async function (world: World, task: BuildTaskRuntime) {
         const { agent, resources } = world;
         const { units } = resources.get();
 
-        // command already given to build, verify it's happening
         if (task.status === BuildOrder.COMMAND_GIVEN) {
-            const [u] = units.getById(task.id).filter(unit => !unit.isFinished());
+            const [u] = units.getById(task.id).filter((unit) => !unit.isFinished());
             if (u) {
                 return BuildResult.SUCCESS;
             } else {
@@ -378,17 +400,15 @@ function builderPlugin(system: EventReader<System>) {
             }
         }
 
-        if (!agent.canAfford(task.id, task.earmarked ? `task${task.index}` : null!)) return BuildResult.CANNOT_SATISFY;
+        if (!agent.canAfford(task.id, task.earmarked ? `task${task.index}` : null)) return BuildResult.CANNOT_SATISFY;
 
-        const { actions, map } = resources.get();
-        // TODO(ts): placer resource isn't declared on ResourceContainer
-        const { placer } = resources.get() as { placer?: Placer };
+        const { actions, map, placer } = resources.get();
 
         if (gasMineTypes.includes(task.id)) {
             try {
                 await actions.buildGasMine();
                 return BuildResult.COMMAND_SENT;
-            } catch(e) {
+            } catch (e) {
                 return BuildResult.ERROR;
             }
         } else if (townhallTypes.includes(task.id)) {
@@ -401,7 +421,7 @@ function builderPlugin(system: EventReader<System>) {
             try {
                 await actions.build(task.id, foundPosition);
                 return BuildResult.COMMAND_SENT;
-            } catch(e) {
+            } catch (e) {
                 return BuildResult.ERROR;
             }
         } else {
@@ -433,23 +453,16 @@ function builderPlugin(system: EventReader<System>) {
         }
     };
 
-    buildFns[buildFnSyms.train] = async function({ agent, resources }: World, task: BuildTaskRuntime) {
+    buildFns[buildFnSyms.train] = async function ({ agent, resources }: World, task: TrainTask) {
         const { actions } = resources.get();
 
-        let id: number;
-        // TODO(ts): train tasks may carry an array of unit type ids; BuildTaskI types id as a single number
-        const taskId = task.id as number | number[];
-        if (Array.isArray(taskId)) {
-            id = getRandom(taskId);
-        } else {
-            id = taskId;
-        }
+        const id = Array.isArray(task.id) ? getRandom(task.id) : task.id;
 
         try {
             if (agent.upgradeIds!.includes(Upgrade.WARPGATERESEARCH)) {
                 try {
                     await actions.warpIn(id, {});
-                } catch(e) {
+                } catch (e) {
                     await actions.train(id);
                 }
             } else {
@@ -462,7 +475,7 @@ function builderPlugin(system: EventReader<System>) {
         }
     };
 
-    buildFns[buildFnSyms.worker] = async function({ agent, resources }: World) {
+    buildFns[buildFnSyms.worker] = async function ({ agent, resources }: World) {
         const { actions } = resources.get();
 
         const id = WorkerRace[agent.race!];
@@ -476,16 +489,16 @@ function builderPlugin(system: EventReader<System>) {
         }
     };
 
-    buildFns[buildFnSyms.upgrade] = async function({ agent, resources }: World, task: BuildTaskRuntime) {
+    buildFns[buildFnSyms.upgrade] = async function ({ agent, resources }: World, task: BuildTaskRuntime) {
         const { actions, units } = resources.get();
 
-        // TODO(ts): Agent.canAffordUpgrade is declared without the earmarkName param the implementation accepts
-        if (!(agent as Agent & { canAffordUpgrade: (upgradeId: number, earmarkName?: string) => boolean }).canAffordUpgrade(task.id, task.earmarked ? `task${task.index}` : null!)) return BuildResult.CANNOT_SATISFY;
+        if (!agent.canAffordUpgrade(task.id, task.earmarked ? `task${task.index}` : null))
+            return BuildResult.CANNOT_SATISFY;
 
         const upgradeFacilities = units.getUpgradeFacilities(task.id);
 
         if (upgradeFacilities.length <= 0) return BuildResult.CANNOT_SATISFY;
-        const freeUpgradeFacility = upgradeFacilities.find(unit => unit.noQueue);
+        const freeUpgradeFacility = upgradeFacilities.find((unit) => unit.noQueue);
 
         if (!freeUpgradeFacility) return BuildResult.CANNOT_SATISFY;
 
@@ -498,30 +511,26 @@ function builderPlugin(system: EventReader<System>) {
         }
     };
 
-    buildFns[buildFnSyms.ability] = async function({ data, resources }: World, task: BuildTaskRuntime) {
+    buildFns[buildFnSyms.ability] = async function ({ data, resources }: World, task: BuildTaskRuntime) {
         const { actions, units } = resources.get();
 
         const canDo = data.findUnitTypesWithAbility(task.id);
-        let unitsCanDo = units.getByType(canDo).filter(unit => unit.abilityAvailable(task.id));
+        let unitsCanDo = units.getByType(canDo).filter((unit) => unit.abilityAvailable(task.id));
 
         if ([BUILD_REACTOR, BUILD_TECHLAB].includes(task.id)) {
-            unitsCanDo = unitsCanDo.filter(unit => unit.addOnTag === '0' && unit.noQueue);
+            unitsCanDo = unitsCanDo.filter((unit) => unit.addOnTag === '0' && unit.noQueue);
         }
-        
+
         if (unitsCanDo.length <= 0) return BuildResult.CANNOT_SATISFY;
 
         let target: Unit | undefined;
         if (task.opts!.target) {
-            target = getRandom(units.getById(task.opts!.target!).filter(unit => unit.isFinished()));
+            target = getRandom(units.getById(task.opts!.target!).filter((unit) => unit.isFinished()));
             if (!target) return BuildResult.CANNOT_SATISFY;
         }
 
         try {
-            await actions.do(
-                task.id,
-                [unitsCanDo[0].tag!],
-                { target }
-            );
+            await actions.do(task.id, [unitsCanDo[0].tag!], { target });
             return BuildResult.SUCCESS;
         } catch (e) {
             debugBuild('BUILD ABILITY ERR:', e);

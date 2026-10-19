@@ -6,7 +6,10 @@ import { gridsInCircle } from '../utils/geometry/angle.ts';
 import { cellsInFootprint } from '../utils/geometry/plane.ts';
 import { gasMineTypes } from '../constants/groups.ts';
 import { getFootprint } from '../utils/geometry/units.ts';
-import type { MapPathOptions, MapResource, Point2D, Unit, WPoint, World } from '../types.ts';
+import { createStartGrids, findRampsAndVisionBlockers } from '../utils/map/ramp.ts';
+import { findExpansionLocations } from '../utils/map/expansion-locations.ts';
+import type { Ramp, StartGrids } from '../utils/map/ramp.ts';
+import type { Grid2D, MapPathOptions, MapResource, Point2D, Unit, WPoint, World } from '../types.ts';
 
 const { Alliance } = enums;
 const debugWeights = createDebug('sc2:DebugWeights');
@@ -14,13 +17,12 @@ const debugPathable = createDebug('sc2:DebugPathable');
 
 type PFNode = PF.Node & { weight: number };
 type PFGrid = PF.Grid & { nodes: PFNode[][] };
-// TODO(ts): @types/pathfinding lacks the (width, height, matrix) constructor overload and Grid.nodes
-const PFGridCtor = PF.Grid as unknown as new (width: number, height: number, matrix?: Array<Uint8Array>) => PFGrid;
+// @types/pathfinding lacks the (width, height, matrix) constructor overload and Grid.nodes
+const PFGridCtor = PF.Grid as unknown as new (width: number, height: number, matrix?: Grid2D) => PFGrid;
 
-const createPoint2D = ({x, y}: Point2D): Point2D => ({ x: Math.floor(x), y: Math.floor(y) });
+const createPoint2D = ({ x, y }: Point2D): Point2D => ({ x: Math.floor(x), y: Math.floor(y) });
 
 type MapManager = MapResource & {
-    isRamp: (point: Point2D) => boolean;
     isPlaceable: (point: Point2D, opts?: MapPathOptions) => boolean;
     isPlaceableAt: (unitType: number, pos: Point2D, opts?: MapPathOptions) => boolean;
     setPathable: (point: Point2D, pathable?: boolean) => void;
@@ -31,8 +33,18 @@ type MapManager = MapResource & {
 };
 
 function createMapManager(world: World): MapManager {
-    let determinedPaths: Array<{ begin: Point2D, finish: Point2D, result: number[][] }> = [];
-    let combatRally: { numOfBases: number, pos: Point2D } | undefined;
+    let determinedPaths: Array<{ begin: Point2D; finish: Point2D; result: number[][] }> = [];
+    let combatRally: { numOfBases: number; pos: Point2D } | undefined;
+    let startGrids: StartGrids | undefined;
+    let ramps: Ramp[] = [];
+    let visionBlockers: Point2D[] = [];
+    let expansionLocations: Point2D[] = [];
+    let mainBaseRamp: Ramp | undefined;
+
+    const requireStartGrids = () => {
+        if (!startGrids) throw new Error('Start grids are not set yet; they are read from the game info on game start');
+        return startGrids;
+    };
 
     return {
         _activeEffects: [],
@@ -63,7 +75,7 @@ function createMapManager(world: World): MapManager {
         },
         isPathable(p) {
             const point = createPoint2D(p);
-            return !(this._grids.pathing![point.y][point.x]);
+            return !this._grids.pathing![point.y][point.x];
         },
         setPathable(p, pathable = true) {
             const point = createPoint2D(p);
@@ -92,7 +104,7 @@ function createMapManager(world: World): MapManager {
         },
         isRamp(p) {
             const point = createPoint2D(p);
-            return !!this._ramps.find(c => areEqual(point, c));
+            return !!this._ramps.find((c) => areEqual(point, c));
         },
         hasCreep(p) {
             const point = createPoint2D(p);
@@ -104,12 +116,13 @@ function createMapManager(world: World): MapManager {
             // @TODO: put this somewhere useful
             const geyserHasMine = (geyser: Unit) => {
                 const gasMines = units.getByType(gasMineTypes);
-                return gasMines.find(mine => distance(geyser.pos!, mine.pos!) < 1);
+                return gasMines.find((mine) => distance(geyser.pos!, mine.pos!) < 1);
             };
 
-            return units.getGasGeysers()
-                .filter(g => units.getBases().some(b => distance(b.pos!, g.pos!) < 15))
-                .filter(g => !geyserHasMine(g));
+            return units
+                .getGasGeysers()
+                .filter((g) => units.getBases().some((b) => distance(b.pos!, g.pos!) < 15))
+                .filter((g) => !geyserHasMine(g));
         },
         getMain() {
             return this._expansions[0];
@@ -124,10 +137,10 @@ function createMapManager(world: World): MapManager {
             return this._expansionsFromEnemy[1];
         },
         getThirds() {
-            return [this._expansions[2], this._expansions[3]];
+            return this._expansions.slice(2, 4);
         },
         getEnemyThirds() {
-            return [this._expansionsFromEnemy[2], this._expansionsFromEnemy[3]];
+            return this._expansionsFromEnemy.slice(2, 4);
         },
         getExpansions(alliance) {
             if (alliance === Alliance.ENEMY) {
@@ -138,11 +151,8 @@ function createMapManager(world: World): MapManager {
         },
         getOccupiedExpansions(alliance = Alliance.SELF) {
             return this._expansions.filter((expansion) => {
-                return (
-                    expansion.base &&
-                    !expansion.getBase().labels.has('dead') &&
-                    (expansion.getBase().alliance === alliance)
-                );
+                const base = expansion.getBase();
+                return !!base && !base.labels.has('dead') && base.alliance === alliance;
             });
         },
         getAvailableExpansions() {
@@ -152,8 +162,7 @@ function createMapManager(world: World): MapManager {
             });
         },
         closestPathable(point, r: number = 3) {
-            const allPathable = gridsInCircle(point, r, { normalize: true })
-                .filter(p => this.isPathable(p));
+            const allPathable = gridsInCircle(point, r, { normalize: true }).filter((p) => this.isPathable(p));
 
             if (allPathable.length <= 0) {
                 throw new Error(`No pathable points within ${r} radius of point ${point}`);
@@ -162,21 +171,20 @@ function createMapManager(world: World): MapManager {
             return closestPoint(point, allPathable);
         },
         getClosestExpansion(point) {
-            const startPoint = this.isPathable(point) ?
-                point :
-                this.closestPathable(point);
+            const startPoint = this.isPathable(point) ? point : this.closestPathable(point);
 
             const expansionOrder = this.getExpansions();
-            const { index: closestIndex } = expansionOrder.map((expansion, i) => {
-                return {
-                    index: i,
-                    distance: this.path(startPoint, add(expansion.townhallPosition, 3)).length,
-                };
-            })
-            .filter((exp) => {
-                return exp.distance > 0;
-            })
-            .sort((a, b) => a.distance - b.distance)[0];
+            const { index: closestIndex } = expansionOrder
+                .map((expansion, i) => {
+                    return {
+                        index: i,
+                        distance: this.path(startPoint, add(expansion.townhallPosition, 3)).length,
+                    };
+                })
+                .filter((exp) => {
+                    return exp.distance > 0;
+                })
+                .sort((a, b) => a.distance - b.distance)[0];
 
             return expansionOrder[closestIndex];
         },
@@ -184,7 +192,7 @@ function createMapManager(world: World): MapManager {
             const creepRaw = this._mapState.creep;
 
             return creepRaw.reduce((acc, row, y) => {
-                row.forEach((pixel, x) => { 
+                row.forEach((pixel, x) => {
                     if (pixel !== 0) {
                         acc.push({ x, y });
                     }
@@ -210,26 +218,26 @@ function createMapManager(world: World): MapManager {
             if (this.isCustom()) return this.getCenter();
 
             const numOfBases = this.getOccupiedExpansions().length;
-            if (combatRally && combatRally.numOfBases === numOfBases ) return combatRally.pos;
+            if (combatRally && combatRally.numOfBases === numOfBases) return combatRally.pos;
 
             const mapCenter = {
                 x: this._mapSize.x! / 2,
                 y: this._mapSize.y! / 2,
             };
 
-            const pathableNearCenter = gridsInCircle(mapCenter, 5, { normalize: true })
-                .filter(p => this.isPathable(p));
+            const pathableNearCenter = gridsInCircle(mapCenter, 5, { normalize: true }).filter((p) =>
+                this.isPathable(p),
+            );
             const closestPathable = closestPoint(mapCenter, pathableNearCenter);
 
-            const naturalWall = this.getNatural().getWall();
-            const avg = avgPoints(naturalWall);
-            const pathableNearNat = gridsInCircle(avg, 5, { normalize: true })
-                .filter(p => this.isPathable(p));
+            const natural = this.getNatural() ?? this.getMain();
+            const naturalWall = natural.getWall();
+            const avg = naturalWall.length > 0 ? avgPoints(naturalWall) : natural.townhallPosition;
+            const pathableNearNat = gridsInCircle(avg, 5, { normalize: true }).filter((p) => this.isPathable(p));
             const closestNatPathable = closestPoint(avg, pathableNearNat);
 
             const path = this.path(closestNatPathable, closestPathable);
 
-            // n% of the way between fon and map center
             const multiplier = numOfBases * 0.05;
             const newPos = path[Math.floor(path.length * multiplier)];
             combatRally = {
@@ -241,30 +249,32 @@ function createMapManager(world: World): MapManager {
         setActiveEffects(newEffects = []) {
             this._activeEffects = newEffects;
         },
-        setMapState(newMapState){
+        setMapState(newMapState) {
             this._mapState = newMapState;
         },
         setLocations(locations) {
             this._locations = { ...this._locations, ...locations };
         },
         setGrids(newGrids) {
-            // merging allows to update partial grids, or individual
             this._grids = { ...this._grids, ...newGrids };
 
             if (debugPathable.enabled) {
-                world.resources.get().debug!.setDrawCells('debugPathable', this._grids.pathing!.reduce((cells, row, y) => {
-                    row.forEach((node, x) => {
-                        if (this.isPathable({x, y})) {
-                            cells.push({
-                                pos: {x, y},
-                                text: `p-able`,
-                                color: Color.LIME_GREEN,
-                            });
-                        }
-                    });
+                world.resources.get().debug!.setDrawCells(
+                    'debugPathable',
+                    this._grids.pathing!.reduce((cells, row, y) => {
+                        row.forEach((node, x) => {
+                            if (this.isPathable({ x, y })) {
+                                cells.push({
+                                    pos: { x, y },
+                                    text: `p-able`,
+                                    color: Color.LIME_GREEN,
+                                });
+                            }
+                        });
 
-                    return cells;
-                }, [] as WPoint[]));
+                        return cells;
+                    }, [] as WPoint[]),
+                );
             }
         },
         setSize(mapSize) {
@@ -274,14 +284,15 @@ function createMapManager(world: World): MapManager {
             return this._mapSize;
         },
         getCenter(pathable = false) {
-            const absoluteCenter =  {
+            const absoluteCenter = {
                 x: this._mapSize.x! / 2,
                 y: this._mapSize.y! / 2,
             };
 
             if (pathable) {
-                const pathableSurroundingGrid = gridsInCircle(absoluteCenter, 5, { normalize: true })
-                    .filter(cell => this.isPathable(cell));
+                const pathableSurroundingGrid = gridsInCircle(absoluteCenter, 5, { normalize: true }).filter((cell) =>
+                    this.isPathable(cell),
+                );
 
                 return closestPoint(absoluteCenter, pathableSurroundingGrid);
             } else {
@@ -299,9 +310,6 @@ function createMapManager(world: World): MapManager {
             if (graph) {
                 this._graph = graph;
             } else {
-                // @WIP: uncomment for maybe useful debugging?
-                // console.log(this._mapSize.x!, this._mapSize.y!, this._grids.pathing.length, this._grids.pathing![0].length)
-                // console.log(this._grids.pathing, this._grids.pathing![0])
                 const newGraph = new PFGridCtor(this._mapSize.x!, this._mapSize.y!, this._grids.pathing);
                 newGraph.nodes.forEach((row) => {
                     row.forEach((node) => {
@@ -344,23 +352,29 @@ function createMapManager(world: World): MapManager {
                 });
 
                 if (debugWeights.enabled) {
-                    world.resources.get().debug!.setDrawCells('debugWeights', newGraph.nodes.reduce((cells, row, y) => {
-                        row.forEach((node, x) => {
-                            if (node.walkable && node.weight > 1) {
-                                cells.push({
-                                    pos: {x, y},
-                                    text: `W: ${node.weight}`,
-                                    color: 
-                                        node.weight <= 1 ? Color.LIME_GREEN :
-                                            node.weight <= 5 ? Color.YELLOW :
-                                                node.weight <= 20 ? Color.ORANGE_RED :
-                                                    Color.RED,
-                                });
-                            }
-                        });
+                    world.resources.get().debug!.setDrawCells(
+                        'debugWeights',
+                        newGraph.nodes.reduce((cells, row, y) => {
+                            row.forEach((node, x) => {
+                                if (node.walkable && node.weight > 1) {
+                                    cells.push({
+                                        pos: { x, y },
+                                        text: `W: ${node.weight}`,
+                                        color:
+                                            node.weight <= 1
+                                                ? Color.LIME_GREEN
+                                                : node.weight <= 5
+                                                  ? Color.YELLOW
+                                                  : node.weight <= 20
+                                                    ? Color.ORANGE_RED
+                                                    : Color.RED,
+                                    });
+                                }
+                            });
 
-                        return cells;
-                    }, [] as WPoint[]));
+                            return cells;
+                        }, [] as WPoint[]),
+                    );
                 }
 
                 this._graph = newGraph;
@@ -369,34 +383,101 @@ function createMapManager(world: World): MapManager {
         setExpansions(exps) {
             this._expansions = Object.freeze(exps);
             this._expansionsFromEnemy = Object.freeze(
-                this._expansions.slice().sort((a, b) => a.pathFromEnemy!.length - b.pathFromEnemy!.length)
+                this._expansions.slice().sort((a, b) => a.pathFromEnemy!.length - b.pathFromEnemy!.length),
             );
         },
         setRamps(ramps) {
             this._ramps = ramps;
         },
         isPlaceableAt(unitType, pos, opts: MapPathOptions = {}) {
-            const footprint = getFootprint(unitType);
+            const footprint = getFootprint(unitType, {
+                units: world.data.get('units'),
+                abilities: world.data.get('abilities'),
+            });
             const shapePoints = cellsInFootprint(pos, footprint!);
 
             if (opts.graph) {
-                return shapePoints.every(point => opts.graph.isWalkableAt(point.x, point.y));
+                return shapePoints.every((point) => opts.graph.isWalkableAt(point.x, point.y));
             } else {
-                return shapePoints.every(point => this.isPlaceable(point));
+                return shapePoints.every((point) => this.isPlaceable(point));
             }
-            
+        },
+        setStartRaw(startRaw) {
+            startGrids = createStartGrids(startRaw);
+            mainBaseRamp = undefined;
+            const startLocation = () => {
+                const { x, y } = this.getLocations().self;
+                return { x, y };
+            };
+            ({ ramps, visionBlockers } = findRampsAndVisionBlockers(startGrids, startRaw.playableArea!, startLocation));
+
+            const { units } = world.resources.get();
+            expansionLocations = findExpansionLocations(
+                units.getAlive(Alliance.NEUTRAL),
+                startGrids.terrainHeight,
+                startGrids.placement,
+            );
+        },
+        getRamps() {
+            return ramps.slice();
+        },
+        getMainBaseRamp() {
+            if (mainBaseRamp) return mainBaseRamp;
+
+            const { self } = this.getLocations();
+            if (!self) return undefined;
+            const closestWithUpperSize = (sizes: number[]) =>
+                ramps
+                    .filter((ramp) => sizes.includes(ramp.upper.length))
+                    .reduce<Ramp | undefined>(
+                        (best, ramp) =>
+                            !best || distance(self, ramp.topCenter) < distance(self, best.topCenter) ? ramp : best,
+                        undefined,
+                    );
+
+            // python-sc2: Honorgrounds LE's main ramp has 4 or 9 upper points
+            mainBaseRamp = closestWithUpperSize([2, 5]) ?? closestWithUpperSize([4, 9]);
+            return mainBaseRamp;
+        },
+        getVisionBlockers() {
+            return visionBlockers.slice();
+        },
+        getExpansionLocations() {
+            return expansionLocations.slice();
+        },
+        getTerrainHeight(point) {
+            return requireStartGrids().terrainHeight.get(createPoint2D(point));
+        },
+        getTerrainZHeight(point) {
+            return -16 + (32 * this.getTerrainHeight(point)) / 255;
+        },
+        inPathingGrid(point) {
+            return requireStartGrids().pathing.isSet(createPoint2D(point));
+        },
+        inPlacementGrid(point) {
+            return requireStartGrids().placement.isSet(createPoint2D(point));
+        },
+        async queryPathing(start, end) {
+            const { actions } = world.resources.get();
+            const endPos = { x: end.x, y: end.y };
+            const request: SC2APIProtocol.RequestQueryPathing =
+                'pos' in start ? { unitTag: start.tag, endPos } : { startPos: { x: start.x, y: start.y }, endPos };
+            const response = await actions.sendQuery({ pathing: [request] });
+            const pathingDistance = response.pathing?.[0]?.distance ?? 0;
+            return pathingDistance <= 0 ? null : pathingDistance;
         },
         path(start, end, opts = {}) {
             const begin = createPoint2D(start);
             const finish = createPoint2D(end);
 
             if (!opts.force && !opts.graph) {
-                const exists = determinedPaths.find(path => (
-                    path.begin.x === begin.x &&
-                    path.begin.y === begin.y &&
-                    path.finish.x === finish.x &&
-                    path.finish.y === finish.y
-                ));
+                const exists = determinedPaths.find(
+                    (path) =>
+                        path.begin.x === begin.x &&
+                        path.begin.y === begin.y &&
+                        path.finish.x === finish.x &&
+                        path.finish.y === finish.y,
+                );
 
                 if (exists) return exists.result;
             }

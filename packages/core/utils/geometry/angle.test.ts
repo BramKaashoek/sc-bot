@@ -26,17 +26,27 @@ describe('randomCirclePoints', () => {
 describe('gridsInCircle', () => {
     it('returns every unit cell whose corners reach into the circle, x-major', () => {
         expect(gridsInCircle({ x: 5, y: 5 }, 1)).toEqual([
-            { x: 4, y: 4 }, { x: 4, y: 5 }, { x: 4, y: 6 },
-            { x: 5, y: 4 }, { x: 5, y: 5 }, { x: 5, y: 6 },
-            { x: 6, y: 4 }, { x: 6, y: 5 },
+            { x: 4, y: 4 },
+            { x: 4, y: 5 },
+            { x: 4, y: 6 },
+            { x: 5, y: 4 },
+            { x: 5, y: 5 },
+            { x: 5, y: 6 },
+            { x: 6, y: 4 },
+            { x: 6, y: 5 },
         ]);
     });
 
     it('floors the cells when normalize is set, using a custom step distance', () => {
         expect(gridsInCircle({ x: 5, y: 5 }, 0.5, { distance: 0.25, normalize: true })).toEqual([
-            { x: 4, y: 4 }, { x: 4, y: 5 }, { x: 4, y: 5 },
-            { x: 5, y: 4 }, { x: 5, y: 5 }, { x: 5, y: 5 },
-            { x: 5, y: 4 }, { x: 5, y: 5 },
+            { x: 4, y: 4 },
+            { x: 4, y: 5 },
+            { x: 4, y: 5 },
+            { x: 5, y: 4 },
+            { x: 5, y: 5 },
+            { x: 5, y: 5 },
+            { x: 5, y: 4 },
+            { x: 5, y: 5 },
         ]);
     });
 });

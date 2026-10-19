@@ -1,7 +1,16 @@
 import type { Grid2D, Point2D } from '../../types.ts';
 import { distance } from '../geometry/point.ts';
 
-function floodFill(mapData: Grid2D, x: number, y: number, oldVal: number | null | undefined, newVal: number, maxReach: number | boolean = false, filled: Point2D[] = [], startPos?: Point2D): Point2D[] {
+function floodFill(
+    mapData: Grid2D,
+    x: number,
+    y: number,
+    oldVal: number | null | undefined,
+    newVal: number,
+    maxReach: number | boolean = false,
+    filled: Point2D[] = [],
+    startPos?: Point2D,
+): Point2D[] {
     const mapHeight = mapData.length;
     const mapWidth = mapData[0].length;
 
@@ -18,23 +27,27 @@ function floodFill(mapData: Grid2D, x: number, y: number, oldVal: number | null 
     }
 
     // console.log(`in floodFill - x: ${x}, y: ${y}, maxReach: ${maxReach}`);
-    if (mapData[y][x] !== oldVal || filled.some(pix => pix.x === x && pix.y === y)) {
+    if (mapData[y][x] !== oldVal || filled.some((pix) => pix.x === x && pix.y === y)) {
         return filled;
     }
 
     mapData[y][x] = newVal;
     filled.push({ y, x });
 
-    if (x > 0) { // left
+    if (x > 0) {
+        // left
         floodFill(mapData, x - 1, y, oldVal, newVal, maxReach, filled, startPos);
     }
-    if (y > 0) { // up
+    if (y > 0) {
+        // up
         floodFill(mapData, x, y - 1, oldVal, newVal, maxReach, filled, startPos);
     }
-    if (x < mapWidth - 1) { // right
+    if (x < mapWidth - 1) {
+        // right
         floodFill(mapData, x + 1, y, oldVal, newVal, maxReach, filled, startPos);
     }
-    if (y < mapHeight - 1) { // down
+    if (y < mapHeight - 1) {
+        // down
         floodFill(mapData, x, y + 1, oldVal, newVal, maxReach, filled, startPos);
     }
 

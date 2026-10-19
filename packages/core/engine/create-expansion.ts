@@ -5,14 +5,13 @@ import type { Cluster, Expansion, World } from '../types.ts';
 function createExpansion(world: World, cluster: Cluster): Expansion {
     const { units } = world.resources.get();
 
-    // TODO(ts): getWall/getBase/getAlliance can implicitly return undefined, which Expansion's signatures don't allow
     return {
         cluster,
         labels: new Map(),
         zPosition: cluster.mineralFields[0].pos!.z,
         townhallPosition: townhallPlacement(world, cluster.centroid!, cluster.mineralFields, cluster.vespeneGeysers!),
         getWall() {
-            return this.areas!.wall!;
+            return this.areas?.wall ?? [];
         },
         getBase() {
             if (this.base) {
@@ -22,12 +21,12 @@ function createExpansion(world: World, cluster: Cluster): Expansion {
         getAlliance() {
             if (this.base) {
                 const base = units.getByTag(this.base);
-                return base.labels.has('dead') ? Alliance.NEUTRAL : base.alliance!;
+                return !base || base.labels.has('dead') ? Alliance.NEUTRAL : base.alliance!;
             } else {
                 return Alliance.NEUTRAL;
             }
         },
-    } as Expansion;
+    };
 }
 
 export default createExpansion;

@@ -12,12 +12,16 @@ describe('createTestWorld', () => {
         const { units, frame, map } = world.resources.get();
 
         expect(frame.getGameLoop()).toBe(0);
-        expect(units.getBases().map(base => base.unitType)).toEqual([UnitType.COMMANDCENTER]);
+        expect(units.getBases().map((base) => base.unitType)).toEqual([UnitType.COMMANDCENTER]);
         expect(units.getWorkers()).toHaveLength(3);
         expect(units.getMineralFields()).toHaveLength(14);
         expect(units.getGasGeysers()).toHaveLength(2);
         expect(map.getLocations().self).toMatchObject({ x: 8.5, y: 16.5 });
         expect(world.agent.minerals).toBe(50);
+
+        const captured = (await createTestWorld('simple64')).resources.get();
+        expect(captured.units.getWorkers()).toHaveLength(12);
+        expect(captured.map.getExpansions()).toHaveLength(4);
     });
 
     it('stepTo emits unitCreated only for units new in the next frame', async () => {
@@ -32,12 +36,15 @@ describe('createTestWorld', () => {
         created.length = 0;
 
         const newWorker = rawUnit({ pos: { x: 12, y: 16, z: 10 } });
-        await stepTo(world, observation({
-            gameLoop: 8,
-            units: [...fixture.observations[0].observation!.rawData!.units!, newWorker],
-        }));
+        await stepTo(
+            world,
+            observation({
+                gameLoop: 8,
+                units: [...fixture.observations[0].observation!.rawData!.units!, newWorker],
+            }),
+        );
 
-        expect(created.map(unit => unit.tag)).toEqual([newWorker.tag]);
+        expect(created.map((unit) => unit.tag)).toEqual([newWorker.tag]);
         expect(world.resources.get().units.getAlive(Alliance.SELF)).toHaveLength(5);
     });
 });

@@ -123,7 +123,7 @@ Then we're going to add an `onStep` consumer to check on our gateways too:
         const { units, actions, map } = resources.get();
 
         // all gateways that are done building and idle
-        const idleGateways = units.getById(GATEWAY, { noQueue: true, buildProgress: 1 });
+        const idleGateways = units.getById(GATEWAY, { alliance: Alliance.SELF, noQueue: true, buildProgress: 1 });
 
         if (idleGateways.length > 0) {
             // if there are some, send a command to each to build a zealot
@@ -132,7 +132,7 @@ Then we're going to add an `onStep` consumer to check on our gateways too:
     },
 ```
 
-Remember to also add the `ZEALOT` constant to your list of requires at the top of the file.
+Remember to also add the `ZEALOT` constant to your list of requires at the top of the file, along with the `Alliance` enum: `const { Alliance } = require('@node-sc2/core/constants/enums');`.
 
 ## Rallying An Army
 So now we have our bases saturated more optimally, and zealots pumping out of all the gateways, great!. But there are still some issues you notice no doubt. The zealots just sort of... stand there next to the gateways as they pop out. Let's rally them to somewhere outside of our natural. To do that, we're going to add a little clause to our existing `onUnitCreated` consumer:
@@ -162,10 +162,7 @@ So now we have a small army (or a large one?!) of zealots hanging out in our nat
 What a better time to attack than when your upgrade finishes? Good, let's do it!
 
 ```js
-// first, add the `Alliance` enum to requires at the top:
-const { Alliance } = require('@node-sc2/core/constants/enums');
-
-// ... now down in your system definition, let's add a new consumer
+// in your system definition, let's add a new consumer
     async onUpgradeComplete({ resources }, upgrade) {
         if (upgrade === CHARGE) {
             const { units, map, actions } = resources.get();

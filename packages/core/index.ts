@@ -9,7 +9,10 @@ import type { Agent } from './types.ts';
 
 export type * from './types.ts';
 
-function createPlayer(settings: Omit<SC2APIProtocol.PlayerSetup, 'race' | 'type'> & { race: SC2APIProtocol.Race }, entity?: Agent) {
+function createPlayer(
+    settings: Omit<SC2APIProtocol.PlayerSetup, 'race' | 'type'> & { race: SC2APIProtocol.Race },
+    entity?: Agent,
+) {
     const type = entity ? PlayerType.PARTICIPANT : PlayerType.COMPUTER;
     return {
         ...settings,
@@ -19,3 +22,16 @@ function createPlayer(settings: Omit<SC2APIProtocol.PlayerSetup, 'race' | 'type'
 }
 
 export { createAgent, createEngine, createSystem, createPlayer, taskFunctions };
+export { Units } from './resources/units-collection.ts';
+export { Ramp } from './utils/map/ramp.ts';
+export { PixelMap } from './utils/pixel-map.ts';
+export {
+    ActionManagerError,
+    BuildError,
+    ConnectionClosedError,
+    GameEndedError,
+    GatherError,
+    MapDecompositionError,
+    NodeSC2Error,
+    TrainError,
+} from './engine/errors.ts';

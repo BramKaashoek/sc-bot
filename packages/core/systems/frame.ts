@@ -1,58 +1,52 @@
 import createDebug from 'debug';
 import createSystem from './create-system.ts';
 import { GameEndedError } from '../engine/errors.ts';
+import { Alliance } from '../constants/enums.ts';
 import type { FrameSystem } from '../types.ts';
 
 const debugFrame = createDebug('sc2:debug:frameSystem');
 
-const frameSystem: FrameSystem = {
+const createFrameSystem = (isRealtime: () => boolean): FrameSystem => ({
     name: 'FrameSystem',
     type: 'engine',
     async onGameStart({ resources }) {
-        const { actions: { _client }, frame } = resources.get();
-        
-        const [gameInfo, responseObservation] = await Promise.all([
-            _client!.gameInfo(),
-            _client!.observation(),
-        ]);
+        const {
+            actions: { _client },
+            frame,
+        } = resources.get();
+
+        const [gameInfo, responseObservation] = await Promise.all([_client!.gameInfo(), _client!.observation()]);
 
         frame._gameInfo = gameInfo;
         frame._gameLoop = responseObservation.observation!.gameLoop!;
         frame._observation = responseObservation.observation;
     },
-    async onStep({ resources }) {
-        const { actions: { _client }, frame, units, events } = resources.get();
-        
-        let incFrameData;
-        try {
-            incFrameData = await Promise.all([
-                _client!.observation(),
-                // _client!.gameInfo() // huuuuuuuge perf issue, 100k of $decode
-            ]);
-        } catch(e) {
-            throw new GameEndedError('broken thingy testing', { e });
-        }
+    async onStep({ resources }, gameLoop?: number) {
+        const {
+            actions: { _client: client },
+            frame,
+            units,
+            events,
+        } = resources.get();
 
-        /**
-         * figure out if the game is over first, that seems important...
-         */
+        const incFrameData = await Promise.all([
+            // SC2 sends deadUnits/chat/acks/errors only once, so realtime must wait for the target loop here, not in the engine
+            isRealtime() ? client.observation({ gameLoop }) : client.observation(),
+        ]);
+
         if (incFrameData[0].playerResult!.length > 0) {
             debugFrame('exiting loop, results given from observation');
             throw new GameEndedError('Player results available in observation', { data: incFrameData[0].playerResult });
         }
 
-
-        const [responseObservation/* , gameInfo */] = incFrameData;
+        const [responseObservation] = incFrameData;
 
         const { observation, chat } = responseObservation;
-        
+
         frame._previous = {
             _gameLoop: frame._gameLoop,
-            // @TODO: perf, do we really need this for anything rn?
-            // gameInfo: frame._gameInfo,
-            // observation: frame._observation,
         };
-        
+
         if (observation) {
             frame._gameLoop = observation.gameLoop!;
             frame._observation = observation;
@@ -61,27 +55,18 @@ const frameSystem: FrameSystem = {
             frame._feature = observation.featureLayerData!;
             frame._score = observation.score!;
         }
-        
-        // if (gameInfo) {
-        //     frame._gameInfo = gameInfo;
-        // }
 
-        /**
-         * @TODO: this shouldn't be an issue, but should perf check it late game.
-         * 
-         * given accepted commands have been ack'd by the game, so free the units
-         * for non-queued commands this upcoming frame.
-         * 
-         * @TODO: should the frame system be in charge of this? Command labels are
-         * set in the action builder... maybe we should also let it clean up? 
-         */
+        frame._actionErrors = responseObservation.actionErrors ?? [];
+
+        // @TODO: perf check this late game
+        // @TODO: should the frame system be in charge of this? Command labels are set in the action builder
         const { actions } = responseObservation;
         if (actions!.length > 0) {
             actions!.forEach((action) => {
-                action.actionRaw && action.actionRaw.unitCommand &&
+                action.actionRaw &&
+                    action.actionRaw.unitCommand &&
                     action.actionRaw.unitCommand.unitTags!.forEach((unitTag) => {
-                        const u = units.getByTag(unitTag);
-                        if (u && typeof u !== 'string') u.removeLabel('command');
+                        units.getByTag(unitTag)?.removeLabel('command');
                     });
             });
         }
@@ -91,14 +76,13 @@ const frameSystem: FrameSystem = {
             const frameCommanded = unit.getLabel('command');
             const frameDifference = observation!.gameLoop! - frameCommanded;
             if (frameDifference > 250) {
-                // obviously something went wrong here...
                 debugFrame(`Outstanding unit command after ${frameDifference}ms!`);
                 if (unit.isWorker()) {
                     unit.labels.clear();
                     unit.addLabel('stuck', true);
                 }
                 unit.removeLabel('command');
-            } 
+            }
         });
 
         if (chat!.length > 0) {
@@ -110,28 +94,26 @@ const frameSystem: FrameSystem = {
             });
         }
 
-        /**
-         * forward "unit dead" events from the observation
-         */
         const { event } = responseObservation.observation!.rawData!;
 
         if (event && event.deadUnits!.length > 0) {
-            // apparently you get dead unit events for things like projectiles.. so..
-            const deadUnits = units.getByTag(event.deadUnits!).filter(unit => {
-                return typeof unit !== 'string';
-            });
-            
-            // set 'em dead
-            deadUnits.forEach(unit => unit.labels.set('dead', true));
+            // dead unit events also arrive for untracked things like projectiles
+            const deadUnits = units.getByTag(event.deadUnits!);
 
-            // set an event for each dead thingy
-            deadUnits.forEach(unit => events.write({
-                name: 'unitDestroyed',
-                type: 'all',
-                data: unit,
-            }));
+            deadUnits.forEach((unit) => unit.labels.set('dead', true));
+            // enemies are kept as memory after leaving vision, so a dead one would otherwise linger forever
+            deadUnits.forEach((unit) => units._units[Alliance.ENEMY].delete(unit.tag!));
+
+            deadUnits.forEach((unit) =>
+                events.write({
+                    name: 'unitDestroyed',
+                    type: 'all',
+                    data: unit,
+                }),
+            );
         }
     },
-};
+});
 
-export default () => createSystem(frameSystem);
+export default ({ isRealtime = () => false }: { isRealtime?: () => boolean } = {}) =>
+    createSystem(createFrameSystem(isRealtime));

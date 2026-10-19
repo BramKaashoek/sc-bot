@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'bun:test';
 import { consumeImageData, consumeRawGrids } from './grid.ts';
 
-const imageData = (bitsPerPixel: number, bytes: number[]): SC2APIProtocol.ImageData => (
-    { bitsPerPixel, data: new Uint8Array(bytes) }
-);
+const imageData = (bitsPerPixel: number, bytes: number[]): SC2APIProtocol.ImageData => ({
+    bitsPerPixel,
+    data: new Uint8Array(bytes),
+});
 
 describe('consumeImageData', () => {
     it('splits 8-bit data into rows of the given width', () => {
-        expect(consumeImageData(imageData(8, [1, 2, 3, 4, 5, 6]), 3)).toEqual([[1, 2, 3], [4, 5, 6]] as never);
+        expect(consumeImageData(imageData(8, [1, 2, 3, 4, 5, 6]), 3)).toEqual([
+            [1, 2, 3],
+            [4, 5, 6],
+        ] as never);
     });
 
     it('stops after the given height', () => {
@@ -15,7 +19,10 @@ describe('consumeImageData', () => {
     });
 
     it('unpacks 1-bit data most-significant-bit first, and rows may span bytes', () => {
-        expect(consumeImageData(imageData(1, [0b10100101]), 4)).toEqual([[1, 0, 1, 0], [0, 1, 0, 1]] as never);
+        expect(consumeImageData(imageData(1, [0b10100101]), 4)).toEqual([
+            [1, 0, 1, 0],
+            [0, 1, 0, 1],
+        ] as never);
     });
 
     it('throws without a width', () => {
@@ -33,10 +40,22 @@ describe('consumeRawGrids', () => {
         } as SC2APIProtocol.StartRaw;
 
         expect(consumeRawGrids(raw)).toEqual({
-            placement: [[1, 0], [1, 0]],
-            pathing: [[1, 0], [0, 1]],
-            height: [[0, 10], [5, 0]],
-            miniMap: [[1, 114], [66, 0]],
+            placement: [
+                [1, 0],
+                [1, 0],
+            ],
+            pathing: [
+                [1, 0],
+                [0, 1],
+            ],
+            height: [
+                [0, 10],
+                [5, 0],
+            ],
+            miniMap: [
+                [1, 114],
+                [66, 0],
+            ],
         } as never);
     });
 });

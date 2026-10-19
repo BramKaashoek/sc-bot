@@ -1,17 +1,25 @@
 {
-  "name": "sc-bot",
-  "private": true,
-  "packageManager": "bun@1.4.3",
-  "workspaces": [
-    "bot",
-    "packages/*"
-  ],
-  "scripts": {
-    "dev": "turbo run dev",
-    "check-types": "turbo run check-types",
-    "test": "turbo run test"
-  },
-  "devDependencies": {
-    "turbo": "^2.11.9"
-  }
+    "name": "sc-bot",
+    "private": true,
+    "packageManager": "bun@1.4.3",
+    "workspaces": [
+        "bot",
+        "packages/*"
+    ],
+    "scripts": {
+        "dev": "turbo run dev",
+        "check-types": "turbo run check-types",
+        "test": "turbo run test",
+        "match": "./scripts/match.sh",
+        "vs:easy": "bun run --cwd bot vs:easy",
+        "vs:medium": "bun run --cwd bot vs:medium",
+        "vs:hard": "bun run --cwd bot vs:hard",
+        "vs:harder": "bun run --cwd bot vs:harder",
+        "vs:veryhard": "bun run --cwd bot vs:veryhard",
+        "format": "biome format --write"
+    },
+    "devDependencies": {
+        "@biomejs/biome": "2.5.15",
+        "turbo": "^2.11.9"
+    }
 }

@@ -15,6 +15,15 @@ All logic *that is aware of the game context* is contained within functions prov
 - `onUnitHasEngaged`
 - `onUnitHasDisengaged`
 - `onUnitHasSwitchedTargets`
+- `onUnitIsTransforming`
+- `onUnitHasBurrowed`
+- `onUnitTypeChanged` (own unit morphed; receives `{ unit, previousType }`)
+- `onUnitTookDamage` (own unit; receives `{ unit, amount }`)
+- `onBuildingConstructionStarted`
+- `onBuildingConstructionComplete`
+- `onStructureConstructionStarted` / `onStructureConstructionComplete` / `onUnitSpawned` (python-sc2's `on_building_construction_started` / `on_building_construction_complete` / `on_unit_created`)
+- `onEnemyUnitEnteredVision`
+- `onEnemyUnitLeftVision`
 - `onNewEffect`
 - `onExpiredEffect`
 - `onChatReceived`
@@ -29,14 +38,14 @@ The first argument given to all event consumer methods is the `world`. The `worl
         // ...
     }
 ```
-As you can see, the `world` is made up of `agent`, a reference to your agent, `data`, which is a store of data related to internal functionality of the bot, and `resources`, which are the main points of entry to all other game state. The world and its contents are spoken of in more detail in the API Reference documentation [here](docs/api.md). We will go further into how to use the `world` context shortly, but for now it's enough to understand how to access it. 
+As you can see, the `world` is made up of `agent`, a reference to your agent, `data`, which is a store of data related to internal functionality of the bot, and `resources`, which are the main points of entry to all other game state. The world and its contents are spoken of in more detail in the API Reference documentation [here](./api.md). We will go further into how to use the `world` context shortly, but for now it's enough to understand how to access it. 
 
 ## Systems
 A system is an encapsulated part of your agent. Think of them like middleware in `express`. Systems are optional, but are very helpful for breaking bots down into easier to handle, reusable pieces, creating modularity. For instance, you could create a `WorkerRushDefense` system, and each time you make a new bot, simply include this system without having to copy and paste code or update it across many agents. Systems can even be published and installed as dependencies. There are also some special types of systems (such as a Build System) which implement additional features like following a build order. Systems implement the `EventConsumer` trait, and so they can accept consumer methods just like an agent can. Here is an example of the same worker rush bot given in the readme, but this time implemented as a system:
 
 ```js
-// in worker-rush-system.js
-const { createSystem } = require('@node-sc2/core');
+// in worker-rush-system.ts
+import { createSystem } from '@sc-bot/core';
 
 const workerRushSystem = createSystem({
     name: 'WorkerRushSystem',
@@ -49,15 +58,15 @@ const workerRushSystem = createSystem({
     }
 });
 
-module.exports = workerRushSystem;
+export default workerRushSystem;
 ```
 
-Then, in our main entry point, we require the system and mount it on our agent:
+Then, in our main entry point, we import the system and mount it on our agent:
 
 ```js
-const { createAgent, createEngine, createPlayer } = require('@node-sc2/core');
-const { Difficulty, Race } = require('@node-sc2/core/constants/enums');
-const workerRushSystem = require('./worker-rush-system');
+import { createAgent, createEngine, createPlayer } from '@sc-bot/core';
+import { Difficulty, Race } from '@sc-bot/core/constants/enums';
+import workerRushSystem from './worker-rush-system.ts';
 
 const bot = createAgent();
 bot.use(workerRushSystem);
@@ -85,22 +94,23 @@ The three resources used above are `units`, `map`, and `actions`. There are othe
 The `units` resource is a very important part of any sc2 bot, since almost everything in the game is considered a `unit`, including workers, combat units, buildings and structures, mineral fields, destructable rocks, etc etc. The `units` resource is updated every step by a system internal to the engine, and exposes a number of methods to access units through all sorts of custom filters. Some of these are by metadata, like `getClosest()`, `getAlive()`, or `inProgress()`. Others are quick helpers / shortcuts by attribute or type, like `getWorkers()` (seen above), `getUpgradeFacilities()`, `getStructures()`, etc. Finally, others allow for more specific filtering such as `getAll()`, `getByTag()`, and `withCurrentOrders()`, all of which accept various arguments. Frequently there is more than one way to come to the same result. As an example, lets say you wanted to pick all of your Zealots which are idle:
 
 ```js
-const { ZEALOT } = require('@node-sc2/core/constants/unit-type');
+import { ZEALOT } from '@sc-bot/core/constants/unit-type';
+import { Alliance } from '@sc-bot/core/constants/enums';
 
 //...
 
     onStep({ resources }) {
         const { units } = resources.get();
 
-        // exhibit A
-        const myIdleZealots = units.getById(ZEALOT, { noQueue: true });
+        // exhibit A: a filter object replaces getById's default { alliance: SELF }, so keep the alliance in it
+        const idleByFilter = units.getById(ZEALOT, { alliance: Alliance.SELF, noQueue: true });
 
-        // OR, exhibit B
-        const myIdleZealots = units.getByType(ZEALOT).filter(u => u.noQueue === true);
+        // OR, exhibit B: the Units collection's `idle` filter
+        const idleByCollection = units.getById(ZEALOT).idle;
     }
 ```
 
-Many of the `units` resource methods return objects that are arrays of the `Unit` type. This type is an augmented version of the protobuf `SC2APIProtocol.Unit`. You can read more in-depth about `Unit` and the `units` resource API [here](./api.md).
+The `units` resource methods return a `Units` collection: an array of the `Unit` type with chainable filters (`idle`, `ready`, `closerThan`, ...). This type is an augmented version of the protobuf `SC2APIProtocol.Unit`. You can read more in-depth about `Unit` and the `units` resource API [here](./api.md).
 
 ### map
 The `map` resource represents everything related to positioning of the game world. It contains data and methods pertaining to the map size and state, self and enemy locations, expansions, and pathing. In the above example, it's used to get the position of the townhall location of the enemies main base. It also has many helper functions related to expansions, such as `getMain()`, `getEnemyNatural()`, `path()` (synchronous A* pathing lookups), `getLocations()` (for start locations), etc. Many of the `map` resources' methods return objects that are of the `Expansion` type. You can read more in-depth about `Expansion` and the `maps` resource API [here](./api.md).

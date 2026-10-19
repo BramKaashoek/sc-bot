@@ -1,6 +1,7 @@
 import type { UnitTypeGroup } from '../types.ts';
 import * as UnitType from './unit-type.ts';
 import * as Ability from './ability.ts';
+import * as Buff from './buff.ts';
 
 const flyingStructureTypes: UnitTypeGroup = [
     UnitType.FACTORYFLYING,
@@ -98,7 +99,6 @@ const structureTypes: UnitTypeGroup = [
     UnitType.ULTRALISKCAVERN,
     UnitType.WARPGATE,
 
-    // neutral
     ...vespeneGeyserTypes,
     ...unbuildablePlateTypes,
 ];
@@ -128,11 +128,7 @@ const mineralFieldTypes: UnitTypeGroup = [
     UnitType.BATTLESTATIONMINERALFIELD750,
 ];
 
-const gasMineTypes: UnitTypeGroup = [
-    UnitType.EXTRACTOR,
-    UnitType.ASSIMILATOR,
-    UnitType.REFINERY,
-];
+const gasMineTypes: UnitTypeGroup = [UnitType.EXTRACTOR, UnitType.ASSIMILATOR, UnitType.REFINERY];
 
 const techLabTypes: UnitTypeGroup = [
     UnitType.TECHLAB,
@@ -148,17 +144,9 @@ const reactorTypes: UnitTypeGroup = [
     UnitType.STARPORTREACTOR,
 ];
 
-const addonTypes: UnitTypeGroup = [
-    ...techLabTypes,
-    ...reactorTypes,
-];
+const addonTypes: UnitTypeGroup = [...techLabTypes, ...reactorTypes];
 
-const workerTypes: UnitTypeGroup = [
-    UnitType.DRONE,
-    UnitType.PROBE,
-    UnitType.SCV,
-    UnitType.MULE,
-];
+const workerTypes: UnitTypeGroup = [UnitType.DRONE, UnitType.PROBE, UnitType.SCV, UnitType.MULE];
 
 const combatTypes: UnitTypeGroup = [
     UnitType.BANSHEE,
@@ -204,7 +192,6 @@ const combatTypes: UnitTypeGroup = [
     UnitType.ZERGLINGBURROWED,
 
     UnitType.ADEPT,
-    // unitType.ADEPTPHASESHIFT,
     UnitType.ARCHON,
     UnitType.RAVEN,
     UnitType.COLOSSUS,
@@ -222,11 +209,8 @@ const combatTypes: UnitTypeGroup = [
     UnitType.VOIDRAY,
     UnitType.ZEALOT,
 
-    // static d... should we separate this out? i mean they.. are combat units no?
     UnitType.PHOTONCANNON,
     UnitType.SPINECRAWLER,
-
-    // what about air? what about uprooted spine crawlers? no weapons but they should be a target....
 ];
 
 const gatheringAbilities = [
@@ -244,11 +228,7 @@ const returningAbilities = [
     Ability.HARVEST_RETURN_SCV,
 ];
 
-const harvestingAbilities = [
-    ...gatheringAbilities,
-    ...returningAbilities,
-];
-
+const harvestingAbilities = [...gatheringAbilities, ...returningAbilities];
 
 const constructionAbilities = [
     Ability.BUILD_ARMORY,
@@ -309,19 +289,180 @@ const constructionAbilities = [
     Ability.BUILD_ULTRALISKCAVERN,
 ];
 
+const attackingAbilities = [
+    Ability.ATTACK,
+    Ability.ATTACK_ATTACK,
+    Ability.ATTACK_ATTACKTOWARDS,
+    Ability.ATTACK_ATTACKBARRAGE,
+    Ability.SCAN_MOVE,
+];
+
+const repairingAbilities = [Ability.EFFECT_REPAIR, Ability.EFFECT_REPAIR_MULE, Ability.EFFECT_REPAIR_SCV];
+
+const scvConstructionAbilities = [
+    Ability.BUILD_ARMORY,
+    Ability.BUILD_BARRACKS,
+    Ability.BUILD_BUNKER,
+    Ability.BUILD_COMMANDCENTER,
+    Ability.BUILD_ENGINEERINGBAY,
+    Ability.BUILD_FACTORY,
+    Ability.BUILD_FUSIONCORE,
+    Ability.BUILD_GHOSTACADEMY,
+    Ability.BUILD_MISSILETURRET,
+    Ability.BUILD_REFINERY,
+    Ability.BUILD_SENSORTOWER,
+    Ability.BUILD_STARPORT,
+    Ability.BUILD_SUPPLYDEPOT,
+];
+
+const transformingAbility: Record<number, number> = {
+    [UnitType.BARRACKS]: Ability.LAND_BARRACKS,
+    [UnitType.BARRACKSFLYING]: Ability.LAND_BARRACKS,
+    [UnitType.COMMANDCENTER]: Ability.LAND_COMMANDCENTER,
+    [UnitType.COMMANDCENTERFLYING]: Ability.LAND_COMMANDCENTER,
+    [UnitType.ORBITALCOMMAND]: Ability.LAND_ORBITALCOMMAND,
+    [UnitType.ORBITALCOMMANDFLYING]: Ability.LAND_ORBITALCOMMAND,
+    [UnitType.FACTORY]: Ability.LAND_FACTORY,
+    [UnitType.FACTORYFLYING]: Ability.LAND_FACTORY,
+    [UnitType.STARPORT]: Ability.LAND_STARPORT,
+    [UnitType.STARPORTFLYING]: Ability.LAND_STARPORT,
+    [UnitType.SUPPLYDEPOT]: Ability.MORPH_SUPPLYDEPOT_RAISE,
+    [UnitType.SUPPLYDEPOTLOWERED]: Ability.MORPH_SUPPLYDEPOT_LOWER,
+    [UnitType.HELLION]: Ability.MORPH_HELLION,
+    [UnitType.HELLIONTANK]: Ability.MORPH_HELLBAT,
+    [UnitType.LIBERATOR]: Ability.MORPH_LIBERATORAAMODE,
+    [UnitType.LIBERATORAG]: Ability.MORPH_LIBERATORAGMODE,
+    [UnitType.SIEGETANK]: Ability.MORPH_UNSIEGE,
+    [UnitType.SIEGETANKSIEGED]: Ability.MORPH_SIEGEMODE,
+    [UnitType.THOR]: Ability.MORPH_THOREXPLOSIVEMODE,
+    [UnitType.THORAP]: Ability.MORPH_THORHIGHIMPACTMODE,
+    [UnitType.VIKINGASSAULT]: Ability.MORPH_VIKINGASSAULTMODE,
+    [UnitType.VIKINGFIGHTER]: Ability.MORPH_VIKINGFIGHTERMODE,
+    [UnitType.WIDOWMINE]: Ability.BURROWUP,
+    [UnitType.WIDOWMINEBURROWED]: Ability.BURROWDOWN,
+    [UnitType.GATEWAY]: Ability.MORPH_GATEWAY,
+    [UnitType.WARPGATE]: Ability.MORPH_WARPGATE,
+    [UnitType.OBSERVER]: Ability.MORPH_OBSERVERMODE,
+    [UnitType.OBSERVERSIEGEMODE]: Ability.MORPH_SURVEILLANCEMODE,
+    [UnitType.WARPPRISM]: Ability.MORPH_WARPPRISMTRANSPORTMODE,
+    [UnitType.WARPPRISMPHASING]: Ability.MORPH_WARPPRISMPHASINGMODE,
+    [UnitType.SPINECRAWLER]: Ability.MORPH_SPINECRAWLERROOT,
+    [UnitType.SPINECRAWLERUPROOTED]: Ability.MORPH_SPINECRAWLERUPROOT,
+    [UnitType.SPORECRAWLER]: Ability.MORPH_SPORECRAWLERROOT,
+    [UnitType.SPORECRAWLERUPROOTED]: Ability.MORPH_SPORECRAWLERUPROOT,
+    [UnitType.BANELING]: Ability.BURROWUP_BANELING,
+    [UnitType.BANELINGBURROWED]: Ability.BURROWDOWN_BANELING,
+    [UnitType.DRONE]: Ability.BURROWUP_DRONE,
+    [UnitType.DRONEBURROWED]: Ability.BURROWDOWN_DRONE,
+    [UnitType.HYDRALISK]: Ability.BURROWUP_HYDRALISK,
+    [UnitType.HYDRALISKBURROWED]: Ability.BURROWDOWN_HYDRALISK,
+    [UnitType.INFESTOR]: Ability.BURROWUP_INFESTOR,
+    [UnitType.INFESTORBURROWED]: Ability.BURROWDOWN_INFESTOR,
+    [UnitType.INFESTORTERRAN]: Ability.BURROWUP_INFESTORTERRAN,
+    [UnitType.INFESTORTERRANBURROWED]: Ability.BURROWDOWN_INFESTORTERRAN,
+    [UnitType.LURKERMP]: Ability.BURROWUP_LURKER,
+    [UnitType.LURKERMPBURROWED]: Ability.BURROWDOWN_LURKER,
+    [UnitType.OVERSEER]: Ability.MORPH_OVERSEERMODE,
+    [UnitType.OVERSEERSIEGEMODE]: Ability.MORPH_OVERSIGHTMODE,
+    [UnitType.QUEEN]: Ability.BURROWUP_QUEEN,
+    [UnitType.QUEENBURROWED]: Ability.BURROWDOWN_QUEEN,
+    [UnitType.ROACH]: Ability.BURROWUP_ROACH,
+    [UnitType.ROACHBURROWED]: Ability.BURROWDOWN_ROACH,
+    [UnitType.SWARMHOSTBURROWEDMP]: Ability.BURROWDOWN_SWARMHOST,
+    [UnitType.SWARMHOSTMP]: Ability.BURROWUP_SWARMHOST,
+    [UnitType.ULTRALISK]: Ability.BURROWUP_ULTRALISK,
+    [UnitType.ULTRALISKBURROWED]: Ability.BURROWDOWN_ULTRALISK,
+    [UnitType.ZERGLING]: Ability.BURROWUP_ZERGLING,
+    [UnitType.ZERGLINGBURROWED]: Ability.BURROWDOWN_ZERGLING,
+};
+
+const burrowedTypes: Record<number, number> = {
+    [UnitType.BANELING]: UnitType.BANELINGBURROWED,
+    [UnitType.DRONE]: UnitType.DRONEBURROWED,
+    [UnitType.HYDRALISK]: UnitType.HYDRALISKBURROWED,
+    [UnitType.INFESTOR]: UnitType.INFESTORBURROWED,
+    [UnitType.INFESTORTERRAN]: UnitType.INFESTORTERRANBURROWED,
+    [UnitType.LURKERMP]: UnitType.LURKERMPBURROWED,
+    [UnitType.QUEEN]: UnitType.QUEENBURROWED,
+    [UnitType.RAVAGER]: UnitType.RAVAGERBURROWED,
+    [UnitType.ROACH]: UnitType.ROACHBURROWED,
+    [UnitType.SWARMHOSTMP]: UnitType.SWARMHOSTBURROWEDMP,
+    [UnitType.ULTRALISK]: UnitType.ULTRALISKBURROWED,
+    [UnitType.WIDOWMINE]: UnitType.WIDOWMINEBURROWED,
+    [UnitType.ZERGLING]: UnitType.ZERGLINGBURROWED,
+};
+
+const toggleAbilities: Record<number, number> = {
+    [UnitType.SUPPLYDEPOT]: Ability.MORPH_SUPPLYDEPOT_LOWER,
+    [UnitType.SUPPLYDEPOTLOWERED]: Ability.MORPH_SUPPLYDEPOT_RAISE,
+    [UnitType.HELLION]: Ability.MORPH_HELLBAT,
+    [UnitType.HELLIONTANK]: Ability.MORPH_HELLION,
+    [UnitType.LIBERATOR]: Ability.MORPH_LIBERATORAGMODE,
+    [UnitType.LIBERATORAG]: Ability.MORPH_LIBERATORAAMODE,
+    [UnitType.SIEGETANK]: Ability.MORPH_SIEGEMODE,
+    [UnitType.SIEGETANKSIEGED]: Ability.MORPH_UNSIEGE,
+    [UnitType.THOR]: Ability.MORPH_THORHIGHIMPACTMODE,
+    [UnitType.THORAP]: Ability.MORPH_THOREXPLOSIVEMODE,
+    [UnitType.VIKINGFIGHTER]: Ability.MORPH_VIKINGASSAULTMODE,
+    [UnitType.VIKINGASSAULT]: Ability.MORPH_VIKINGFIGHTERMODE,
+    [UnitType.GATEWAY]: Ability.MORPH_WARPGATE,
+    [UnitType.WARPGATE]: Ability.MORPH_GATEWAY,
+    [UnitType.OBSERVER]: Ability.MORPH_SURVEILLANCEMODE,
+    [UnitType.OBSERVERSIEGEMODE]: Ability.MORPH_OBSERVERMODE,
+    [UnitType.WARPPRISM]: Ability.MORPH_WARPPRISMPHASINGMODE,
+    [UnitType.WARPPRISMPHASING]: Ability.MORPH_WARPPRISMTRANSPORTMODE,
+    [UnitType.OVERSEER]: Ability.MORPH_OVERSIGHTMODE,
+    [UnitType.OVERSEERSIEGEMODE]: Ability.MORPH_OVERSEERMODE,
+    [UnitType.SPINECRAWLER]: Ability.MORPH_SPINECRAWLERUPROOT,
+    [UnitType.SPINECRAWLERUPROOTED]: Ability.MORPH_SPINECRAWLERROOT,
+    [UnitType.SPORECRAWLER]: Ability.MORPH_SPORECRAWLERUPROOT,
+    [UnitType.SPORECRAWLERUPROOTED]: Ability.MORPH_SPORECRAWLERROOT,
+    ...Object.fromEntries(
+        Object.entries(burrowedTypes).flatMap(([unburrowed, burrowed]) => [
+            [unburrowed, Ability.BURROWDOWN],
+            [burrowed, Ability.BURROWUP],
+        ]),
+    ),
+};
+
+const carryingMineralsBuffs = [Buff.CARRYMINERALFIELDMINERALS, Buff.CARRYHIGHYIELDMINERALFIELDMINERALS];
+
+const carryingVespeneBuffs = [
+    Buff.CARRYHARVESTABLEVESPENEGEYSERGAS,
+    Buff.CARRYHARVESTABLEVESPENEGEYSERGASPROTOSS,
+    Buff.CARRYHARVESTABLEVESPENEGEYSERGASZERG,
+];
+
+const halfSupplyTypes: UnitTypeGroup = [
+    UnitType.ZERGLING,
+    UnitType.ZERGLINGBURROWED,
+    UnitType.BANELING,
+    UnitType.BANELINGBURROWED,
+    UnitType.BANELINGCOCOON,
+];
+
 export {
     addonTypes,
+    attackingAbilities,
+    carryingMineralsBuffs,
+    carryingVespeneBuffs,
     combatTypes,
     constructionAbilities,
     flyingStructureTypes,
     gasMineTypes,
     gatheringAbilities,
+    halfSupplyTypes,
     mineralFieldTypes,
     reactorTypes,
+    repairingAbilities,
     returningAbilities,
+    scvConstructionAbilities,
     structureTypes,
     techLabTypes,
     townhallTypes,
+    transformingAbility,
+    burrowedTypes,
+    toggleAbilities,
     unbuildablePlateTypes,
     vespeneGeyserTypes,
     workerTypes,

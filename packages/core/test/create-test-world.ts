@@ -16,25 +16,27 @@ export type TestWorldOptions = {
 
 const FIXTURES_DIR = join(import.meta.dir, '..', 'fixtures');
 
-const readJson = (path: string) => JSON.parse(readFileSync(path, 'utf8'), (key, value) => (
-    key === 'data' && typeof value === 'string' ? Uint8Array.from(Buffer.from(value, 'base64')) : value
-));
+const readJson = (path: string) =>
+    JSON.parse(readFileSync(path, 'utf8'), (key, value) =>
+        key === 'data' && typeof value === 'string' ? Uint8Array.from(Buffer.from(value, 'base64')) : value,
+    );
 
 export function loadFixture(mapName: string): Fixture {
     const dir = join(FIXTURES_DIR, mapName);
     const files = readdirSync(dir);
     const observations = Object.fromEntries(
         files
-            .map(file => /^obs-(\d+)\.json$/.exec(file))
-            .filter(match => match !== null)
-            .map(match => [Number(match[1]), readJson(join(dir, match[0]))])
+            .map((file) => /^obs-(\d+)\.json$/.exec(file))
+            .filter((match) => match !== null)
+            .map((match) => [Number(match[1]), readJson(join(dir, match[0]))]),
     );
 
     return {
         gameInfo: readJson(join(dir, 'gameInfo.json')),
-        data: readJson(join(dir, 'data.json')),
+        data: readJson(join(FIXTURES_DIR, 'data.json')),
         observations,
         abilities: files.includes('abilities.json') ? readJson(join(dir, 'abilities.json')) : undefined,
+        queries: files.includes('queries.json') ? readJson(join(dir, 'queries.json')) : undefined,
     };
 }
 
@@ -55,7 +57,10 @@ export async function stepTo(world: TestWorld, next: SC2APIProtocol.ResponseObse
     await engine.dispatch();
 }
 
-export async function createTestWorld(fixtureOrMapName: Fixture | string, { loop, agent = createAgent(), onQuery }: TestWorldOptions = {}): Promise<TestWorld> {
+export async function createTestWorld(
+    fixtureOrMapName: Fixture | string,
+    { loop, agent = createAgent(), onQuery }: TestWorldOptions = {},
+): Promise<TestWorld> {
     const fixture = typeof fixtureOrMapName === 'string' ? loadFixture(fixtureOrMapName) : fixtureOrMapName;
     const startLoop = loop ?? Math.min(...Object.keys(fixture.observations).map(Number));
     const responseObservation = fixture.observations[startLoop];

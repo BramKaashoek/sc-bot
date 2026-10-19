@@ -1,7 +1,22 @@
 import { describe, expect, it } from 'bun:test';
 import {
-    add, areEqual, avgPoints, closestPoint, createPoint, createPoint2D, distance, distanceSquared, distanceX,
-    distanceY, divide, dotProduct, getNeighbors, multiply, nClosestPoint, normalize, subtract,
+    add,
+    areEqual,
+    avgPoints,
+    closestPoint,
+    createPoint,
+    createPoint2D,
+    distance,
+    distanceSquared,
+    distanceX,
+    distanceY,
+    divide,
+    dotProduct,
+    getNeighbors,
+    multiply,
+    nClosestPoint,
+    normalize,
+    subtract,
 } from './point.ts';
 
 describe('point arithmetic', () => {
@@ -33,7 +48,13 @@ describe('point measures', () => {
 
     it('normalizes to unit length and averages points', () => {
         expect(normalize({ x: 3, y: 4 })).toEqual({ x: 0.6, y: 0.8 });
-        expect(avgPoints([{ x: 0, y: 0 }, { x: 4, y: 2 }, { x: 2, y: 7 }])).toEqual({ x: 2, y: 3 });
+        expect(
+            avgPoints([
+                { x: 0, y: 0 },
+                { x: 4, y: 2 },
+                { x: 2, y: 7 },
+            ]),
+        ).toEqual({ x: 2, y: 3 });
     });
 
     it('compares points by both coordinates', () => {
@@ -43,12 +64,19 @@ describe('point measures', () => {
 });
 
 describe('closest points', () => {
-    const points = [{ x: 10, y: 0 }, { x: 1, y: 1 }, { x: 5, y: 0 }];
+    const points = [
+        { x: 10, y: 0 },
+        { x: 1, y: 1 },
+        { x: 5, y: 0 },
+    ];
 
     it('returns the nearest point, and the n nearest ordered by distance', () => {
         expect(closestPoint({ x: 0, y: 0 }, points)).toEqual({ x: 1, y: 1 });
         expect(nClosestPoint({ x: 0, y: 0 }, points)).toEqual([{ x: 1, y: 1 }]);
-        expect(nClosestPoint({ x: 0, y: 0 }, points, 2)).toEqual([{ x: 1, y: 1 }, { x: 5, y: 0 }]);
+        expect(nClosestPoint({ x: 0, y: 0 }, points, 2)).toEqual([
+            { x: 1, y: 1 },
+            { x: 5, y: 0 },
+        ]);
     });
 
     it('does not reorder the input array', () => {
@@ -66,8 +94,18 @@ describe('point flooring', () => {
 });
 
 describe('getNeighbors', () => {
-    const adjacents = [{ x: 5, y: 4 }, { x: 4, y: 5 }, { x: 6, y: 5 }, { x: 5, y: 6 }];
-    const diagonals = [{ x: 4, y: 4 }, { x: 6, y: 4 }, { x: 4, y: 6 }, { x: 6, y: 6 }];
+    const adjacents = [
+        { x: 5, y: 4 },
+        { x: 4, y: 5 },
+        { x: 6, y: 5 },
+        { x: 5, y: 6 },
+    ];
+    const diagonals = [
+        { x: 4, y: 4 },
+        { x: 6, y: 4 },
+        { x: 4, y: 6 },
+        { x: 6, y: 6 },
+    ];
 
     it('returns adjacents plus diagonals by default, around the floored point', () => {
         expect(getNeighbors({ x: 5.7, y: 5.2 })).toEqual([...adjacents, ...diagonals]);

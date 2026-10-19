@@ -26,7 +26,12 @@ const randomCirclePoints = (centerPoint: Point2D, radius: number, n = 1): Point2
     });
 };
 
-const gridsInCircle = (c: Point2D, r: number, options: { distance?: number; normalize?: boolean } = {}, debug?: Debugger): Point2D[] => {
+const gridsInCircle = (
+    c: Point2D,
+    r: number,
+    options: { distance?: number; normalize?: boolean } = {},
+    debug?: Debugger,
+): Point2D[] => {
     const opts = {
         distance: 0.5,
         ...options,
@@ -41,14 +46,14 @@ const gridsInCircle = (c: Point2D, r: number, options: { distance?: number; norm
     const myPoints: Point2D[] = [];
     for (let x = center.x - r; x < center.x + d + r; x += d) {
         for (let y = center.y - r; y < center.y + d + r; y += d) {
-            if (debug){
+            if (debug) {
                 debug.setDrawCells(`xy-${x}${y}`, [{ pos: { x, y } }], { color: Color.WHITE, size: 1 });
             }
             if (
-                (Math.pow((x - c.x), 2) + Math.pow((y - c.y), 2) <= r * r) ||
-                (Math.pow(((x + d) - c.x), 2) + Math.pow((y - c.y), 2) <= r * r) ||
-                (Math.pow((x - c.x), 2) + Math.pow(((y + d) - c.y), 2) <= r * r) ||
-                (Math.pow(((x + d) - c.x), 2) + Math.pow(((y + d) - c.y), 2) <= r * r)
+                Math.pow(x - c.x, 2) + Math.pow(y - c.y, 2) <= r * r ||
+                Math.pow(x + d - c.x, 2) + Math.pow(y - c.y, 2) <= r * r ||
+                Math.pow(x - c.x, 2) + Math.pow(y + d - c.y, 2) <= r * r ||
+                Math.pow(x + d - c.x, 2) + Math.pow(y + d - c.y, 2) <= r * r
             ) {
                 myPoints.push(transform({ x, y }));
             }

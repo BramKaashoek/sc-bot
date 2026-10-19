@@ -1,14 +1,13 @@
-"use strict";
+'use strict';
 
 import createDebug from 'debug';
 import { Race, Attribute } from '../constants/enums.ts';
 import { AbilitiesByUnit } from '../constants/index.ts';
-import type { DataStorage, Earmark, StorageBlueprint } from '../types.ts';
+import type { Cost, DataStorage, Earmark, StorageBlueprint } from '../types.ts';
 
 const debugEarmark = createDebug('sc2:debug:earmark');
 
 function createDataManager(): DataStorage {
-
     const data = new Map<string, any>([
         ['earmarks', []],
         ['abilities', null],
@@ -25,16 +24,13 @@ function createDataManager(): DataStorage {
         findUnitTypesWithAbility(abilityId) {
             return Object.entries(AbilitiesByUnit)
                 .filter(([ignored, abilities]) => {
-                    return abilities.some(ability => ability === abilityId);
+                    return abilities.some((ability) => ability === abilityId);
                 })
-                .map(unitAbility => parseInt(unitAbility[0], 10));
+                .map((unitAbility) => parseInt(unitAbility[0], 10));
         },
         getUnitTypeData(unitTypeId) {
             const unitData: SC2APIProtocol.UnitTypeData = this.get('units')[unitTypeId];
 
-            /**
-             * Fixes unit cost for zerg structures (removes the 'drone cost' inflation)
-             */
             if (unitData.race === Race.ZERG && unitData.attributes!.includes(Attribute.STRUCTURE)) {
                 return {
                     ...unitData,
@@ -65,18 +61,18 @@ function createDataManager(): DataStorage {
                 return earmarks;
             } else {
                 debugEarmark('New earmark:', earmark);
-                // TODO(ts): StorageBlueprint declares Earmark[] but Map#set returns the map itself
-                return this.set('earmarks', [ ...earmarks, earmark ]) as unknown as Earmark[];
+                return this.set('earmarks', [...earmarks, earmark]);
             }
-            
         },
         getEarmarkTotals(earmarkName) {
-            const total = this.get('earmarks').filter((em: Earmark) => em.name !== earmarkName).reduce((totals: Pick<Earmark, 'minerals' | 'vespene'>, em: Earmark) => {
-                return { minerals: totals.minerals + em.minerals, vespene: totals.vespene + em.vespene };
-            }, { minerals: 0, vespene: 0});
-
-            // TODO(ts): StorageBlueprint declares an Earmark return but the totals carry no name
-            return total as Earmark;
+            return this.get('earmarks')
+                .filter((em: Earmark) => em.name !== earmarkName)
+                .reduce(
+                    (totals: Cost, em: Earmark) => {
+                        return { minerals: totals.minerals + em.minerals, vespene: totals.vespene + em.vespene };
+                    },
+                    { minerals: 0, vespene: 0 },
+                );
         },
         settleEarmark(earmarkName) {
             const newEarmarks = this.get('earmarks').filter((em: Earmark) => em.name !== earmarkName);
@@ -87,7 +83,7 @@ function createDataManager(): DataStorage {
     };
 
     const dataMap: DataStorage = Object.assign(data, StorageBlueprint);
-    
+
     return dataMap;
 }
 

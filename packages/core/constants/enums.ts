@@ -1,7 +1,5 @@
 import api from '@node-sc2/proto/root';
 
-// BuildOrder/BuildResult are unique to node-sc2
-
 export const BuildOrder = {
     NOT_STARTED: 0,
     COMMAND_GIVEN: 1,
@@ -30,12 +28,9 @@ export const BuildResult = {
 
 export type BuildResult = (typeof BuildResult)[keyof typeof BuildResult];
 
-// Redefined here as a reference instead of importing magic constants from the proto defs;
-// the reverse (id-based) lookups come from protobuf to avoid duplication.
-
 export const Alert = {
     NUCLEARLAUNCHDETECTED: 1,
-    NYDUSWORMDETECTED: 2
+    NYDUSWORMDETECTED: 2,
 };
 
 export const AlertId: Record<number, string> = api.lookupEnum('Alert').valuesById;
@@ -75,10 +70,21 @@ export const Difficulty = {
     VERYHARD: 7,
     CHEATVISION: 8,
     CHEATMONEY: 9,
-    CHEATINSANE: 10
+    CHEATINSANE: 10,
 };
 
 export const DifficultyId: Record<number, string> = api.lookupEnum('Difficulty').valuesById;
+
+export const AIBuild = {
+    RANDOMBUILD: 1,
+    RUSH: 2,
+    TIMING: 3,
+    POWER: 4,
+    MACRO: 5,
+    AIR: 6,
+};
+
+export const AIBuildId: Record<number, string> = api.lookupEnum('AIBuild').valuesById;
 
 export const DisplayType = {
     VISIBLE: 1,
@@ -92,7 +98,7 @@ export const GameResult = {
     VICTORY: 1,
     DEFEAT: 2,
     TIE: 3,
-    UNDECIDED: 4
+    UNDECIDED: 4,
 };
 
 export const GameResultId: Record<number, string> = api.lookupEnum('Result').valuesById;
@@ -100,7 +106,7 @@ export const GameResultId: Record<number, string> = api.lookupEnum('Result').val
 export const PlayerType = {
     PARTICIPANT: 1,
     COMPUTER: 2,
-    OBSERVER: 3
+    OBSERVER: 3,
 };
 
 export const PlayerTypeId: Record<number, string> = api.lookupEnum('PlayerType').valuesById;
@@ -110,7 +116,7 @@ export const Race = {
     TERRAN: 1,
     ZERG: 2,
     PROTOSS: 3,
-    RANDOM: 4
+    RANDOM: 4,
 };
 
 export const RaceId: Record<number, string> = api.lookupEnum('Race').valuesById;
@@ -122,7 +128,7 @@ export const Status = {
     IN_REPLAY: 4,
     ENDED: 5,
     QUIT: 6,
-    UNKNOWN: 99
+    UNKNOWN: 99,
 };
 
 export const StatusId: Record<number, string> = api.lookupEnum('Status').valuesById;
@@ -143,7 +149,9 @@ export const AbilityDataTarget = {
     POINTORNONE: 5,
 };
 
-export const AbilityDataTargetId: Record<number, string> = api.lookupType('AbilityData').lookupEnum('Target').valuesById;
+export const AbilityDataTargetId: Record<number, string> = api
+    .lookupType('AbilityData')
+    .lookupEnum('Target').valuesById;
 
 export const CloakState = {
     CLOAKED: 1,
