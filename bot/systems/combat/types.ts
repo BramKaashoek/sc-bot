@@ -9,6 +9,7 @@ export type OffenseTarget = { pos: Point2D; buildings: Units; units: Units; scor
 export type CombatState = {
     defenses: { [baseTag: Tag]: { unitTags: Tag[] } };
     attacks: { [position: StringPosition]: { unitTags: Tag[] } };
+    retreats: { [position: StringPosition]: { unitTags: Tag[]; enemyCost: number; at: Tick } };
     scoutedEmpty: { [expansion: number]: Tick };
     scout: { tag?: Tag; lastDiedAt?: Tick };
 };

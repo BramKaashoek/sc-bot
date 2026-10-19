@@ -61,6 +61,7 @@ export const attackTargets = async ({
     resources,
     offenseTargets,
     attacks,
+    retreats,
     defenses,
     scoutedEmpty,
     scoutTag,
@@ -69,15 +70,33 @@ export const attackTargets = async ({
     resources: ResourceManager;
     offenseTargets: OffenseTarget[];
     attacks: CombatState['attacks'];
+    retreats: CombatState['retreats'];
     defenses: CombatState['defenses'];
     scoutedEmpty: CombatState['scoutedEmpty'];
     scoutTag: Tag | undefined;
     setState: (state: Partial<CombatState>) => void;
 }) => {
     const MIN_ATTACK_SIZE = 9;
+    const RETREAT_WINDOW = 1344;
     const { units, actions, map, frame } = resources.get();
+    const now = frame.getGameLoop();
     const nextAttacks = { ...attacks };
+    const nextRetreats = { ...retreats };
     const nextScoutedEmpty = { ...scoutedEmpty };
+
+    // clean up retreats; keep an arrived retreat for its enemyCost until the window passes
+    for (const [positionString, retreat] of Object.entries(retreats)) {
+        const stillRetreating = units
+            .getCombatUnits()
+            .tagsIn(retreat.unitTags)
+            .filter((unit) => unit.distanceTo(map.getCombatRally()) > 10);
+
+        if (!stillRetreating.length && now - retreat.at > RETREAT_WINDOW) {
+            delete nextRetreats[positionString];
+            continue;
+        }
+        nextRetreats[positionString] = { ...retreat, unitTags: stillRetreating.map((unit) => unit.tag) };
+    }
 
     // clean up failed or complete attacks
     for (const attack of Object.entries(attacks)) {
@@ -103,6 +122,11 @@ export const attackTargets = async ({
 
         await actions.move(alive, map.getCombatRally());
         delete nextAttacks[positionString];
+        nextRetreats[positionString] = {
+            unitTags: [...(nextRetreats[positionString]?.unitTags ?? []), ...alive.map((unit) => unit.tag)],
+            enemyCost: enemiesCost,
+            at: now,
+        };
         log(
             { resources },
             `attack: retreating from ${positionString} | ${alive.length} units | cost ${aliveCost} vs enemy ${enemiesCost}`,
@@ -162,24 +186,32 @@ export const attackTargets = async ({
     // start new attack if none currently exist
     if (!Object.keys(nextAttacks).length && offenseTargets.length) {
         const firstTargetPos = offenseTargets[0].pos;
+        const targetKey = `${firstTargetPos.x},${firstTargetPos.y}`;
         const availableUnits = getFreeUnits({ resources, attacks: nextAttacks, defenses, scoutTag: scoutTag });
+        const isRetreating = Object.values(nextRetreats).some((retreat) => retreat.unitTags.length);
+        const recentRetreat = nextRetreats[targetKey];
+        const enemyCost = Math.max(
+            getUnitsCost(offenseTargets[0].units),
+            recentRetreat && now - recentRetreat.at < RETREAT_WINDOW ? recentRetreat.enemyCost : 0,
+        );
 
         // TODO: compare to required amount of units instead of flat value
         if (
+            !isRetreating &&
             availableUnits.length > MIN_ATTACK_SIZE &&
-            getUnitsCost(availableUnits) > 1.2 * getUnitsCost(offenseTargets[0].units)
+            getUnitsCost(availableUnits) > 1.2 * enemyCost
         ) {
             await actions.attackMove(availableUnits, offenseTargets[0].pos);
-            nextAttacks[`${firstTargetPos.x},${firstTargetPos.y}`] = {
+            nextAttacks[targetKey] = {
                 unitTags: availableUnits.map((unit) => unit.tag),
             };
             log(
                 { resources },
-                `attack: launching at ${firstTargetPos.x},${firstTargetPos.y} | ${availableUnits.length} units | cost ${getUnitsCost(availableUnits)} vs enemy ${getUnitsCost(offenseTargets[0].units)}`,
+                `attack: launching at ${targetKey} | ${availableUnits.length} units | cost ${getUnitsCost(availableUnits)} vs enemy ${enemyCost}`,
                 'yellow',
             );
         }
     }
 
-    setState({ attacks: nextAttacks, scoutedEmpty: nextScoutedEmpty });
+    setState({ attacks: nextAttacks, retreats: nextRetreats, scoutedEmpty: nextScoutedEmpty });
 };

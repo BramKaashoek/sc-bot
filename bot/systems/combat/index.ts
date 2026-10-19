@@ -6,7 +6,7 @@ import type { CombatState } from './types.ts';
 
 export default createSystem({
     name: 'Combat',
-    defaultOptions: { state: { defenses: {}, attacks: {}, scoutedEmpty: {}, scout: {} } as CombatState },
+    defaultOptions: { state: { defenses: {}, attacks: {}, retreats: {}, scoutedEmpty: {}, scout: {} } as CombatState },
     async onStep({ resources }) {
         const defenseTargets = getDefenseTargets(resources);
         await defendTargets({ resources, defenseTargets, defenses: this.state.defenses, setState: this.setState });
@@ -16,6 +16,7 @@ export default createSystem({
             resources,
             offenseTargets,
             attacks: this.state.attacks,
+            retreats: this.state.retreats,
             defenses: this.state.defenses,
             scoutedEmpty: this.state.scoutedEmpty,
             scoutTag: this.state.scout.tag,
