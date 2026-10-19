@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SC2_WIN_DIR="${SC2_WIN_DIR:-/mnt/c/Program Files (x86)/StarCraft II}"
 SC2_PORT="${SC2_PORT:-5000}"
 DIFFICULTY="${1:-hard}"
+SPEED="${2:-1}"
 
 VERSION="$(ls "$SC2_WIN_DIR/Versions" | sort -V | tail -n 1)"
 HOST="$(ip route show default | awk '{print $3}')"
@@ -18,4 +19,6 @@ for _ in $(seq 60); do
 done
 
 cd "$ROOT/bot"
-SC2_HOST="$HOST" SC2_PORT="$SC2_PORT" REALTIME=1 DIFFICULTY="$DIFFICULTY" bun run index.ts
+# core steps 4 game loops at a time and sleeps DELAY ms between steps; 22.4 loops/s is normal game speed
+DELAY="$(awk -v speed="$SPEED" 'BEGIN { print int(4 / 22.4 * 1000 / speed) }')"
+SC2_HOST="$HOST" SC2_PORT="$SC2_PORT" DELAY="$DELAY" DIFFICULTY="$DIFFICULTY" bun run index.ts

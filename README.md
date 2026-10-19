@@ -31,7 +31,7 @@ echo "executable = $PWD/StarCraft II/Versions/Base75689/SC2_x64" > ~/Documents/"
 From `bot/`:
 
 ```sh
-bun run vs:easy      # or vs:medium / vs:hard
+bun run vs:easy      # or vs:medium / vs:hard / vs:harder / vs:veryhard
 DIFFICULTY=veryhard AI_RACE=zerg MAP=Melee/Simple64 bun run dev
 ```
 
@@ -40,8 +40,53 @@ DIFFICULTY=veryhard AI_RACE=zerg MAP=Melee/Simple64 bun run dev
 | `DIFFICULTY` | `medium`                        | `veryeasy`, `easy`, `medium`, `mediumhard`, `hard`, `harder`, `veryhard`, `cheatvision`, `cheatmoney`, `cheatinsane` |
 | `AI_RACE`    | `terran`                        | `terran`, `zerg`, `protoss`, `random`                                                      |
 | `MAP`        | `Ladder2018Season4/BlueshiftLE` | any `<pack>/<map>` under `StarCraft II/Maps`                                                |
+| `SC2_HOST`   | unset (launch SC2 locally)      | host of an already running SC2 to connect to; `.SC2Map` is appended to `MAP`               |
+| `SC2_PORT`   | `5000`                          | port of that SC2                                                                           |
+| `REALTIME`   | unset                           | any value runs the game in SC2's realtime mode                                             |
+| `DELAY`      | unset                           | ms to sleep between steps (core steps 4 game loops at a time) to slow the game down        |
 
 The Linux client is headless. The bot prints a status line every 10 game-seconds and the result at the end. Add `DEBUG=sc2:debug:*` for engine logs.
+
+## Watch a game on Windows (WSL)
+
+The bot runs in WSL and drives the retail Windows SC2 client, which renders the game.
+
+### One-time setup
+
+1. Install StarCraft II through Battle.net (free), start it once and log in.
+2. Download [Ladder2018Season4](http://blzdistsc2-a.akamaihd.net/MapPacks/Ladder2018Season4.zip) (password `iagreetotheeula`) and extract it so the map ends up at `C:\Program Files (x86)\StarCraft II\Maps\Ladder2018Season4\BlueshiftLE.SC2Map`.
+3. Install WSL with Ubuntu from PowerShell. `--web-download` avoids the Microsoft Store download, which tends to hang:
+
+    ```powershell
+    wsl --install --web-download -d Ubuntu
+    ```
+
+    If it reports that Ubuntu already exists but it won't start, run `wsl --unregister Ubuntu` and install again.
+
+4. In Ubuntu, keep the repo in the Linux home (not under `/mnt/c`, which is slow):
+
+    ```sh
+    sudo apt update && sudo apt install -y unzip
+    curl -fsSL https://bun.sh/install | bash && source ~/.bashrc
+    git clone https://github.com/BramKaashoek/sc-bot.git ~/sc-bot
+    cd ~/sc-bot && bun install
+    ```
+
+### Run
+
+From the repo root in Ubuntu:
+
+```sh
+bun run vs:watch            # hard, normal speed
+bun run vs:watch harder 2   # difficulty, speed multiplier
+```
+
+`scripts/watch.sh` starts the newest `SC2_x64.exe` in a window, listening on `0.0.0.0:5000`, waits for it, then runs the bot with `SC2_HOST` set to the Windows host IP and a `DELAY` computed from the speed. When the game ends it kills every `SC2_x64.exe`, including one you have open yourself.
+
+- The first time, Windows Firewall asks about `SC2_x64.exe`. Allow it on Public networks too, because the WSL network adapter counts as Public. If the bot can't connect, this is the usual cause.
+- SC2 installed somewhere else: set `SC2_WIN_DIR` to the install root as a WSL path, e.g. `SC2_WIN_DIR="/mnt/d/StarCraft II"`.
+- High speeds come out a bit slower than asked, because the bot's own step time comes on top of `DELAY`.
+- On Windows 10, WSL can only reach Windows through the host IP, which is why SC2 listens on `0.0.0.0`.
 
 ## Play against a friend's bot
 
