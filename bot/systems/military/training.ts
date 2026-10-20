@@ -26,6 +26,7 @@ export const trainArmy = async (agent: Agent, resources: ResourceManager) => {
     }
 
     for (const [unitType] of Object.entries(existing).sort((a, b) => a[1] - b[1])) {
+        if (!agent.canAfford(Number(unitType))) { continue };
         await agent.train(Number(unitType));
     }
 };

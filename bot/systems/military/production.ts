@@ -1,4 +1,4 @@
-import type { Agent, ResourceManager } from '@sc-bot/core';
+import type { Agent, DataStorage, ResourceManager } from '@sc-bot/core';
 import { buildAnchor } from '../anchor.ts';
 import { getStrategy } from '../strategy/index.ts';
 import { BARRACKS, FACTORY, REACTOR, STARPORT, TECHLAB } from '@sc-bot/core/constants/unit-type';
@@ -18,9 +18,10 @@ const addonAbilities: Record<number, Record<typeof TECHLAB | typeof REACTOR, num
     [STARPORT]: { [TECHLAB]: BUILD_TECHLAB_STARPORT, [REACTOR]: BUILD_REACTOR_STARPORT },
 };
 
-export const buildProduction = async (agent: Agent, resources: ResourceManager) => {
+export const buildProduction = async (agent: Agent, resources: ResourceManager, data: DataStorage) => {
     const strategy = getStrategy();
     const { units, actions, map } = resources.get();
+    data.settleEarmark('production')
 
     for (const { unitType, count, minArmy, ...addons } of strategy.production) {
         const current = units.getById(unitType).ready.length + agent.alreadyPending(unitType);
@@ -45,10 +46,16 @@ export const buildProduction = async (agent: Agent, resources: ResourceManager) 
             }
         }
 
-        // TODO: earmark this entry's cost when it can't be afforded yet, and gate trainArmy with agent.canAfford (agent.train ignores earmarks)
-        if (!agent.hasTechFor(unitType) || !agent.canAfford(unitType)) {
+        if (!agent.hasTechFor(unitType)) {
             return;
         }
+
+        if (!agent.canAfford(unitType, 'production')) {
+            const { mineralCost, vespeneCost } = data.getUnitTypeData(unitType)
+            data.addEarmark({ name: 'production', minerals: mineralCost ?? 0, vespene: vespeneCost ?? 0 })
+            return
+        }
+
 
         const position = await actions.findPlacement(unitType, buildAnchor(map, 10), {
             addonPlace: (addons.reactors ?? 0) + (addons.techLabs ?? 0) > 0,
@@ -61,20 +68,28 @@ export const buildProduction = async (agent: Agent, resources: ResourceManager) 
 };
 
 
-export const buildAddons = async (agent: Agent, resources: ResourceManager) => {
+export const buildAddons = async (agent: Agent, resources: ResourceManager, data: DataStorage) => {
     const strategy = getStrategy();
     const { units, actions, map } = resources.get();
 
     const uniqueTypes = new Set(strategy.production.map(step => step.unitType))
+    data.settleEarmark('addons')
 
     for (const unitType of uniqueTypes) {
         const currentUnits = units.getById(unitType).ready
 
-        const relevantStepsReversed = strategy.production.filter(step => step.unitType === unitType).toReversed()
-        // get the current production step goals
-        const currentProductionStep = relevantStepsReversed.reduce((acc, curr) => {
-            return currentUnits.length > curr.count ? acc : curr
-        }, relevantStepsReversed[0])
+        const armyCount = units.getCombatUnits().length
+        const eligibleSteps = strategy.production.filter(
+            (step) => step.unitType === unitType && armyCount >= step.minArmy,
+        )
+        if (!eligibleSteps.length) {
+            continue
+        }
+
+        const targetCount = eligibleSteps.find((step) => step.count >= currentUnits.length)?.count
+        const currentProductionStep = eligibleSteps.findLast(
+            (step) => targetCount === undefined || step.count === targetCount,
+        )!
 
         const { reactors, techLabs } = currentProductionStep
         const currentReactors = currentUnits.filter((unit) => unit.hasReactor()).length
@@ -91,8 +106,12 @@ export const buildAddons = async (agent: Agent, resources: ResourceManager) => {
 
         const addonToBuild = techLabDiff > 0 ? TECHLAB : REACTOR
 
-        if (!currentNoAddon.length || !agent.hasTechFor(addonToBuild) || !agent.canAfford(addonToBuild)) {
+        if (!currentNoAddon.length || !agent.hasTechFor(addonToBuild)) {
             continue
+        }
+        if (!agent.canAfford(addonToBuild)) {
+            const { mineralCost, vespeneCost } = data.getUnitTypeData(addonToBuild)
+            data.addEarmark({ name: 'addons', minerals: mineralCost ?? 0, vespene: vespeneCost ?? 0 })
         }
 
         const ability = addonAbilities[unitType]?.[addonToBuild]

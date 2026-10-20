@@ -5,10 +5,10 @@ import { buildWall, manageWall } from './wall.ts';
 
 export default createSystem({
     name: 'Military',
-    async onStep({ agent, resources }) {
+    async onStep({ agent, resources, data }) {
         await buildWall(agent, resources);
-        await buildProduction(agent, resources);
-        await buildAddons(agent, resources)
+        await buildProduction(agent, resources, data);
+        await buildAddons(agent, resources, data)
         await trainArmy(agent, resources);
         await manageWall(agent, resources);
     },

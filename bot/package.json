@@ -11,7 +11,7 @@
         "vs:hard": "DIFFICULTY=hard bun run index.ts",
         "vs:harder": "DIFFICULTY=harder bun run index.ts",
         "vs:veryhard": "DIFFICULTY=veryhard bun run index.ts",
-        "arena": "bun run build && mkdir -p ../../local-play-bootstrap/bots/bart_bot && cp dist/sc-bot ../../local-play-bootstrap/bots/bart_bot/bart_bot"
+        "arena": "bun build --compile --define 'process.env.STEP_COUNT=\"8\"' index.ts --outfile dist/sc-bot && mkdir -p ../../local-play-bootstrap/bots/bart_bot && cp dist/sc-bot ../../local-play-bootstrap/bots/bart_bot/bart_bot"
     },
     "dependencies": {
         "@sc-bot/core": "workspace:*",
