@@ -1,5 +1,21 @@
-import type { ResourceManager, Units } from '@sc-bot/core';
-import type { CombatState, Tag } from './types.ts';
+import type { Point2D, ResourceManager, Units } from '@sc-bot/core';
+import { Alliance } from '@sc-bot/core/constants/enums';
+import type { CombatState, StringPosition, Tag } from './types.ts';
+
+export const MOP_UP_RADIUS = 25;
+
+export const toPoint = (position: StringPosition): Point2D => {
+    const [x, y] = position.split(',');
+    return { x: Number(x), y: Number(y) };
+};
+
+export const getMopUpTargets = (resources: ResourceManager, target: Point2D) => {
+    const { units, map } = resources.get();
+    return units
+        .getAlive(Alliance.ENEMY)
+        .closerThan(MOP_UP_RADIUS, target)
+        .filter((enemy) => !enemy.isFlying || map.isPathable(enemy.pos));
+};
 
 export const getFreeUnits = ({
     resources,

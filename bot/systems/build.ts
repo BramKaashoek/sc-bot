@@ -20,12 +20,8 @@ export default createSystem({
     },
     buildOrder: [
         [16, build(REFINERY)],
-        [17, train(MARINE, 2)],
         [19, build(COMMANDCENTER)],
-        [22, train(MARINE, 4)],
         [25, build(REFINERY)],
-        [26, build(BARRACKSTECHLAB)],
-        [26, build(ENGINEERINGBAY)],
         [26, upgrade(SHIELDWALL)],
         [26, build(COMMANDCENTER)],
         [26, upgrade(TERRANINFANTRYWEAPONSLEVEL1)],

@@ -1,7 +1,7 @@
 {
     "compilerOptions": {
         "target": "ES2022",
-        "lib": ["ES2022"],
+        "lib": ["ES2023"],
         "module": "Preserve",
         "moduleResolution": "bundler",
         "allowImportingTsExtensions": true,

@@ -2,7 +2,8 @@ import { Units, type ResourceManager } from '@sc-bot/core';
 import { Alliance } from '@sc-bot/core/constants/enums';
 import { log } from '../log.ts';
 import type { CombatState, OffenseTarget, Tag } from './types.ts';
-import { getFreeUnits, getUnitsCost } from './utils.ts';
+import { getFreeUnits, getMopUpTargets, getUnitsCost, toPoint } from './utils.ts';
+import { runMicro } from './micro/index.ts';
 
 export const getOffenseTargets = ({
     resources,
@@ -120,7 +121,6 @@ export const attackTargets = async ({
             continue;
         }
 
-        await actions.move(alive, map.getCombatRally());
         delete nextAttacks[positionString];
         nextRetreats[positionString] = {
             unitTags: [...(nextRetreats[positionString]?.unitTags ?? []), ...alive.map((unit) => unit.tag)],
@@ -136,22 +136,12 @@ export const attackTargets = async ({
 
     // continue ongoing attacks
     for (const attack of Object.entries(nextAttacks)) {
-        const [positionString, { unitTags }] = attack;
-        const alive = units.getCombatUnits().tagsIn(unitTags);
+        const [positionString, attackState] = attack;
+        const alive = units.getCombatUnits().tagsIn(attackState.unitTags);
 
         if (!alive.every((unit) => unit.isIdle())) continue;
 
-        const nearbyEnemies = units
-            .getAlive(Alliance.ENEMY)
-            .closerThan(25, alive[0].pos)
-            .filter((enemy) => !enemy.isFlying || map.isPathable(enemy.pos))
-            .sortedByDistanceTo(alive[0].pos);
-
-        // mop up
-        if (nearbyEnemies.length) {
-            await actions.attackMove(alive, nearbyEnemies[0].pos);
-            continue;
-        }
+        if (getMopUpTargets(resources, toPoint(positionString)).length) continue;
 
         // no enemies left
         const expansionIndex = map
@@ -171,14 +161,15 @@ export const attackTargets = async ({
 
     // reinforce existing attacks if necessary
     for (const attack of Object.entries(nextAttacks)) {
-        const [positionString, { unitTags }] = attack;
-        const alive = units.getCombatUnits().tagsIn(unitTags);
+        const [positionString, attackState] = attack;
+        const alive = units.getCombatUnits().tagsIn(attackState.unitTags);
         const availableUnits = getFreeUnits({ resources, attacks: nextAttacks, defenses, scoutTag: scoutTag });
 
         if (!alive.every((unit) => unit.isIdle()) && availableUnits.length > MIN_ATTACK_SIZE) {
-            const [x, y] = positionString.split(',');
-            await actions.attackMove(availableUnits, { x: Number(x), y: Number(y) });
-            nextAttacks[positionString] = { unitTags: [...unitTags, ...availableUnits.map((unit) => unit.tag)] };
+            nextAttacks[positionString] = {
+                ...attackState,
+                unitTags: [...attackState.unitTags, ...availableUnits.map((unit) => unit.tag)],
+            };
             log({ resources }, `attack: reinforcing ${positionString} with ${availableUnits.length} units`, 'yellow');
         }
     }
@@ -201,7 +192,6 @@ export const attackTargets = async ({
             availableUnits.length > MIN_ATTACK_SIZE &&
             getUnitsCost(availableUnits) > 1.2 * enemyCost
         ) {
-            await actions.attackMove(availableUnits, offenseTargets[0].pos);
             nextAttacks[targetKey] = {
                 unitTags: availableUnits.map((unit) => unit.tag),
             };
@@ -210,6 +200,20 @@ export const attackTargets = async ({
                 `attack: launching at ${targetKey} | ${availableUnits.length} units | cost ${getUnitsCost(availableUnits)} vs enemy ${enemyCost}`,
                 'yellow',
             );
+        }
+    }
+
+    for (const [positionString, { unitTags }] of Object.entries(nextAttacks)) {
+        const group = units.getCombatUnits().tagsIn(unitTags);
+        if (group.length) {
+            await runMicro({ resources, group, target: toPoint(positionString), intent: 'attack' });
+        }
+    }
+
+    for (const { unitTags } of Object.values(nextRetreats)) {
+        const group = units.getCombatUnits().tagsIn(unitTags);
+        if (group.length) {
+            await runMicro({ resources, group, target: map.getCombatRally(), intent: 'retreat' });
         }
     }
 

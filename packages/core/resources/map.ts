@@ -174,7 +174,7 @@ function createMapManager(world: World): MapManager {
             const startPoint = this.isPathable(point) ? point : this.closestPathable(point);
 
             const expansionOrder = this.getExpansions();
-            const { index: closestIndex } = expansionOrder
+            const [closestReachable] = expansionOrder
                 .map((expansion, i) => {
                     return {
                         index: i,
@@ -184,9 +184,17 @@ function createMapManager(world: World): MapManager {
                 .filter((exp) => {
                     return exp.distance > 0;
                 })
-                .sort((a, b) => a.distance - b.distance)[0];
+                .sort((a, b) => a.distance - b.distance);
 
-            return expansionOrder[closestIndex];
+            if (closestReachable) {
+                return expansionOrder[closestReachable.index];
+            }
+
+            return expansionOrder.reduce((closest, expansion) =>
+                distance(point, expansion.townhallPosition) < distance(point, closest.townhallPosition)
+                    ? expansion
+                    : closest,
+            );
         },
         getCreep() {
             const creepRaw = this._mapState.creep;

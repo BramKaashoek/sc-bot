@@ -187,7 +187,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
             }
 
             return this.sendAction({
-                abilityId: Ability.ATTACK_ATTACK,
+                abilityId: Ability.ATTACK,
                 targetUnitTag: unit.tag,
                 unitTags: units.map((attacker) => attacker.tag!),
                 queueCommand: queue,
@@ -203,8 +203,9 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 );
             }
 
+            // SC2 remaps the generic ATTACK to each unit's own attack ability, as python-sc2 relies on
             return this.sendAction({
-                abilityId: Ability.ATTACK_ATTACK,
+                abilityId: Ability.ATTACK,
                 targetWorldSpacePos: position,
                 unitTags: units.map((attacker) => attacker.tag!),
                 queueCommand: queue,

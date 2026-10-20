@@ -367,7 +367,7 @@ describe('MapResource', () => {
         ['no enemy start location', { enemyStart: false }, [2, 16], [999, 999]],
         ['no own townhall', { ownTownhall: false }, [999, 999], [16, 2]],
     ])(
-        'still finds every expansion with %s, and no thirds or main base ramp on a rampless two-base map',
+        'still finds every expansion with %s, and no thirds or main base ramp on a rampless two-base map, falling back to straight-line distance for the closest expansion when walled off',
         async (_, options, pathsFromMain, pathsFromEnemy) => {
             const { map } = (await createTestWorld(toyFixture(options))).resources.get();
 
@@ -384,6 +384,11 @@ describe('MapResource', () => {
                 [{ x: 23, y: 15 }, pathsFromMain[1], pathsFromEnemy[1]],
             ]);
             expect([map.getThirds(), map.getEnemyThirds(), map.getMainBaseRamp()]).toEqual([[], [], undefined]);
+
+            for (let y = 0; y < 32; y++) {
+                map.setPathable({ x: 28, y }, false);
+            }
+            expect(map.getClosestExpansion({ x: 30, y: 5 }).townhallPosition).toEqual({ x: 23, y: 15 });
         },
     );
 });

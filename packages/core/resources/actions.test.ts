@@ -70,7 +70,7 @@ describe('ActionManager', () => {
                 targetWorldSpacePos: { x: 0, y: 0 },
             }),
             unitCommand({
-                abilityId: Ability.ATTACK_ATTACK,
+                abilityId: Ability.ATTACK,
                 unitTags: [],
                 queueCommand: false,
                 targetWorldSpacePos: { x: 10, y: 10 },

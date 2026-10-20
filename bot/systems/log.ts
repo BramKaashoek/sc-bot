@@ -17,11 +17,11 @@ export const log = (world: Pick<World, 'resources'>, message: string, style?: St
     console.log(`${time} | ${style ? styleText(style, message) : message}`);
 };
 
-const posOf = ({ x, y }: { x?: number; y?: number }) => `${x},${y}`;
+export const posOf = ({ x, y }: { x?: number; y?: number }) => `${x},${y}`;
 
 let wallLogged = false;
 
-const nameOf = (unit: Unit) => UnitTypeId[unit.unitType] ?? `unit type ${unit.unitType}`;
+export const nameOf = (unit: Unit) => UnitTypeId[unit.unitType] ?? `unit type ${unit.unitType}`;
 
 export default createSystem({
     name: 'Log',
