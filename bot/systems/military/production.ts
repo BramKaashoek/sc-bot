@@ -22,10 +22,15 @@ export const buildProduction = async (agent: Agent, resources: ResourceManager) 
     const strategy = getStrategy();
     const { units, actions, map } = resources.get();
 
-    for (const { unitType, count, ...addons } of strategy.production) {
+    for (const { unitType, count, minArmy, ...addons } of strategy.production) {
         const current = units.getById(unitType).ready.length + agent.alreadyPending(unitType);
         if (current >= count) {
             continue;
+        }
+
+        const armyCount = units.getCombatUnits().length
+        if (armyCount < minArmy) {
+            return
         }
 
         // if there is NO barracks at wall position yet

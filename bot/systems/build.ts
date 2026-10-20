@@ -21,7 +21,7 @@ export default createSystem({
     buildOrder: [
         [16, build(REFINERY)],
         [19, build(COMMANDCENTER)],
-        [25, build(REFINERY)],
+        [20, build(REFINERY)],
         [26, upgrade(SHIELDWALL)],
         [26, build(COMMANDCENTER)],
         [26, upgrade(TERRANINFANTRYWEAPONSLEVEL1)],
