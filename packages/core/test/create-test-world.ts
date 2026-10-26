@@ -4,7 +4,7 @@ import createEngine from '../engine/create-engine.ts';
 import createAgent from '../agent/create-agent.ts';
 import { createFakeClient } from './fake-client.ts';
 import type { FakeClient, FakeClientOptions, Fixture } from './fake-client.ts';
-import type { Agent, Engine, World } from '../types.ts';
+import type { Agent, CoreConfigInput, Engine, World } from '../types.ts';
 
 export type TestWorld = World & { client: FakeClient; engine: Engine };
 
@@ -12,6 +12,7 @@ export type TestWorldOptions = {
     loop?: number;
     agent?: Agent;
     onQuery?: FakeClientOptions['onQuery'];
+    config?: CoreConfigInput;
 };
 
 const FIXTURES_DIR = join(import.meta.dir, '..', 'fixtures');
@@ -59,7 +60,7 @@ export async function stepTo(world: TestWorld, next: SC2APIProtocol.ResponseObse
 
 export async function createTestWorld(
     fixtureOrMapName: Fixture | string,
-    { loop, agent = createAgent(), onQuery }: TestWorldOptions = {},
+    { loop, agent = createAgent(), onQuery, config }: TestWorldOptions = {},
 ): Promise<TestWorld> {
     const fixture = typeof fixtureOrMapName === 'string' ? loadFixture(fixtureOrMapName) : fixtureOrMapName;
     const startLoop = loop ?? Math.min(...Object.keys(fixture.observations).map(Number));
@@ -69,7 +70,7 @@ export async function createTestWorld(
     const client = createFakeClient({ fixture, onQuery });
     client.setObservation(responseObservation);
 
-    const engine = createEngine({ client, launch: false });
+    const engine = createEngine({ client, launch: false, configFile: false, config });
     const world: TestWorld = Object.assign(engine.getWorld(), { client, engine });
     world.agent = agent;
     agent.playerId ??= responseObservation.observation?.playerCommon?.playerId;

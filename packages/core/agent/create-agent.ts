@@ -1,6 +1,6 @@
 import createDebug from 'debug';
 import * as UnitType from '../constants/unit-type.ts';
-import { Race, PlayerType, Attribute } from '../constants/enums.ts';
+import { Alliance, Race, PlayerType, Attribute } from '../constants/enums.ts';
 import { halfSupplyTypes } from '../constants/groups.ts';
 import { trainedFrom } from '../constants/dicts/trained-from.ts';
 import { techRequirement as techRequirements } from '../constants/dicts/tech-requirement.ts';
@@ -9,6 +9,7 @@ import type { Agent, Cost, EventReader, AgentObject, World, SystemWrapper, Syste
 
 const debug = createDebug('sc2:debug:Bot');
 const NOOP = () => {};
+const PLAYABLE_RACES: SC2APIProtocol.Race[] = [Race.TERRAN, Race.ZERG, Race.PROTOSS];
 
 const FREE_MORPH_LINK_NAMES = ['Lower', 'Raise', 'Land', 'Lift', 'Hold', 'Harvest'];
 
@@ -284,6 +285,15 @@ export default function createAgent(blueprint: EventReader<AgentObject> = {} as 
 
             Object.assign(this, observation.rawData!.player, observation.playerCommon);
 
+            if (!PLAYABLE_RACES.includes(this.opponent?.race!)) {
+                const [enemy] = world.resources.get().units.getAlive(Alliance.ENEMY);
+                const race = enemy && world.data.getUnitTypeData(enemy.unitType)?.race;
+                if (race !== undefined && PLAYABLE_RACES.includes(race)) {
+                    this.opponent = Object.assign(this.opponent ?? {}, { race });
+                    events.write({ name: 'enemyRaceDetected', data: race });
+                }
+            }
+
             return blueprint.onStep ? blueprint.onStep(world, gameLoop ?? frame.getGameLoop(), event) : NOOP;
         },
         async onGameStart(world, data, event) {
@@ -301,15 +311,11 @@ export default function createAgent(blueprint: EventReader<AgentObject> = {} as 
                 this.race = thisPlayer.raceActual;
             }
 
-            // missing only on custom or test maps that don't assign playerIds sensibly
-            if (enemyPlayer) {
-                // @TODO: the first time we see an enemy unit, we should set the value of this on the agent and then
-                // memoize it
-                this.opponent = {
-                    ...this.opponent,
-                    race: enemyPlayer.raceRequested !== Race.RANDOM ? enemyPlayer.raceRequested : Race.NORACE,
-                };
-            }
+            // enemyPlayer is missing only on custom or test maps that don't assign playerIds sensibly
+            const requested = enemyPlayer?.raceRequested;
+            this.opponent = Object.assign(this.opponent ?? {}, {
+                race: requested !== undefined && requested !== Race.RANDOM ? requested : Race.NORACE,
+            });
 
             return blueprint.onGameStart ? blueprint.onGameStart(world, data, event) : NOOP;
         },

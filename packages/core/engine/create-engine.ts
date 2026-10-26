@@ -14,6 +14,8 @@ import createDebugSystem from '../systems/debug.ts';
 import createFrameSystem from '../systems/frame.ts';
 import createUnitSystem from '../systems/unit.ts';
 import createMapSystem from '../systems/map.ts';
+import createChatDebugSystem from '../systems/chat-debug.ts';
+import { resolveConfig } from './config.ts';
 import { runAsCommander } from '../resources/command-context.ts';
 import { GameResult, PlayerType, Race, Status, StatusId } from '../constants/enums.ts';
 import { NodeSC2Error, GameEndedError, ConnectionClosedError } from './errors.ts';
@@ -54,7 +56,6 @@ type EngineInstance = Engine & {
 
 const debugEngine = createDebug('sc2:debug:engine');
 const debugSilly = createDebug('sc2:silly:engine');
-const STEP_COUNT = parseInt(process.env.STEP_COUNT!, 10) || 4;
 const LOOPS_PER_SECOND = 22.4;
 const CreateGameErrorId: Record<number, string> = root.lookupEnum('ResponseCreateGame.Error').valuesById;
 
@@ -130,7 +131,7 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
     // a local map path only means something to an SC2 on this machine's install
     const launchesSc2 = opts.launch && !isManaged;
 
-    const world = World(client);
+    const world = World(client, resolveConfig(options.config, { file: options.configFile }));
     const debugSystem = createDebugSystem();
     const _client = world.resources.get().actions._client!;
     const runnerClient = _client as RunnerClient;
@@ -224,6 +225,8 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
                 host: opts.host,
                 port: guestPort,
                 launch: false,
+                config: world.config,
+                configFile: false,
             }) as unknown as EngineInstance;
             const guestClient = guest.getWorld().resources.get().actions._client as RunnerClient;
             const joinOptions: SC2APIProtocol.RequestJoinGame = {
@@ -482,6 +485,7 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
             debugEngine(
                 `Average step delay for this game: ${this._totalLoopDelay! / world.resources.get().frame.getGameLoop()}`,
             );
+            world.resources.endGame(world, results ?? []);
             options.onGameEnd?.(results);
             // @TODO: have some option to configure auto-saving of replays
             return [world, results];
@@ -502,11 +506,11 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
                 this._loopDelay = hrtimeH(process.hrtime(this._lastRequest)).milliseconds;
 
                 // @TODO: maybe allow this to be configurable? not off... per se, but some threshhold.
-                if (this._loopDelay / STEP_COUNT > 44.6) {
-                    // console.warn(`WARNING! loop delay is ${this._loopDelay / STEP_COUNT}ms, greater than realtime`);
+                if (this._loopDelay / world.config.gameStep > 44.6) {
+                    // console.warn(`WARNING! loop delay is ${this._loopDelay / world.config.gameStep}ms, greater than realtime`);
                 }
 
-                this._totalLoopDelay! += this._loopDelay / STEP_COUNT;
+                this._totalLoopDelay! += this._loopDelay / world.config.gameStep;
             }
 
             this._lastRequest = process.hrtime();
@@ -516,13 +520,13 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
             }
 
             if (!loopOptions.realtime) {
-                await _client.step({ count: STEP_COUNT });
+                await _client.step({ count: world.config.gameStep });
             }
 
             events.write({
                 name: 'step',
                 type: 'all',
-                data: frame.getGameLoop() + STEP_COUNT,
+                data: frame.getGameLoop() + world.config.gameStep,
             });
 
             try {
@@ -613,6 +617,7 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
         createUnitSystem(),
         createMapSystem(),
     ]);
+    if (world.config.features.chatDebug) engine.use(createChatDebugSystem());
 
     return engine;
 }

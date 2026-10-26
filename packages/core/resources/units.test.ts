@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
-import { UnitType, Upgrade } from '../constants/index.ts';
+import { Ability, UnitType, Upgrade } from '../constants/index.ts';
 import { Alliance } from '../constants/enums.ts';
+import { NodeSC2Error } from '../engine/errors.ts';
 import { createTestWorld, stepTo } from '../test/create-test-world.ts';
 import { rawUnit } from '../test/factories.ts';
 import { Units } from './units-collection.ts';
@@ -145,5 +146,49 @@ describe('UnitResource', () => {
         expect(zergling.isMemory()).toBe(false);
         expect(pick(world, ZERGLINGS[1]).map((unit) => unit.isMemory())).toEqual([true]);
         expect(sortedTags(units.getAll(Alliance.ENEMY))).toEqual([ZERGLINGS[1], OVERLORD, ...ENEMY_SNAPSHOTS].sort());
+    });
+
+    it('values combat units by cost, with pending production for own and ghosts for enemy', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { units } = world.resources.get();
+        const reactor = rawUnit({ unitType: UnitType.BARRACKSREACTOR, pos: { x: 40.5, y: 40.5, z: 12 } });
+        const trainMarine = { abilityId: Ability.TRAIN_MARINE };
+        const producing = [
+            reactor,
+            rawUnit({
+                unitType: UnitType.BARRACKS,
+                addOnTag: reactor.tag,
+                orders: [trainMarine, trainMarine, trainMarine],
+            }),
+            rawUnit({ unitType: UnitType.EGG, orders: [{ abilityId: Ability.TRAIN_ROACH }] }),
+            rawUnit({ unitType: UnitType.RAVAGER }),
+        ];
+        const zerglingsSpot = { x: 14.7, y: 24.8 };
+
+        await stepTo(
+            world,
+            fogAround(
+                editedObservation(world, 896, 900, (raws) => [
+                    ...raws
+                        .filter((raw) => raw.tag !== ZERGLINGS[0])
+                        .map((raw) => {
+                            if (raw.tag === '4350541825') return { ...raw, orders: [trainMarine, trainMarine] };
+                            if (raw.tag === '4342677505') return { ...raw, orders: [{ abilityId: Ability.TRAIN_SCV }] };
+                            return raw;
+                        }),
+                    ...producing,
+                ]),
+                zerglingsSpot,
+            ),
+        );
+
+        expect({
+            own: units.getArmyValue(),
+            pending: units.getArmyValue(Alliance.SELF, { includePending: true }),
+            enemy: units.getArmyValue(Alliance.ENEMY),
+            enemyVisible: units.getArmyValue(Alliance.ENEMY, { includeGhosts: false }),
+        }).toEqual({ own: 150 + 200, pending: 150 + 200 + 50 + 100 + 100, enemy: 50, enemyVisible: 25 });
+        for (const alliance of [Alliance.ALLY, Alliance.NEUTRAL, 7])
+            expect(() => units.getArmyValue(alliance as SC2APIProtocol.Alliance.Self)).toThrow(NodeSC2Error);
     });
 });

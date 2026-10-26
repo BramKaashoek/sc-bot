@@ -8,6 +8,18 @@ const debugSilly = createDebug('sc2:silly:resources');
 function createResourceManager(world: World): ResourceManager {
     const managedResources = {} as ResourceContainer;
     const definitions = new Map<keyof ResourceContainer, ResourceDefinition<any>>();
+    const warnedUnconfigurable = new Set<keyof ResourceContainer>();
+
+    const applyConfig = (name: keyof ResourceContainer, resource: object) => {
+        const section = world.config.resources[name];
+        if (section === undefined) return;
+        if ('configure' in resource && typeof resource.configure === 'function') {
+            resource.configure(section);
+        } else if (!warnedUnconfigurable.has(name)) {
+            warnedUnconfigurable.add(name);
+            console.warn(`Config section "${String(name)}" ignored: resource has no configure()`);
+        }
+    };
 
     return {
         set(resources) {
@@ -24,6 +36,7 @@ function createResourceManager(world: World): ResourceManager {
             definitions.set(definition.name, definition);
             const resource = definition.create(world);
             Object.assign(managedResources, { [definition.name]: resource });
+            applyConfig(definition.name, resource);
             return resource;
         },
         reset(world) {
@@ -31,6 +44,18 @@ function createResourceManager(world: World): ResourceManager {
                 const resource = managedResources[name]!;
                 if (definition.reset) definition.reset(resource, world);
                 else Object.assign(resource, definition.create(world));
+                applyConfig(name, resource);
+            });
+        },
+        endGame(world, results) {
+            definitions.forEach((definition, name) => {
+                try {
+                    definition.onGameEnd?.(managedResources[name]!, world, results);
+                } catch (err) {
+                    debug(`Resource onGameEnd error in ${String(name)}: `);
+                    debug((err as Error).message);
+                    debug((err as Error).stack);
+                }
             });
         },
         step(world) {

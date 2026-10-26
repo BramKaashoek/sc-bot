@@ -3,6 +3,8 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import createEngine from './create-engine.ts';
+import * as clientModule from './create-client.ts';
+import * as launcherModule from './launcher.ts';
 import { ConnectionClosedError } from './errors.ts';
 import createAgent from '../agent/create-agent.ts';
 import { Ability } from '../constants/index.ts';
@@ -11,7 +13,15 @@ import { createFakeClient } from '../test/fake-client.ts';
 import { loadFixture } from '../test/create-test-world.ts';
 import { observation, toyFixture } from '../test/factories.ts';
 import type { FakeClient } from '../test/fake-client.ts';
-import type { StepTime } from '../types.ts';
+import type { GamePlayer, StepTime } from '../types.ts';
+
+declare module '@sc-bot/core/types' {
+    interface ResourceContainer {
+        testGameEndFirst?: object;
+        testGameEndThrows?: object;
+        testGameEndLast?: object;
+    }
+}
 
 const LAUNCHED = 1 as SC2APIProtocol.Status;
 const MAP = 'Fake.SC2Map';
@@ -123,6 +133,69 @@ describe('engine game loop', () => {
             },
             { realtime: false, playerSetup: secondPlayers, battlenetMapName: 'Nowhere LE' },
         ]);
+    });
+
+    it('steps host and bot-vs-bot guest by the configured gameStep and adds the chat debug system only when chatDebug is on', async () => {
+        const { client } = createLobbyClient();
+        const { client: guestClient } = createLobbyClient();
+        Object.assign(guestClient, { quit: async () => ({}) });
+        const createClient = spyOn(clientModule, 'default').mockImplementation(() => guestClient);
+        const launch = spyOn(launcherModule, 'launcher').mockImplementation(async () => undefined as never);
+        const engine = createEngine({
+            client,
+            launch: false,
+            configFile: false,
+            config: { gameStep: 2, features: { chatDebug: true } },
+        });
+        const systemNames = (target: typeof engine) => target.systems.map((system) => system._system.name);
+        const players: [GamePlayer, GamePlayer] = [
+            { type: PlayerType.PARTICIPANT, race: Race.TERRAN, agent: createAgent() },
+            { type: PlayerType.PARTICIPANT, race: Race.ZERG, agent: createAgent() },
+        ];
+
+        try {
+            await engine.runBotVsBot(MAP, players, { gameTimeLimit: 1 });
+        } finally {
+            createClient.mockRestore();
+            launch.mockRestore();
+        }
+
+        expect(client.sent.step.length).toBeGreaterThan(0);
+        expect(guestClient.sent.step.length).toBeGreaterThan(0);
+        expect([...client.sent.step, ...guestClient.sent.step].every((request) => request.count === 2)).toBe(true);
+        expect(systemNames(engine)).toContain('ChatDebugSystem');
+        expect(systemNames(createEngine({ client, launch: false, configFile: false }))).not.toContain(
+            'ChatDebugSystem',
+        );
+    });
+
+    it('runs resource game-end hooks in registration order past a throwing one, before the engine onGameEnd option', async () => {
+        const { client } = createLobbyClient();
+        const calls: string[] = [];
+        const engine = createEngine({
+            client,
+            launch: false,
+            configFile: false,
+            onGameEnd: (results) => calls.push(`engine:${results.length}`),
+        });
+        const { resources } = engine.getWorld();
+        resources.register({
+            name: 'testGameEndFirst',
+            create: () => ({}),
+            onGameEnd: (_, __, results) => calls.push(`first:${results.length}`),
+        });
+        resources.register({
+            name: 'testGameEndThrows',
+            create: () => ({}),
+            onGameEnd: () => {
+                throw new Error('boom');
+            },
+        });
+        resources.register({ name: 'testGameEndLast', create: () => ({}), onGameEnd: () => calls.push('last') });
+
+        await engine.runGame(MAP, participant(createAgent()), { gameTimeLimit: 1 });
+
+        expect(calls).toEqual(['first:1', 'last', 'engine:1']);
     });
 
     it('runs a ladder-managed game without creating it, resyncing to the game already in progress as the player the observation belongs to, keeping a preset opponent id under a ladder manager that passes no --OpponentId', async () => {

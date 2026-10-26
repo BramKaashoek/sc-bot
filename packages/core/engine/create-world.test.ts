@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 import { Alliance } from '../constants/enums.ts';
 import { NodeSC2Error } from './errors.ts';
 import createAgent from '../agent/create-agent.ts';
@@ -11,6 +11,7 @@ declare module '@sc-bot/core/types' {
         testCounter?: { count: number };
         testTally?: { items: string[] };
         testStepLog?: object;
+        testConfigurable?: { received: unknown[]; configure(settings: { level: number }): void };
     }
 }
 
@@ -116,5 +117,30 @@ describe('resources registry', () => {
         await stepTo(world, observation({ gameLoop: 16, units }));
 
         expect(calls).toEqual(['tally@8', 'log@8', 'agent@8', 'tally@16', 'log@16', 'agent@16']);
+    });
+
+    it('passes config.resources sections to configure on register and after every reset, warning once for a resource without configure', async () => {
+        const warn = spyOn(console, 'warn').mockImplementation(() => {});
+        const world = await createTestWorld(toyFixture(), {
+            config: { resources: { testConfigurable: { level: 3 }, testCounter: {} as never } },
+        });
+        const configurable = world.resources.register({
+            name: 'testConfigurable',
+            create: () => ({
+                received: [] as unknown[],
+                configure(settings) {
+                    this.received.push(settings);
+                },
+            }),
+            reset: () => {},
+        });
+        world.resources.register(counterResource);
+
+        world.resources.reset(world);
+        world.resources.reset(world);
+
+        expect(configurable.received).toEqual([{ level: 3 }, { level: 3 }, { level: 3 }]);
+        expect(warn.mock.calls.filter(([message]) => String(message).includes('testCounter'))).toHaveLength(1);
+        warn.mockRestore();
     });
 });

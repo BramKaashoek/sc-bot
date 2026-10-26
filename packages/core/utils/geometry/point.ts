@@ -132,6 +132,12 @@ const getDiagonals = ({ x, y }: Point2D): Point2D[] => [
     { y: y + 1, x: x + 1 },
 ];
 
+function towards(from: Point2D, to: Point2D, step: number): Point2D {
+    const length = distance(from, to);
+    if (length === 0) return { x: from.x, y: from.y };
+    return { x: from.x + ((to.x - from.x) / length) * step, y: from.y + ((to.y - from.y) / length) * step };
+}
+
 function getNeighbors(point: Point2D, includeDiagonals = true, diagonalsOnly = false): Point2D[] {
     const normal = createPoint2D(point);
 
@@ -164,4 +170,5 @@ export {
     normalize,
     closestPoint,
     nClosestPoint,
+    towards,
 };

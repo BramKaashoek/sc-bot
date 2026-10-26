@@ -669,7 +669,10 @@ units.getUnfinished(filter?) => Units
 units.getConstructingWorkers() => Units
 units.getPendingAt(unitType | unitType[], pos, maxDistance = 1) => Units // unfinished units of those types near pos, plus workers ordered to build one there
 ```
-Enemy units that leave vision are kept in `units` with their last known state. `getAll(Alliance.ENEMY)` includes them, `getAlive` does not; use `unit.isMemory()` and `unit.age()` to tell them apart.
+#### *`units.getArmyValue(alliance?: Alliance.SELF | Alliance.ENEMY, opts?: { includePending?: boolean; includeGhosts?: boolean }) => number`*
+Minerals plus gas of the combat units (`isCombatUnit()`), each at its type's full cost. `alliance = Alliance.SELF`, `includePending = false`, `includeGhosts = true`. `ENEMY` reads `memory.getEnemies({ includeGhosts })`; `SELF` with `includePending` also counts units in production (finished non-townhall structures' orders, two with a reactor, and eggs). Throws `NodeSC2Error` for any other alliance.
+
+Enemy units that leave vision are kept in `units` with their last known state, as ghosts. `getAll(Alliance.ENEMY)` includes them, `getAlive` does not; use `unit.isMemory()` and `unit.age()` to tell them apart. Ghosts expire after 30 seconds by default, or earlier when their last position is visible again (see `memory`).
 
 ### map
 The `map` resource represents everything related to positioning of the game world. It contains data and methods pertaining to the map size and state, self and enemy locations, expansions, and pathing.
@@ -727,7 +730,7 @@ grids.height: Grid2D;
 Placement, pathing and height grids are the same as provided by the API. `miniMap` is an experimental grid containing minimap-like data.
 
 #### map.path(start: Point2D, end: Point2D) => Path;
-Given a start and end point as coordinates, does an A* search and returns the resulting path as a 2D array of sets of coordinates. Returns an empty array if pathing is impossible. The path graph also blocks the cells the map system marks unplaceable (structures, minerals, geysers, rocks, xel'naga towers), so an `end` on such a cell, or a `start` surrounded by them (such as `townhallPosition` of an occupied base), gives an empty path; start from a unit's `pos` or `map.closestPathable(point)`. NOTE: this is *not* the same as querying the API, this is significantly faster (exponentially) and done synchronously. It cannot, however, take into account any information about the map or paths not known to the system.
+Given a start and end point as coordinates, does an A* search and returns the resulting path as a 2D array of sets of coordinates. Returns an empty array if pathing is impossible. The path graph also blocks the cells the map system marks unplaceable (structures, minerals, geysers, rocks, xel'naga towers), so an `end` on such a cell, or a `start` surrounded by them (such as `townhallPosition` of an occupied base), gives an empty path; start from a unit's `pos` or `map.closestPathable(point)`. NOTE: this is *not* the same as querying the API, this is significantly faster (exponentially) and done synchronously. It cannot, however, take into account any information about the map or paths not known to the system. For cost-aware paths around enemy threats, use `pathing` instead.
 
 #### Ramps and walls
 ```ts
@@ -874,6 +877,80 @@ debug.quickSave(), quickLoad()
 debug.useDebugWidget(id, data, { title? }) // a line in the on-screen debug widget, keyed by id
 ```
 Drawing helpers (`setDrawCells`, `setDrawSpheres`, `setDrawLines`, `setDrawTextWorld`, `setDrawTextScreen`) are unchanged.
+
+### memory
+Enemy ghosts (`unit.isMemory()`) stay in `units` until memory forgets them. Each step, a ghost older than its expiry is deleted, and so is one whose four surrounding cells are all visible (unless burrowed). A forgotten tag that is seen again doesn't fire `onEnemyFirstSeen` again.
+
+#### *`memory.getGhosts() => Units`*
+Enemies out of vision that are still remembered.
+
+#### *`memory.getSnapshots() => Units`*
+Current enemy snapshots.
+
+#### *`memory.getEnemies(opts?: { includeGhosts?: boolean; structures?: boolean }) => Units`*
+Every known enemy. `includeGhosts = true`, `structures = true`.
+
+#### *`memory.forget(tag: string) => void`*
+Deletes the ghost now.
+
+#### *`memory.configure(settings: Partial<MemorySettings>) => void`*
+```ts
+MemorySettings = {
+    expireGround: 30, // game seconds
+    expireAir: 30,
+}
+```
+Settings survive a new game on the same engine.
+
+### spatial
+A bucket-grid index of enemies (from `memory.getEnemies()`, ghosts included) and alive own units, rebuilt on the first query of each game loop. `SpatialKind` is `'enemy' | 'enemyGround' | 'enemyAir' | 'own' | 'ownGround' | 'ownAir'`; ground and air are split by `isFlying`, so landed structures count as ground. Distances are centre to centre. Result order isn't stable: `unitsInRange` returns bucket order, and `closest` breaks ties between equal distances by ring order.
+
+#### *`spatial.unitsInRange(from: Point2D | Unit, distance: number, kind: SpatialKind) => Units`*
+The units of that kind within `distance`.
+
+#### *`spatial.anyInRange(from: Point2D | Unit, distance: number, kind: SpatialKind) => boolean`*
+Whether there is at least one; stops at the first.
+
+#### *`spatial.closest(from: Point2D | Unit, kind: SpatialKind, maxDistance?: number) => Unit | undefined`*
+The closest unit of that kind, within `maxDistance` when given.
+
+### influence
+Per-loop danger grids. `InfluenceLayer` is `'ground' | 'air' | 'groundAvoidance' | 'airAvoidance'`. Cells are `1` when free, `Infinity` when blocked, and higher where enemies (ghosts included, changelings and unfinished structures skipped) or effects threaten them; own liberator zones aren't stamped.
+
+#### *`influence.getGrid(layer: InfluenceLayer) => InfluenceGrid`*
+Built on the first call of each game loop. `InfluenceGrid` has `layer`, `width`, `height`, `data` (`Float32Array`, index `y * width + x`, read-only by contract) and `get(point)`, which floors the point and returns `Infinity` out of bounds.
+
+#### *`influence.addCost(layers: InfluenceLayer | InfluenceLayer[], center: Point2D, radius: number, weight: number) => void`*
+Adds a cost circle (cells at exactly `radius` included) for the rest of the game loop. Cells never drop below `1`, and `costMultiplier` doesn't apply.
+
+#### *`influence.configure(settings: Partial<InfluenceSettings>) => void`*
+```ts
+InfluenceSettings = {
+    rangeBuffer: 4,
+    effectsRangeBuffer: 1,
+    costMultiplier: 1, // scales built-in sources only
+    effects: {}, // { [effectId]: { cost, range } }, merged over the defaults
+}
+```
+Settings survive a new game on the same engine.
+
+#### *`influence.drawDebug(layer: InfluenceLayer, opts?: { threshold?: number }) => void`*
+Draws cells above `threshold` (`1`) with their value through `debug.setDrawCells`.
+
+### pathing
+A* over an influence layer: 8-connected, diagonals cost √2 times the cell, no corner cutting. `PathOptions` is `{ layer?: InfluenceLayer | InfluenceGrid; sensitivity?: number; maxExpanded?: number }`, with `layer = 'ground'`.
+
+#### *`pathing.findPath(start: Point2D, goal: Point2D, opts?: PathOptions) => Point2D[]`*
+Cell centres from `start` (excluded) to `goal`, or `[]` when unreachable or when `maxExpanded` runs out. A blocked goal is moved to the closest open cell within 3; out-of-bounds points are clamped.
+
+#### *`pathing.nextPoint(start: Point2D, goal: Point2D, opts?: PathOptions & { senseDanger?: boolean; dangerDistance?: number; dangerThreshold?: number }) => Point2D`*
+`sensitivity = 5`, `senseDanger = true`, `dangerDistance = 20`, `dangerThreshold = 5`. With `senseDanger`, returns `goal` without a search when no cell within `dangerDistance` reaches `dangerThreshold`. Otherwise returns path point `min(sensitivity, length) - 1`, or `goal` when there is no path.
+
+#### *`pathing.closestSafeSpot(from: Point2D, opts?: { layer?: InfluenceLayer | InfluenceGrid; radius?: number }) => Point2D | undefined`*
+The cell centre with the lowest finite cost within `radius` (`11`), closest first on ties.
+
+#### *`pathing.isPositionSafe(point: Point2D, opts?: { layer?: InfluenceLayer | InfluenceGrid; limit?: number }) => boolean`*
+Whether the cell's cost is at most `limit` (`1`).
 
 ### events
 TBD

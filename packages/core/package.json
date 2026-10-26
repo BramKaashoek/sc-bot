@@ -57,6 +57,7 @@
     "exports": {
         ".": "./index.ts",
         "./constants/*": "./constants/*.ts",
+        "./behaviors": "./behaviors/index.ts",
         "./types": "./types.ts"
     },
     "private": true

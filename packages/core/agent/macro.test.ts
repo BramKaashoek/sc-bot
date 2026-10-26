@@ -48,6 +48,70 @@ const straightLinePathing = (query: SC2APIProtocol.RequestQuery): SC2APIProtocol
           }
         : undefined;
 
+async function distributeOnToy(
+    playerCommon: SC2APIProtocol.PlayerCommon,
+    {
+        assignedToBase = 15,
+        assignedToRefinery = 2,
+        extraUnits = [],
+        workersPerGas,
+    }: {
+        assignedToBase?: number;
+        assignedToRefinery?: number;
+        extraUnits?: SC2APIProtocol.Unit[];
+        workersPerGas?: number;
+    } = {},
+) {
+    const fixture = toyFixture();
+    fixture.data.units![UnitType.REFINERY] = unitTypeData(UnitType.REFINERY, {
+        attributes: [Attribute.ARMORED, Attribute.MECHANICAL, Attribute.STRUCTURE],
+    });
+    fixture.observations[0] = observation({
+        playerCommon,
+        units: [
+            rawUnit({
+                tag: 'mineral',
+                alliance: Alliance.NEUTRAL,
+                owner: 16,
+                unitType: UnitType.MINERALFIELD,
+                pos: { x: 2, y: 16.5, z: 10 },
+                mineralContents: 1800,
+            }),
+            rawUnit({
+                tag: 'farMineral',
+                alliance: Alliance.NEUTRAL,
+                owner: 16,
+                unitType: UnitType.MINERALFIELD,
+                pos: { x: 3, y: 12.5, z: 10 },
+                mineralContents: 1800,
+            }),
+            rawUnit({
+                tag: 'refinery',
+                unitType: UnitType.REFINERY,
+                pos: { x: 8.5, y: 24.5, z: 10 },
+                vespeneContents: 2250,
+                assignedHarvesters: assignedToRefinery,
+                idealHarvesters: 3,
+            }),
+            rawUnit({
+                tag: 'commandCenter',
+                unitType: UnitType.COMMANDCENTER,
+                pos: { x: 8.5, y: 16.5, z: 10 },
+                assignedHarvesters: assignedToBase,
+                idealHarvesters: 16,
+            }),
+            rawUnit({ tag: 'worker', pos: { x: 6, y: 16.5, z: 10 } }),
+            ...extraUnits,
+        ],
+    });
+    const world = await createTestWorld(fixture);
+    return (
+        await commandsAfterStep(world, fixture.observations[0], () =>
+            world.agent.distributeWorkers(2, { workersPerGas }),
+        )
+    ).commands;
+}
+
 describe('agent macro helpers', () => {
     it('reports the recorded build state: pending orders, upgrade progress, structure progress and tech requirement progress', async () => {
         const { agent } = await createTestWorld('blueshift', { loop: 224 });
@@ -200,66 +264,15 @@ describe('agent macro helpers', () => {
         );
     });
 
-    it('sends an idle worker to the undersaturated resource the mineral-to-gas ratio favours over a closer one, then idle workers to the nearest base mineral', async () => {
-        const commandsWith = async (
-            playerCommon: SC2APIProtocol.PlayerCommon,
-            { assignedToBase = 15, extraUnits = [] as SC2APIProtocol.Unit[] } = {},
-        ) => {
-            const fixture = toyFixture();
-            fixture.data.units![UnitType.REFINERY] = unitTypeData(UnitType.REFINERY, {
-                attributes: [Attribute.ARMORED, Attribute.MECHANICAL, Attribute.STRUCTURE],
-            });
-            fixture.observations[0] = observation({
-                playerCommon,
-                units: [
-                    rawUnit({
-                        tag: 'mineral',
-                        alliance: Alliance.NEUTRAL,
-                        owner: 16,
-                        unitType: UnitType.MINERALFIELD,
-                        pos: { x: 2, y: 16.5, z: 10 },
-                        mineralContents: 1800,
-                    }),
-                    rawUnit({
-                        tag: 'farMineral',
-                        alliance: Alliance.NEUTRAL,
-                        owner: 16,
-                        unitType: UnitType.MINERALFIELD,
-                        pos: { x: 3, y: 12.5, z: 10 },
-                        mineralContents: 1800,
-                    }),
-                    rawUnit({
-                        tag: 'refinery',
-                        unitType: UnitType.REFINERY,
-                        pos: { x: 8.5, y: 24.5, z: 10 },
-                        vespeneContents: 2250,
-                        assignedHarvesters: 2,
-                        idealHarvesters: 3,
-                    }),
-                    rawUnit({
-                        tag: 'commandCenter',
-                        unitType: UnitType.COMMANDCENTER,
-                        pos: { x: 8.5, y: 16.5, z: 10 },
-                        assignedHarvesters: assignedToBase,
-                        idealHarvesters: 16,
-                    }),
-                    rawUnit({ tag: 'worker', pos: { x: 6, y: 16.5, z: 10 } }),
-                    ...extraUnits,
-                ],
-            });
-            const world = await createTestWorld(fixture);
-            return (await commandsAfterStep(world, fixture.observations[0], () => world.agent.distributeWorkers()))
-                .commands;
-        };
-
-        expect(await commandsWith({ minerals: 100, vespene: 100 })).toEqual([
+    it('sends an idle worker to the undersaturated resource the mineral-to-gas ratio favours over a closer one, then idle workers to the nearest base mineral, capping gas at workersPerGas', async () => {
+        expect(await distributeOnToy({ minerals: 100, vespene: 100 })).toEqual([
             { tag: 'worker', abilityId: Ability.HARVEST_GATHER, targetUnitTag: 'mineral', queueCommand: false },
         ]);
-        expect(await commandsWith({ minerals: 1000, vespene: 100 })).toEqual([
+        expect(await distributeOnToy({ minerals: 1000, vespene: 100 })).toEqual([
             { tag: 'worker', abilityId: Ability.HARVEST_GATHER, targetUnitTag: 'refinery', queueCommand: false },
         ]);
         expect(
-            await commandsWith(
+            await distributeOnToy(
                 { minerals: 100, vespene: 100 },
                 {
                     assignedToBase: 17,
@@ -277,6 +290,30 @@ describe('agent macro helpers', () => {
             { tag: 'worker', abilityId: Ability.HARVEST_GATHER, targetUnitTag: 'refinery', queueCommand: false },
             { tag: 'idleSecond', abilityId: Ability.HARVEST_GATHER, targetUnitTag: 'farMineral', queueCommand: false },
         ]);
+
+        const gasWorkers = ['gasA', 'gasB', 'gasC'].map((tag) =>
+            rawUnit({
+                tag,
+                pos: { x: 8.5, y: 22, z: 10 },
+                orders: [{ abilityId: Ability.HARVEST_GATHER, targetUnitTag: 'refinery' }],
+            }),
+        );
+        const capped = await distributeOnToy(
+            { minerals: 100, vespene: 100 },
+            { assignedToBase: 12, assignedToRefinery: 3, extraUnits: gasWorkers, workersPerGas: 1 },
+        );
+        expect(capped.filter(({ tag }) => tag.startsWith('gas')).map(({ targetUnitTag }) => targetUnitTag)).toEqual([
+            'mineral',
+            'mineral',
+        ]);
+
+        expect(await distributeOnToy({ minerals: 1000, vespene: 100 }, { workersPerGas: 0 })).toEqual([
+            { tag: 'worker', abilityId: Ability.HARVEST_GATHER, targetUnitTag: 'mineral', queueCommand: false },
+        ]);
+
+        await expect(distributeOnToy({ minerals: 100, vespene: 100 }, { workersPerGas: 4 })).rejects.toThrow(
+            RangeError,
+        );
     });
 
     it('trains up to the amount from idle finished producers not ordered this step and researches only from an idle facility', async () => {

@@ -23,9 +23,14 @@ This readme walks through everything the library offers. For exhaustive signatur
     - [frame](#frame)
     - [debug](#debug)
     - [events and data](#events-and-data)
+    - [memory](#memory)
+    - [spatial](#spatial)
+    - [influence](#influence)
+    - [pathing](#pathing)
     - [Custom resources](#custom-resources)
 - [Constants](#constants)
 - [Where this library differs from python-sc2](#where-this-library-differs-from-python-sc2)
+- [Where this library differs from ares-sc2](#where-this-library-differs-from-ares-sc2)
 - [Changes compared to node-sc2](#changes-compared-to-node-sc2)
 - [Testing](#testing)
 - [Known limitations](#known-limitations)
@@ -366,9 +371,9 @@ Agents and systems react to the game through event handlers named `on` + the eve
 | `onUnitTypeChanged` | An own unit's type changed (morphs, sieging, lowering depots) | `{ unit, previousType }` |
 | `onUnitHasBurrowed` | A unit burrowed | `Unit` |
 | `onUnitHasEngaged` / `onUnitHasDisengaged` / `onUnitHasSwitchedTargets` | A unit's engaged target was set / cleared / changed | `Unit` |
-| `onEnemyFirstSeen` | An enemy tag is seen for the first time | `Unit` |
+| `onEnemyFirstSeen` | An enemy tag is seen for the first time. A tag that [memory](#memory) forgot and that is seen again doesn't fire it again. | `Unit` |
 | `onEnemyUnitEnteredVision` | An enemy is visible now but wasn't last frame (first sightings included) | `Unit` |
-| `onEnemyUnitLeftVision` | An enemy was visible last frame but isn't now. It stays in `units` as a memory. | `Unit` |
+| `onEnemyUnitLeftVision` | An enemy was visible last frame but isn't now. It stays in `units` as a ghost until [memory](#memory) forgets it (30 s by default). | `Unit` |
 | `onBuildingConstructionStarted` | A new own structure appears unfinished | `Unit` |
 | `onBuildingConstructionComplete` | An own structure finishes, or a new one appears already finished | `Unit` |
 | `onStructureConstructionStarted` | An own unit is an unfinished structure and wasn't a structure last frame: a new unfinished structure, or a unit that turned into one while keeping its tag. On SC2 4.10 a drone's building gets a new tag (the drone leaves the observation and is reported destroyed when the building finishes), so for drones this fires together with `onBuildingConstructionStarted`, with the building as `data`. | `Unit` |
@@ -557,7 +562,7 @@ A system with `type: 'unit'` manages units by type (`units: [...]`) and/or label
 `world.resources.get()` returns the resources, best destructured:
 
 ```text
-const { actions, events, frame, map, units, debug } = resources.get();
+const { actions, events, frame, map, units, debug, memory, spatial, influence, pathing } = resources.get();
 ```
 
 Bots and plugins can add their own; see [Custom resources](#custom-resources).
@@ -573,7 +578,8 @@ All getters return a [`Units`](#the-units-collection) collection. Most accept an
 | `getById(unitType \| unitType[], filter = { alliance: SELF })` | Units of those types |
 | `getByType(unitType \| unitType[])` | Live units of those types, any alliance |
 | `getByTag(tag)` / `getByTag(tags)` | A `Unit` or `undefined`; for an array, the known units as `Units` |
-| `getClosest(position, units, n = 1)` | The `n` closest of `units` (also works for power sources) |
+| `getClosest(position, units, n = 1)` | The `n` closest of `units` (also works for power sources). It sorts the whole list; for range queries use [`spatial`](#spatial). |
+| `getArmyValue(alliance = SELF, { includePending = false, includeGhosts = true })` | Minerals plus gas of the combat units (`isCombatUnit()`), each at its type's full cost. For `ENEMY` it reads [memory](#memory), ghosts included unless `includeGhosts: false`; for `SELF` with `includePending` it also counts units in production (structure orders, two for a reactor, and eggs). Throws `NodeSC2Error` for any other alliance. |
 | `getBases(filter = { alliance: SELF })` | Townhalls |
 | `getWorkers(includeBusy = false)` | Own workers of your race. By default skips workers that `actions.build` sent off until SC2 reports their order back (or 250 game loops pass). |
 | `getIdle()` | Own units with an empty order queue |
@@ -589,7 +595,7 @@ All getters return a [`Units`](#the-units-collection) collection. Most accept an
 | `withLabel(label)`, `withCurrentOrders(abilityId)` | Units carrying a label; units with that ability in their order queue |
 | `clone()` | A data-only deep copy of every unit, keyed by tag |
 
-**Enemy memory.** An enemy that leaves vision stays in `units` with its last known state. `getAll(Alliance.ENEMY)` includes it, `getAlive` doesn't. `unit.isMemory()` is `true` for it and `unit.age()` gives the seconds since it was last seen. Enemies whose death SC2 reports are removed; one that dies out of sight stays as a memory.
+**Enemy memory.** An enemy that leaves vision stays in `units` with its last known state, as a ghost. `getAll(Alliance.ENEMY)` includes it, `getAlive` doesn't. `unit.isMemory()` is `true` for it and `unit.age()` gives the seconds since it was last seen. Ghosts expire after 30 seconds by default and are dropped earlier when their last position is visible again (burrowed ones are kept until they expire); see [memory](#memory). Enemies whose death SC2 reports are removed right away.
 
 ### The Units collection
 
@@ -878,7 +884,7 @@ protossWallBuildings: Point2D[]
 | `inPathingGrid(point)`, `inPlacementGrid(point)` | The static grids from the game info |
 | `getTerrainHeight(point)`, `getTerrainZHeight(point)`, `getHeight(point)` | The raw height-map value (0 to 255); that value as world z; node-sc2's height (the processed height grid divided by 10) |
 | `isVisible(point)`, `hasCreep(point)`, `getCreep()`, `isRamp(point)` | Visibility and creep this step |
-| `path(start, end)` | A local A* path as `[x, y][]`, synchronous and fast; empty when no path exists. The path graph also blocks the cells the map system marks unplaceable (structures, minerals, geysers, rocks, xel'naga towers), so `end` on such a cell, or `start` surrounded by them (e.g. a townhall's `townhallPosition`), gives an empty path; start from a unit's `pos` or `closestPathable(point)` |
+| `path(start, end)` | A local A* path as `[x, y][]`, synchronous and fast; empty when no path exists. The path graph also blocks the cells the map system marks unplaceable (structures, minerals, geysers, rocks, xel'naga towers), so `end` on such a cell, or `start` surrounded by them (e.g. a townhall's `townhallPosition`), gives an empty path; start from a unit's `pos` or `closestPathable(point)`. For paths that avoid enemy threats and change every step, use [`pathing`](#pathing). |
 | `queryPathing(start, end)` | `Promise<number \| null>`: SC2's own path length from a point or unit, `null` if unreachable |
 | `closestPathable(point, radius = 3)` | The closest pathable cell; throws if there is none within `radius` |
 | `freeGasGeysers()`, `getEffects()`, `getGrids()`, `isCustom()` | Geysers without a gas building near your bases; active effects; the raw grids; whether the map has no expansions (a custom map) |
@@ -966,6 +972,111 @@ export async function onStep({ agent, resources }: World) {
 
 `world.data` holds the game data from SC2 (`getUnitTypeData(id)`, `getAbilityData(id)`, `getUpgradeData(id)`, `getEffectData(id)`, `findUnitTypesWithAbility(abilityId)`) and earmarks. An earmark reserves money for later: `data.addEarmark({ name, minerals, vespene })`. While it exists, `agent.canAfford` and `agent.canAffordUpgrade` subtract it, except when called with that earmark's name; if that check passes, the earmark is settled (removed). `getEarmarkTotals(name?)` and `settleEarmark(name)` are available directly.
 
+### memory
+
+Enemies that leave vision stay in `units` as ghosts (`unit.isMemory()`) until `memory` forgets them. Each step, a ghost is deleted when it is older than its expiry (`unit.age()` past `expireAir` for flying units, `expireGround` otherwise), or when all four cells around its last position are visible and it isn't burrowed. A burrowed ghost stays until it expires. Enemies whose death SC2 reports are removed right away.
+
+| Member | What it does |
+|---|---|
+| `getGhosts()` | Enemies out of vision that are still remembered |
+| `getSnapshots()` | Current enemy snapshots (structures seen through the fog) |
+| `getEnemies({ includeGhosts = true, structures = true })` | Every known enemy, ghosts included unless `includeGhosts: false` |
+| `forget(tag)` | Deletes a ghost now. If the tag is seen again, `onEnemyUnitEnteredVision` fires but `onEnemyFirstSeen` doesn't. |
+| `configure({ expireGround?, expireAir? })` | Expiry in game seconds, both `30` by default. Settings survive a new game on the same engine. |
+
+```ts
+import type { World } from '@sc-bot/core';
+
+export async function onGameStart({ resources }: World) {
+    resources.get().memory.configure({ expireGround: 60 });
+}
+
+export async function onStep({ resources }: World) {
+    const { memory } = resources.get();
+    const remembered = memory.getEnemies({ structures: false });
+    console.log(`${remembered.length} enemy units known, ${memory.getGhosts().length} out of vision`);
+}
+```
+
+### spatial
+
+Range queries over enemy and own units. The index is rebuilt on the first query of each game loop, so later queries in the same loop are cheap. Enemies come from `memory.getEnemies()`, so ghosts are included; own units are the alive ones. Each query takes a kind: `'enemy'`, `'enemyGround'`, `'enemyAir'`, `'own'`, `'ownGround'` or `'ownAir'`. Ground and air are split by `isFlying` (or a graviton beam), so landed structures count as ground and lifted ones as air. Distances are centre to centre, ignoring unit radius.
+
+| Member | Returns |
+|---|---|
+| `unitsInRange(from, distance, kind)` | `Units` within `distance` of a point or unit |
+| `anyInRange(from, distance, kind)` | Whether there is at least one, stopping at the first |
+| `closest(from, kind, maxDistance?)` | The closest unit, or `undefined` |
+
+Result order isn't stable: `unitsInRange` returns units in bucket order, not in the order they were added, and `closest` breaks ties between equal distances by bucket ring order. Sort the result yourself if order matters.
+
+```ts
+import type { World } from '@sc-bot/core';
+import { MARINE } from '@sc-bot/core/constants/unit-type';
+
+export async function onStep({ resources }: World) {
+    const { actions, spatial, units } = resources.get();
+    for (const marine of units.getById(MARINE)) {
+        const target = spatial.closest(marine, 'enemyGround', 6);
+        if (target) await actions.attack([marine], target);
+    }
+}
+```
+
+### influence
+
+Danger grids, built on the first `getGrid` of each game loop. There are four layers: `'ground'`, `'air'`, `'groundAvoidance'` and `'airAvoidance'`. A cell is `1` when free and `Infinity` when blocked (unpathable for the ground layers, outside the playable area for air). Enemy threats add cost on top, so a cell is safe when its value is at most `1`.
+
+- Units, ghosts included and changelings skipped: known units use ares' weight table; static defence uses its own handlers; anything else that can attack adds its DPS within weapon range plus `rangeBuffer`. Unfinished enemy structures don't count.
+- Effects, while present: psionic storm 600 / 3.5, corrosive bile 100 / 3, liberator zones 500 / 6 (ground only, and not your own), lurker spines 600 / 1, blinding cloud 300 / 3.5, nuke 1000 / 8 (cost / radius), each radius plus `effectsRangeBuffer`. Some go into the avoidance layers too.
+
+| Member | What it does |
+|---|---|
+| `getGrid(layer)` | The `InfluenceGrid`: `width`, `height`, `data` (a `Float32Array` indexed `y * width + x`; read-only by contract) and `get(point)`, which floors the point and gives `Infinity` out of bounds |
+| `addCost(layers, center, radius, weight)` | Adds your own cost circle to one or more layers for the rest of this game loop. Cells never drop below `1`; `Infinity` stays blocked. |
+| `configure({ rangeBuffer = 4, effectsRangeBuffer = 1, costMultiplier = 1, effects })` | `costMultiplier` scales the built-in sources only, not `addCost`. `effects` overrides `{ cost, range }` per effect id. Settings survive a new game on the same engine. |
+| `drawDebug(layer, { threshold = 1 })` | Draws the cells above `threshold` with their value, through `debug.setDrawCells` |
+
+```ts
+import type { World } from '@sc-bot/core';
+
+export async function onStep({ resources }: World) {
+    const { influence, map } = resources.get();
+    influence.addCost('ground', map.getEnemyNatural().townhallPosition, 8, 50);
+    const grid = influence.getGrid('ground');
+    console.log('natural is safe:', grid.get(map.getNatural().townhallPosition) <= 1);
+}
+```
+
+### pathing
+
+Paths over an influence layer (`'ground'` by default, or any `InfluenceGrid`), with an 8-connected A* that doesn't cut corners. Entering a cell costs its value, so paths go around danger when that is cheaper. Use it for movement that should react to the current threats; `map.path` stays for static map analysis.
+
+| Member | What it does |
+|---|---|
+| `findPath(start, goal, { layer?, maxExpanded? })` | Cell centres from start (excluded) to goal, or `[]` when there is no path. A blocked goal is moved to the closest open cell within 3; out-of-bounds points are clamped to the map. |
+| `nextPoint(start, goal, { layer?, sensitivity = 5, senseDanger = true, dangerDistance = 20, dangerThreshold = 5, maxExpanded? })` | The point to move to next: the `sensitivity`th point of the path, or `goal` when there is no path. With `senseDanger`, it returns `goal` without searching when no cell within `dangerDistance` of `start` reaches `dangerThreshold`. |
+| `closestSafeSpot(from, { layer?, radius = 11 })` | The cell centre with the lowest cost within `radius`, closest first on ties, or `undefined` |
+| `isPositionSafe(point, { layer?, limit = 1 })` | Whether the cell's cost is at most `limit` |
+
+```ts
+import type { World } from '@sc-bot/core';
+import { MARINE } from '@sc-bot/core/constants/unit-type';
+
+export async function onStep({ resources }: World) {
+    const { actions, map, pathing, units } = resources.get();
+    const target = map.getEnemyNatural().townhallPosition;
+    for (const marine of units.getById(MARINE)) {
+        if (!pathing.isPositionSafe(marine.pos)) {
+            const spot = pathing.closestSafeSpot(marine.pos);
+            if (spot) await actions.move(marine, spot);
+            continue;
+        }
+        await actions.move(marine, pathing.nextPoint(marine.pos, target));
+    }
+}
+```
+
 ### Custom resources
 
 A resource is registered from a definition: a `name`, a `create(world)` factory and an optional `reset(resource, world)`. `world.resources.register(definition)` creates the resource and returns it; call it from a system's `setup`, which runs every game. Registering the same definition object again returns the existing resource; registering another definition under a taken name throws `NodeSC2Error`. Declare the resource's type by augmenting the `ResourceContainer` interface of `@sc-bot/core/types` (augmenting `@sc-bot/core` itself doesn't merge). The key is typed as present before `register` has run, so register it before anything reads it.
@@ -1052,6 +1163,18 @@ Where python-sc2 has a bug or its data doesn't match SC2 4.10, this library deli
 - **Build worker selection.** The macro helpers' builder pick (python-sc2's `select_build_worker`) skips an idle worker that already received a command this step. python-sc2 means to, but compares the worker object against a set of tags, so the check never matches.
 - **Snapshots on old builds.** On SC2 before 5.0.4 (including 4.10) `isSnapshot()` and the `visible` filter use the visibility grid, because the API misreports `displayType` there. python-sc2 does the same, but reads the grid at the rounded position; this library floors it, like every other grid lookup here, so a unit near a cell edge can be judged by the neighbouring cell.
 
+## Where this library differs from ares-sc2
+
+Where ares-sc2 does something this library deliberately doesn't:
+
+- **Distances in `spatial`.** Queries measure centre to centre on a bucket grid. ares uses KD-trees, also centre to centre, so results match up to the order of equal distances.
+- **Skipped influence sources.** The KD8 charge, parasitic bomb and force field handlers aren't ported, and neither are the climber, air-vs-ground, ground-to-air, tactical and priority grids. Only the ground, air, ground avoidance and air avoidance layers exist.
+- **Spine crawlers.** They add ground influence (cost 22, range 7). ares has no handler for them.
+- **Banelings in ground avoidance.** They are stamped into `groundAvoidance`. ares has code for it, but it never runs, because the weight table is checked first.
+- **Float weights.** Influence costs are kept as floats. ares truncates them to integers, which changes costs by less than 1.
+- **Inclusive circles.** A cost circle includes the cells exactly at its radius, so at integer radii it can be one ring larger than ares'.
+- **Own liberator zones.** Your own liberators' zones aren't stamped. ares stamps every liberator zone, so a Terran army paths around its own liberators.
+
 ## Changes compared to node-sc2
 
 Bug fixes that changed a signature or a failure mode:
@@ -1087,6 +1210,7 @@ Bug fixes that changed a signature or a failure mode:
 - The agent's own `onGameStart` and `onStep` now also receive `(data, event)` after `world`, and `onGameStart` keeps an `agent.opponent.id` set before the game (it used to wipe the ladder's `--OpponentId`). Under a ladder manager the engine sets the id from `--OpponentId` at setup only when it is passed, so a preset id survives otherwise.
 - Units whose death SC2 reports are labelled `dead` as before, and dead enemies are now also removed from the unit store, since enemies are otherwise kept as memory.
 - The map system marks the cells of destructible rocks and xel'naga towers unplaceable (node-sc2 only marked unbuildable plates), so `isPlaceable`, `isPlaceableAt`, the placement grid and `map.path` treat them as blocked. Rocks whose shape isn't known (diagonal and very large ones) stay placeable.
+- Enemy memory expires: a ghost is forgotten after 30 seconds (configurable with `memory.configure`) or when its last position is visible again. node-sc2 kept every enemy that left vision for the rest of the game.
 - Running another game on the same engine resets every registered resource in place (unit store, map caches, events, debug drawings, step times, proposed commands, and custom resources through their own `reset`), earmarks and systems' step timing (see [Several games on one engine](#enginerungamemap-players-options)). Enemy memory and the cached combat rally used to carry over, and agent systems skipped their `onStep` until the game loop passed where the previous game ended. The first game no longer resets anything, and the build and unit plugins are no longer re-applied per game (which ran a build order once more per step for every extra game).
 - A game SC2 can't create rejects `runGame` and `runBotVsBot` with SC2's error (e.g. `Could not create a game on "<map>" (InvalidMapName): ...`). It used to hang or fail later with a misleading error.
 - A realtime game whose SC2 connection closes rejects with `ConnectionClosedError` instead of resolving `[world, undefined]`.
@@ -1138,7 +1262,7 @@ The test helpers live inside the package and aren't part of its exports, so they
 
 ## Known limitations
 
-- `units.getClosest` sorts the whole list; there is no spatial index.
+- Influence has no climber, air-vs-ground, ground-to-air, tactical or priority grids, and ignores KD8 charges, parasitic bombs and force fields (see [Where this library differs from ares-sc2](#where-this-library-differs-from-ares-sc2)).
 - The launcher waits for a freshly started SC2 to listen on its port without a timeout.
 - SC2 under WSL is not discovered.
 

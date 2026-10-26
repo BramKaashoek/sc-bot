@@ -1,4 +1,5 @@
 import ResourceManager from './create-resource-manager.ts';
+import { DEFAULT_CONFIG } from './config.ts';
 import ActionManager from '../resources/actions.ts';
 import Debugger from '../resources/debug.ts';
 import DataStorage from './data-storage.ts';
@@ -17,7 +18,10 @@ import { placementResource } from '../resources/placement.ts';
 import { buildingsResource } from '../resources/buildings.ts';
 import { miningResource } from '../resources/mining.ts';
 import { flyingResource } from '../resources/flying.ts';
-import type { ResourceContainer, ResourceDefinition, World } from '../types.ts';
+import { mapAnalysisResource } from '../resources/map-analysis.ts';
+import { behaviorsResource } from '../resources/behaviors.ts';
+import { openingsResource } from '../resources/openings.ts';
+import type { CoreConfig, ResourceContainer, ResourceDefinition, World } from '../types.ts';
 
 type CoreResourceDefinition = { [K in keyof ResourceContainer]-?: ResourceDefinition<K> }[keyof ResourceContainer];
 
@@ -49,14 +53,18 @@ function coreResources(client?: NodeSC2Proto.ProtoClient): CoreResourceDefinitio
         buildingsResource,
         miningResource,
         flyingResource,
+        mapAnalysisResource,
+        behaviorsResource,
+        openingsResource,
     ];
 }
 
-function createWorld(client?: NodeSC2Proto.ProtoClient): World {
+function createWorld(client?: NodeSC2Proto.ProtoClient, config: Readonly<CoreConfig> = DEFAULT_CONFIG): World {
     const world = {
         agent: null,
         data: null,
         resources: null,
+        config,
     } as unknown as World;
 
     world.data = DataStorage();

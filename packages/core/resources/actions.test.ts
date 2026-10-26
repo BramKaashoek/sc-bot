@@ -8,7 +8,6 @@ import type { TestWorld } from '../test/create-test-world.ts';
 
 const CHAT_BROADCAST = 1 as SC2APIProtocol.ActionChat_Channel;
 const CHAT_TEAM = 2 as SC2APIProtocol.ActionChat_Channel;
-const ACTION_ERROR = 3 as SC2APIProtocol.ActionResult;
 
 const unitCommand = (command: SC2APIProtocol.ActionRawUnitCommand): SC2APIProtocol.RequestAction => ({
     actions: [{ actionRaw: { unitCommand: command } }],
@@ -154,47 +153,29 @@ describe('ActionManager', () => {
         ]);
     });
 
-    it("swapBuildings resolves only after lifting both buildings, moving and landing each on the other's spot, and rejects when the engine refuses a step", async () => {
+    it('swapBuildings sends nothing itself and leaves the lifts to the flying resource on the next dispatch', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
-        const { actions, units } = world.resources.get();
+        const { actions, units, flying } = world.resources.get();
         const [barracks, commandCenter] = units.getByTag(['4350541825', '4342677505']);
         const sentBefore = world.client.sent.actions.length;
 
-        await actions.swapBuildings(barracks, commandCenter);
-
-        expect(world.client.sent.actions.slice(sentBefore)).toEqual([
-            unitCommand({ abilityId: Ability.LIFT, unitTags: [barracks.tag!], queueCommand: false }),
-            unitCommand({ abilityId: Ability.LIFT, unitTags: [commandCenter.tag!], queueCommand: false }),
-            unitCommand({
-                abilityId: Ability.MOVE,
-                unitTags: [barracks.tag!],
-                queueCommand: true,
-                targetWorldSpacePos: commandCenter.pos,
-            }),
-            unitCommand({
-                abilityId: Ability.MOVE,
-                unitTags: [commandCenter.tag!],
-                queueCommand: true,
-                targetWorldSpacePos: barracks.pos,
-            }),
-            unitCommand({
-                abilityId: Ability.LAND,
-                unitTags: [barracks.tag!],
-                queueCommand: true,
-                targetWorldSpacePos: commandCenter.pos,
-            }),
-            unitCommand({
-                abilityId: Ability.LAND,
-                unitTags: [commandCenter.tag!],
-                queueCommand: true,
-                targetWorldSpacePos: barracks.pos,
-            }),
+        await expect(actions.swapBuildings(barracks, commandCenter)).resolves.toBeUndefined();
+        expect(world.client.sent.actions.length).toBe(sentBefore);
+        expect(flying.getPlans().map((plan) => [plan.tag, plan.destination])).toEqual([
+            [barracks.tag, { x: commandCenter.pos.x, y: commandCenter.pos.y }],
+            [commandCenter.tag, { x: barracks.pos.x, y: barracks.pos.y }],
         ]);
 
-        world.client.action = async () => ({ result: [ACTION_ERROR] });
-        await expect(actions.swapBuildings(barracks, commandCenter)).rejects.toThrow(
-            'Could not perform ability, result 3',
-        );
+        const next = structuredClone(world.client.fixture.observations[896]);
+        next.observation!.gameLoop = 900;
+        await stepTo(world, next);
+        expect(world.client.sent.actions.slice(sentBefore)).toEqual([
+            unitCommand({
+                abilityId: Ability.LIFT,
+                unitTags: [barracks.tag!, commandCenter.tag!],
+                queueCommand: false,
+            }),
+        ]);
     });
 
     it('batches queued commands into one request after the step, dropping repeats of current orders, and the whole batch if its request fails, forgetting ordered units on a new observation of the same loop', async () => {

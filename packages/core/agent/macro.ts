@@ -426,7 +426,10 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
         }
         await buildNear(this, building, target, maxDistance);
     },
-    async distributeWorkers(resourceRatio = 2) {
+    async distributeWorkers(resourceRatio = 2, { workersPerGas = 3 } = {}) {
+        if (!Number.isInteger(workersPerGas) || workersPerGas < 0 || workersPerGas > 3) {
+            throw new RangeError(`workersPerGas must be an integer from 0 to 3, got ${workersPerGas}`);
+        }
         const { mineralFields, workers, townhalls, gasBuildings } = context(this);
         const bases = townhalls.filter((townhall) => townhall.buildProgress === 1);
         if (mineralFields.length === 0 || workers.length === 0 || bases.length === 0) return;
@@ -438,7 +441,9 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
             bases.reduce((best, base) => (distance(base.pos, place.pos) < distance(best.pos, place.pos) ? base : best));
 
         [...new Set([...bases, ...readyGas])].forEach((miningPlace) => {
-            const difference = miningPlace.surplusHarvesters();
+            const difference = miningPlace.vespeneContents
+                ? miningPlace.assignedHarvesters! - Math.min(miningPlace.idealHarvesters!, workersPerGas)
+                : miningPlace.surplusHarvesters();
             if (!difference) return;
 
             let localWorkers: Unit[];

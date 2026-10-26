@@ -25,6 +25,7 @@ Although the `EventChannel` itself is completely synchronous, event dispatching 
   - `FrameSystem` runs first, getting the current observation and updating the `frame` resource, as well as populating `unitDestroyed` events from observation.
   - `UnitSystem` then adds new `UnitEntity`'s and updates existing ones on the `units` resource, creating a number of other events based on diffing unit data.
   - `MapSystem` lastly updates the `map` resource state, which includes things like visibility and creep data.
+- Then `world.resources.step(world)` calls each registered resource's `onStep` hook, synchronously and in registration order. `memory` forgets expired ghosts there, before any agent code reads the units.
 - Next, the agent entity itself is dispatched, under the commander `{ owner: 'agent', rank: -1 }`.
 - Then agent systems are ran *concurrently*, each under its own commander (`owner` = system name, `priority` = its `commandPriority`, `rank` = its index in `agent.use()` order). The commander lives in an `AsyncLocalStorage`, so it follows the handler through `await`s and (with Bluebird's `asyncHooks` on) Bluebird callbacks.
 - Lastly, `actions.flushQueuedActions()` arbitrates every command proposed during the step per unit tag, sends the survivors in one `RequestAction`, and writes one `commandResults` event (type `agent`) describing what was sent, dropped or rejected. Readers get it on the next dispatch. A flush error is logged, except `GameEndedError` and `ConnectionClosedError`, which propagate to the game loop. A command proposed after this point (from a dangling promise) goes out with the next step's flush.
@@ -53,6 +54,10 @@ The built-in resources are as follows:
 - `events` is of type `EventChannel` and can be used to manually create `readerIds`, and read or write events. For the most part, the regular dispatch cycles should take care of reading, but users can use this resource to create custom events by writing their blueprint to the channel.
 - `debug` is of type `Debugger` and is used to draw things to the game world or game screen or otherwise interact with the game for debugging or testing purposes (creating or destroying units, setting resources, etc etc).
 - `actions` is of type `ActionManager` and is the main way that most systems will interact with the transport layer. It can be used to directly make queries or send raw commands (`sendAction`), and exposes helpers like `build`, `attack`, etc., which propose commands for the step-end flush described under Events.
+- `memory` is of type `EnemyMemory`. Its `onStep` hook deletes enemy ghosts from the units store when they expire or their position is seen empty; it reads the ghosts back for other resources.
+- `spatial` is of type `SpatialIndex`, a bucket grid over enemies (ghosts included) and own units, rebuilt lazily on the first query of each game loop.
+- `influence` is of type `InfluenceResource`, the per-loop ground/air (and avoidance) cost grids, built lazily from the pathing grid, enemy units and effects.
+- `pathing` is of type `PathingResource`, an A* over the influence grids with buffers reused between queries.
 
 ## Other Concepts
 

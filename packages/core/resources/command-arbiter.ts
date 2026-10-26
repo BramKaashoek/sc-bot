@@ -10,7 +10,7 @@ export type Committed = Map<string, CommandContext>;
 export type Dropped<P extends Proposal = Proposal> = {
     proposal: P;
     tags: string[];
-    reason: 'outranked' | 'repeat';
+    reason: 'outranked' | 'repeat' | 'not-owner';
     by?: string;
 };
 
@@ -34,6 +34,7 @@ export function arbitrate<P extends Proposal>(
     proposals: P[],
     committed: Committed,
     isRepeat: (command: SC2APIProtocol.ActionRawUnitCommand, tag: string) => boolean,
+    requiredOwner?: (owner: string, tag: string) => string | undefined,
 ): { commands: Emitted<P>[]; dropped: Dropped<P>[] } {
     const ordered = [...proposals].sort((a, b) => a.seq - b.seq);
 
@@ -47,7 +48,14 @@ export function arbitrate<P extends Proposal>(
     const drops: { proposal: P; tag: string; reason: Dropped['reason']; by?: string }[] = [];
     const kept = new Map<string, P[]>();
 
-    byTag.forEach((candidates, tag) => {
+    byTag.forEach((proposed, tag) => {
+        const candidates = proposed.filter((proposal) => {
+            const by = requiredOwner?.(proposal.owner, tag);
+            if (by !== undefined) drops.push({ proposal, tag, reason: 'not-owner', by });
+            return by === undefined;
+        });
+        if (candidates.length === 0) return;
+
         const best = candidates.reduce((top, proposal) => (outranks(proposal, top) ? proposal : top));
         const holder = committed.get(tag);
         const owner = holder && !outranks(best, holder) ? holder.owner : best.owner;

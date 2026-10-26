@@ -1,6 +1,7 @@
 import AbilitiesByUnit from './unit-ability-map.ts';
 import * as Ability from './ability.ts';
 import * as Buff from './buff.ts';
+import * as BuildTarget from './build-target.ts';
 import Color from './color.ts';
 import * as Effect from './effect.ts';
 import * as EngagementResult from './engagement-result.ts';
@@ -65,6 +66,7 @@ export {
     AbilitiesByUnit,
     Buff,
     BuffId,
+    BuildTarget,
     Color,
     Effect,
     EffectId,

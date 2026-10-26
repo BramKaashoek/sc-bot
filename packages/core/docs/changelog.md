@@ -47,6 +47,24 @@ Please note, this project adheres to [Semantic Versioning](https://semver.org/sp
 - A system mounted mid-game with `agent.use()` runs its `setup` and `onGameStart` right away inside the caller, so commands from those are attributed to the caller's commander. From the next step on, it proposes under its own name, ranked after the systems mounted before it.
 - To add a bot resource, augment `ResourceContainer` in `@sc-bot/core/types` and register its definition from a system's `setup`.
 
+### parity-2: enemy memory, spatial index, influence and pathing
+
+#### Added
+- `memory` resource: ghost expiry (`expireGround` / `expireAir`, 30 game seconds by default), `getGhosts`, `getSnapshots`, `getEnemies`, `forget`, `configure`.
+- `spatial` resource: `unitsInRange`, `anyInRange` and `closest` over enemies (ghosts included) and own units, by kind (`enemy`, `enemyGround`, `enemyAir`, `own`, `ownGround`, `ownAir`).
+- `influence` resource: ground, air, ground avoidance and air avoidance cost grids from enemy units and effects; `getGrid`, `addCost`, `configure`, `drawDebug`.
+- `pathing` resource: `findPath`, `nextPoint`, `closestSafeSpot` and `isPositionSafe` over the influence grids.
+- `units.getArmyValue(alliance, { includePending, includeGhosts })`.
+- `ResourceDefinition.onStep`: a per-step hook for registered resources, run after the engine systems and before agent code.
+
+#### Changed
+- Enemy ghosts now expire. A ghost is deleted after 30 seconds, or as soon as its last position is visible and it isn't burrowed. Before, every enemy that left vision stayed in `units` for the rest of the game.
+- A tag that memory forgot and that is seen again fires `onEnemyUnitEnteredVision` but not `onEnemyFirstSeen`.
+
+#### Migrating bot/
+- Code that treats `units.getAll(Alliance.ENEMY)` as a permanent record now sees fewer units. To get the old behaviour, raise the expiry with `memory.configure({ expireGround, expireAir })`, for example from a system's `setup`.
+- Nothing else breaks: the new resources and `getArmyValue` are additions.
+
 ## v0.8.2 - 2019-01-11
 ## Highlights:
 Another small patch to get out some more important fixes:

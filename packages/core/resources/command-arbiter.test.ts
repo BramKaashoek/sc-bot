@@ -42,6 +42,18 @@ describe('arbitrate', () => {
         ]);
     });
 
+    it('drops a not-owner proposal for that tag before picking a winner, keeping the owner and other tags', () => {
+        const outsider = proposal('economy', move(['a', 'b'], 1), { priority: 9, rank: 0 });
+        const owner = proposal('role:ATTACKING', move(['a'], 2), { rank: 3 });
+        const requiredOwner = (from: string, tag: string) =>
+            tag === 'a' && from !== 'role:ATTACKING' ? 'role:ATTACKING' : undefined;
+
+        const { commands, dropped } = arbitrate([outsider, owner], none, never, requiredOwner);
+
+        expect(commands.map(({ command }) => command)).toEqual([move(['b'], 1), move(['a'], 2)]);
+        expect(dropped).toEqual([{ proposal: outsider, tags: ['a'], reason: 'not-owner', by: 'role:ATTACKING' }]);
+    });
+
     it('reports only the tags a multi-unit proposal lost and sends the rest', () => {
         const group = proposal('army', move(['a', 'b', 'c'], 1), { rank: 2 });
         const grab = proposal('defense', move(['b'], 2), { rank: 1 });

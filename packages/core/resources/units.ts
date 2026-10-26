@@ -1,6 +1,7 @@
 import filterArr from 'lodash.filter';
 import { distance } from '../utils/geometry/point.ts';
 import {
+    combatTypes,
     constructionAbilities,
     gatheringAbilities,
     mineralFieldTypes,
@@ -29,6 +30,23 @@ function getClosest(
         .map((entry) => entry.unit)
         .slice(0, n);
     return Units.from(closest as Unit[]);
+}
+
+const createdTypeByAbilityCache = new WeakMap<object, Map<number, number>>();
+
+// data-storage's findUnitTypesWithAbility maps to producers; an order needs the unit type it creates
+function createdTypeByAbility(world: World): Map<number, number> {
+    const unitData: SC2APIProtocol.UnitTypeData[] = world.data.get('units');
+    let createdTypes = createdTypeByAbilityCache.get(unitData);
+    if (!createdTypes) {
+        createdTypes = new Map();
+        for (const data of Object.values(unitData)) {
+            if (data.available && data.abilityId && !createdTypes.has(data.abilityId))
+                createdTypes.set(data.abilityId, data.unitId!);
+        }
+        createdTypeByAbilityCache.set(unitData, createdTypes);
+    }
+    return createdTypes;
 }
 
 function createUnits(world: World): UnitResource {
@@ -237,8 +255,40 @@ function createUnits(world: World): UnitResource {
 
             return this.getById(upgraderUnitTypeIds);
         },
-        getArmyValue() {
-            throw new NodeSC2Error('not implemented');
+        getArmyValue(alliance = Alliance.SELF, { includePending = false, includeGhosts = true } = {}) {
+            if (alliance !== Alliance.SELF && alliance !== Alliance.ENEMY)
+                throw new NodeSC2Error(`getArmyValue supports SELF or ENEMY, got alliance ${alliance}`);
+
+            const unitData: SC2APIProtocol.UnitTypeData[] = world.data.get('units');
+            const army =
+                alliance === Alliance.ENEMY
+                    ? world.resources.get().memory.getEnemies({ includeGhosts })
+                    : this.getAlive(Alliance.SELF);
+            let value = army
+                .filter((unit) => unit.isCombatUnit())
+                // calculateCost is the net morph cost; a morphed unit is worth its full cost (ares parity)
+                .reduce((total, unit) => {
+                    const { mineralCost = 0, vespeneCost = 0 } = unitData[unit.unitType!] ?? {};
+                    return total + mineralCost + vespeneCost;
+                }, 0);
+
+            if (alliance === Alliance.SELF && includePending) {
+                const createdTypes = createdTypeByAbility(world);
+                const pendingOrders = this.getAlive(Alliance.SELF).flatMap((unit) => {
+                    if (unit.unitType === UnitType.EGG) return unit.orders!.slice(0, 1);
+                    if (!unit.isStructure() || !unit.isFinished() || unit.isTownhall()) return [];
+                    return unit.orders!.slice(0, unit.hasReactor() ? 2 : 1);
+                });
+                value += pendingOrders
+                    .map((order) => createdTypes.get(order.abilityId!))
+                    .filter((unitType): unitType is number => unitType !== undefined && combatTypes.includes(unitType))
+                    .reduce((total, unitType) => {
+                        const { minerals, vespene } = world.agent.calculateCost(unitType);
+                        return total + minerals + vespene;
+                    }, 0);
+            }
+
+            return value;
         },
     };
 }

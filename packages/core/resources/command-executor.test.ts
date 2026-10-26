@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import Bluebird from 'bluebird';
 import createAgent from '../agent/create-agent.ts';
 import { Ability, UnitType } from '../constants/index.ts';
+import { ATTACKING } from '../constants/unit-role.ts';
 import createSystem from '../systems/create-system.ts';
 import { createTestWorld, loadFixture, stepTo } from '../test/create-test-world.ts';
 import type { CommandResult, World } from '../types.ts';
@@ -144,6 +145,39 @@ describe('command executor dispatch', () => {
         expect(byOwner(results).map(({ owner, tags }) => ({ owner, tags }))).toEqual([
             { owner: 'Combat', tags: [OTHER_WORKER] },
             { owner: 'Economy', tags: [WORKER] },
+        ]);
+    });
+
+    it('drops commands for an exclusive role unit from outside its role, reporting not-owner, but not raw sends', async () => {
+        const { world, play } = await setupScenario([
+            {
+                name: 'Economy',
+                async act({ resources }) {
+                    const { actions, units } = resources.get();
+                    await actions.move(units.getByTag(WORKER)!, FIRST);
+                    await actions.sendAction(moveTo(OTHER_WORKER, FIRST));
+                },
+            },
+            {
+                name: 'Combat',
+                act: ({ resources }) =>
+                    resources
+                        .get()
+                        .roles.as(ATTACKING, () =>
+                            resources.get().actions.move(resources.get().units.getByTag(WORKER)!, SECOND),
+                        ),
+            },
+        ]);
+        const { roles } = world.resources.get();
+        roles.configure({ exclusive: [ATTACKING] });
+        roles.assign([WORKER, OTHER_WORKER], ATTACKING);
+
+        const { sent, results } = await play();
+
+        expect(unitCommands(sent)).toEqual([[moveTo(OTHER_WORKER, FIRST)], [moveTo(WORKER, SECOND)]]);
+        expect(byOwner(results).map(({ owner, outcome, reason, by }) => ({ owner, outcome, reason, by }))).toEqual([
+            { owner: 'Economy', outcome: 'dropped', reason: 'not-owner', by: 'role:ATTACKING' },
+            { owner: 'role:ATTACKING', outcome: 'won', reason: undefined, by: undefined },
         ]);
     });
 

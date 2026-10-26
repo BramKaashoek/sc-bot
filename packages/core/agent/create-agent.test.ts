@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 import { Ability, UnitType, Upgrade } from '../constants/index.ts';
-import { Attribute, Race } from '../constants/enums.ts';
-import { createTestWorld, stepTo } from '../test/create-test-world.ts';
+import { Alliance, Attribute, Race } from '../constants/enums.ts';
+import createSystem from '../systems/create-system.ts';
+import { createTestWorld, loadFixture, stepTo } from '../test/create-test-world.ts';
 import createAgent from './create-agent.ts';
 import { observation, rawUnit, toyFixture, unitTypeData } from '../test/factories.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
@@ -255,5 +256,57 @@ describe('createAgent', () => {
         expect(agent.calculateCost).toBe(calculateCost);
         agent.supplyLeft = 3;
         expect(agent.supplyLeft).toBe(3);
+    });
+
+    it('detects a random opponent race from the first live enemy once, but never for a race known at game start', async () => {
+        const detect = async (raceRequested: SC2APIProtocol.Race) => {
+            const fixture = loadFixture('blueshift');
+            fixture.gameInfo.playerInfo!.find(({ playerId }) => playerId === 2)!.raceRequested = raceRequested;
+            const withEnemies = structuredClone(fixture.observations[896]);
+            const rawData = fixture.observations[896].observation!.rawData!;
+            rawData.units = rawData.units!.filter(({ alliance }) => alliance !== Alliance.ENEMY);
+
+            const detected: SC2APIProtocol.Race[] = [];
+            const agent = createAgent();
+            agent.use(
+                createSystem({
+                    name: 'Scout',
+                    async onEnemyRaceDetected(_world, race) {
+                        detected.push(race);
+                    },
+                }),
+            );
+            const world = await createTestWorld(fixture, { loop: 896, agent });
+            const opponent = agent.opponent;
+            const enemyFree = fixture.observations[896];
+            await stepTo(world, { ...enemyFree, observation: { ...enemyFree.observation!, gameLoop: 898 } });
+            const raceBeforeEnemies = agent.opponent?.race;
+            const detectedBeforeEnemies = detected.length;
+            for (const gameLoop of [900, 904, 908]) {
+                await stepTo(world, { ...withEnemies, observation: { ...withEnemies.observation!, gameLoop } });
+            }
+            return {
+                raceBeforeEnemies,
+                detectedBeforeEnemies,
+                race: agent.opponent?.race,
+                detected,
+                sameOpponent: agent.opponent === opponent,
+            };
+        };
+
+        expect(await detect(Race.RANDOM)).toEqual({
+            raceBeforeEnemies: Race.NORACE,
+            detectedBeforeEnemies: 0,
+            race: Race.ZERG,
+            detected: [Race.ZERG],
+            sameOpponent: true,
+        });
+        expect(await detect(Race.PROTOSS)).toEqual({
+            raceBeforeEnemies: Race.PROTOSS,
+            detectedBeforeEnemies: 0,
+            race: Race.PROTOSS,
+            detected: [],
+            sameOpponent: true,
+        });
     });
 });

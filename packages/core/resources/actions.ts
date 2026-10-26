@@ -1,5 +1,4 @@
 import createDebug from 'debug';
-import Bluebird from 'bluebird';
 import getRandom from '../utils/get-random.ts';
 import { distance, nClosestPoint } from '../utils/geometry/point.ts';
 import { gridsInCircle } from '../utils/geometry/angle.ts';
@@ -218,28 +217,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 throw new ActionManagerError('These two units cannot be swapped', { data: { unitA, unitB } });
             }
 
-            const unitAPos = unitA.pos as Point2D;
-            const unitBPos = unitB.pos as Point2D;
-
-            const order = async (abilityId: number, unit: Unit, target?: Point2D) => {
-                const res = await this.sendAction({
-                    abilityId,
-                    unitTags: [unit.tag!],
-                    queueCommand: !!target,
-                    ...(target && { targetWorldSpacePos: target }),
-                });
-                if (res.result![0] !== 1) {
-                    throw new Error(`Could not perform ability, result ${res.result![0]}`);
-                }
-
-                return res;
-            };
-
-            await Promise.all([order(Ability.LIFT, unitA), order(Ability.LIFT, unitB)]);
-            await Bluebird.delay(100);
-            await Promise.all([order(Ability.MOVE, unitA, unitBPos), order(Ability.MOVE, unitB, unitAPos)]);
-            await Bluebird.delay(100);
-            return Promise.all([order(Ability.LAND, unitA, unitBPos), order(Ability.LAND, unitB, unitAPos)]);
+            world.resources.get().flying.swap(unitA, unitB);
         },
         async gather(unit: Unit, mineralField?: Unit, queue = true) {
             const { units } = world.resources.get();
@@ -646,7 +624,10 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
             if (pending.length === 0) return undefined;
 
             const { committed } = thisObservation();
-            const { commands, dropped } = arbitrate(pending, committed, repeatsCurrentOrder);
+            const { roles } = world.resources.get();
+            const { commands, dropped } = arbitrate(pending, committed, repeatsCurrentOrder, (owner, tag) =>
+                roles.mayCommand(owner, tag) ? undefined : `role:${roles.roleOf(tag)}`,
+            );
             const previousHolders = new Map<string, CommandContext | undefined>();
             commands.forEach(({ covers }) =>
                 covers.forEach(({ proposal, tags }) => {

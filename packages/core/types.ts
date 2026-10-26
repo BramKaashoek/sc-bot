@@ -6,12 +6,26 @@ import type { Units } from './resources/units-collection.ts';
 import type { Ramp } from './utils/map/ramp.ts';
 import type { CommandContext } from './resources/command-context.ts';
 import type * as UnitRoles from './constants/unit-role.ts';
+import type * as BuildTargets from './constants/build-target.ts';
 import type { EngagementResult } from './constants/engagement-result.ts';
 import type { FightOptions, FightSimulation } from './utils/combat/combat-sim.ts';
+import type { ChokeSettings } from './utils/map/chokes.ts';
 
-export type { BuildOrderStatus, BuildResult, CommandContext, EngagementResult, FightOptions, FightSimulation };
+export type {
+    BuildOrderStatus,
+    BuildResult,
+    ChokeSettings,
+    CommandContext,
+    EngagementResult,
+    FightOptions,
+    FightSimulation,
+};
 
 export type UnitRole = (typeof UnitRoles)[keyof typeof UnitRoles];
+
+export type BuildTarget = (typeof BuildTargets)[keyof typeof BuildTargets];
+
+export type BuildOrderStep = string | Record<string, string[]>;
 
 declare global {
     namespace SC2APIProtocol {
@@ -56,6 +70,10 @@ export interface SystemObject {
     setup?: (world: World) => void;
     defaultOptions?: SystemOptions;
     buildOrder?: Array<BuildTask>;
+    openings?: Record<string, OpeningDefinition> | 'config';
+    opening?: string | ((world: World) => string);
+    switchOpening?: (name: string, opts?: { removeCompleted?: boolean }) => void;
+    getOpening?: () => string | undefined;
     buildOptions?: {
         paused?: boolean;
         earmarks: null | number;
@@ -74,7 +92,7 @@ export type IdleFunctions = {
 };
 
 export type BuildTaskI = {
-    type: 'build' | 'train' | 'upgrade' | 'ability' | 'worker';
+    type: 'build' | 'train' | 'upgrade' | 'ability' | 'worker' | 'scout' | 'addonSwap';
     id?: number | number[];
     name?: string;
     qty?: number;
@@ -84,6 +102,10 @@ export type BuildTaskI = {
         on?: UnitTypeId;
         skip?: string;
         target?: UnitTypeId;
+        at?: BuildTarget;
+        waypoints?: BuildTarget[];
+        scout?: 'worker' | 'overlord';
+        addon?: number;
     };
     index?: number;
     touched?: boolean;
@@ -167,7 +189,7 @@ export interface Agent extends PlayerData {
     getNextExpansion(): Promise<Point2D | null>;
     ownedExpansions(): OwnedExpansion[];
     expandNow(unitTypeId?: number, maxDistance?: number, location?: Point2D): Promise<void>;
-    distributeWorkers(resourceRatio?: number): Promise<void>;
+    distributeWorkers(resourceRatio?: number, opts?: { workersPerGas?: number }): Promise<void>;
     train(unitTypeId: number, amount?: number, closestTo?: Point2D, trainOnlyIdleBuildings?: boolean): Promise<number>;
     research(upgradeId: number): Promise<boolean>;
     race?: SC2APIProtocol.Race;
@@ -498,7 +520,7 @@ export interface ActionManager {
     upgrade: (upgradeId: number, tag?: Unit) => Promise<void>;
     smart(units: Unit[], target: Point2D, queue?: boolean): Promise<void>;
     smart(units: Unit[], target: Unit, queue?: boolean): Promise<void>;
-    swapBuildings(unitA: Unit, unitB: Unit): Promise<SC2APIProtocol.ResponseAction[]>;
+    swapBuildings(unitA: Unit, unitB: Unit): Promise<void>;
     warpIn(unitTypeId: number, opts: WarpInOptions): Promise<void>;
     canPlace: (unitTypeId: number, positions: Point2D[]) => Promise<Point2D | false>;
     findPlacement: (unitTypeId: number, near: Point2D, opts?: FindPlacementOptions) => Promise<Point2D | false>;
@@ -712,6 +734,7 @@ export type EventConsumer = {
     onUnitIdle?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
     onCommandResults?(world: World, results: CommandResult[], event?: SystemEvent): Promise<any>;
     onEnemyStrategyDetected?(world: World, data: EnemyStrategyDetected, event?: SystemEvent): Promise<any>;
+    onEnemyRaceDetected?(world: World, race: SC2APIProtocol.Race, event?: SystemEvent): Promise<any>;
     onUnitDamaged?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
     onUnitCreated?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
     onUnitFinished?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
@@ -1069,6 +1092,94 @@ export interface FlyingStructures {
     configure(settings: Partial<{ priority: number }>): void;
 }
 
+export type MapAnalysisSettings = ChokeSettings & { defenseOffset: number };
+
+export type Choke = {
+    id: number;
+    center: Point2D;
+    sides: [Point2D, Point2D];
+    points: Point2D[];
+    width: number;
+    regions: [number, number];
+    ramp?: Ramp;
+};
+
+export type Region = {
+    id: number;
+    area: number;
+    center: Point2D;
+    chokes: Choke[];
+    expansions: Expansion[];
+};
+
+export type BaseChoke = { choke: Choke; pathDistance: number };
+
+export type DefensivePosition = BaseChoke & { position: Point2D };
+
+export interface MapAnalysisResource {
+    getChokes(): Choke[];
+    getRegions(): Region[];
+    getRegion(point: Point2D): Region | undefined;
+    isInChoke(point: Point2D): boolean;
+    getBaseChokes(base: Expansion | Point2D): BaseChoke[];
+    getDefensivePosition(
+        base: Expansion | Point2D,
+        opts?: { towards?: Point2D; offset?: number },
+    ): DefensivePosition | undefined;
+    getDefensiveThird(): Expansion | undefined;
+    getPerimeter(region: Region): Point2D[];
+    getEnemyMainRamp(): Ramp | undefined;
+    configure(settings: Partial<MapAnalysisSettings>): void;
+    drawDebug(): void;
+}
+
+export type BehaviorContext = {
+    world: World;
+    order(units: Unit | Unit[], abilityId: number, target?: Point2D | Unit, opts?: { queue?: boolean }): boolean;
+    hasOrdered(unit: Unit | string): boolean;
+};
+
+export interface Behavior {
+    readonly name: string;
+    execute(ctx: BehaviorContext): boolean | Promise<boolean>;
+}
+
+export interface BehaviorsResource {
+    run(behavior: Behavior, opts?: { role?: UnitRole; priority?: number }): Promise<boolean>;
+}
+
+export type ArmyComposition = Partial<Record<number, { proportion: number; priority: number }>>;
+
+export type OpeningDefinition = {
+    buildOrder: Array<BuildTask | BuildOrderStep>;
+    autoSupplyAtSupply?: number;
+    constantWorkerProductionTill?: number;
+    persistentWorker?: boolean;
+};
+
+export type OpeningSettings = {
+    builds: Record<string, OpeningDefinition>;
+    choices: Record<string, string[]>;
+    method: 'cycle' | 'winrate';
+    minGames: number;
+    dataDir?: string;
+};
+
+export type OpeningRecord = {
+    race: string;
+    duration: number;
+    opening: string;
+    result: 'victory' | 'defeat' | 'tie' | 'undecided';
+};
+
+export interface OpeningsResource {
+    configure(settings: Partial<OpeningSettings>): void;
+    getDefinitions(): Readonly<Record<string, OpeningDefinition>>;
+    choose(available?: string[]): string | undefined;
+    getChosen(): string | undefined;
+    getHistory(): readonly OpeningRecord[];
+}
+
 export interface ResourceContainer {
     actions: ActionManager;
     events: EventChannel;
@@ -1086,6 +1197,9 @@ export interface ResourceContainer {
     buildings: BuildingTracker;
     mining: MiningResource;
     flying: FlyingStructures;
+    mapAnalysis: MapAnalysisResource;
+    behaviors: BehaviorsResource;
+    openings: OpeningsResource;
     debug?: Debugger;
     placer?: Placer;
 }
@@ -1095,6 +1209,7 @@ export type ResourceDefinition<K extends keyof ResourceContainer = keyof Resourc
     create(world: World): NonNullable<ResourceContainer[K]>;
     reset?(resource: NonNullable<ResourceContainer[K]>, world: World): void;
     onStep?(resource: NonNullable<ResourceContainer[K]>, world: World): void;
+    onGameEnd?(resource: NonNullable<ResourceContainer[K]>, world: World, results: SC2APIProtocol.PlayerResult[]): void;
 };
 
 export type Placer = {
@@ -1110,14 +1225,32 @@ export interface ResourceManager {
     register<K extends keyof ResourceContainer>(definition: ResourceDefinition<K>): NonNullable<ResourceContainer[K]>;
     reset(world: World): void;
     step(world: World): void;
+    endGame(world: World, results: SC2APIProtocol.PlayerResult[]): void;
 }
 
 export interface World {
     agent: Agent;
     data: DataStorage;
     resources: ResourceManager;
+    config: Readonly<CoreConfig>;
     baseBuild?: number;
 }
+
+export type ResourceSettings = {
+    [K in keyof ResourceContainer]?: NonNullable<ResourceContainer[K]> extends { configure(settings: infer S): void }
+        ? S
+        : never;
+};
+
+export interface CoreConfig {
+    gameStep: number;
+    features: { chatDebug: boolean; eagerMapAnalysis: boolean };
+    resources: ResourceSettings;
+}
+
+export type CoreConfigInput = {
+    [K in keyof CoreConfig]?: K extends 'features' ? Partial<CoreConfig['features']> : CoreConfig[K];
+};
 
 export type EngineOptions = {
     host?: string;
@@ -1126,6 +1259,8 @@ export type EngineOptions = {
     force?: boolean;
     client?: NodeSC2Proto.ProtoClient;
     onGameEnd?: (results: SC2APIProtocol.PlayerResult[]) => void;
+    config?: CoreConfigInput;
+    configFile?: string | false;
 };
 
 export type GameResult = [World, SC2APIProtocol.PlayerResult[]];
