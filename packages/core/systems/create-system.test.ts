@@ -25,7 +25,7 @@ describe('createSystem', () => {
         });
         agent.use([pulse, opener]);
         const world = await createTestWorld('blueshift', { loop: 896, agent });
-        const train = spyOn(world.resources.get().actions, 'train').mockResolvedValue({});
+        const train = spyOn(world.resources.get().actions, 'train').mockResolvedValue();
         pulse._system.pause!();
         pulse._system.state.seen.push('previous game');
         opener._system.pauseBuild!();

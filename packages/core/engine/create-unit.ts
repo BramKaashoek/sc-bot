@@ -50,6 +50,8 @@ const groundTargets: number[] = [WeaponTargetType.GROUND, WeaponTargetType.ANY];
 const airTargets: number[] = [WeaponTargetType.AIR, WeaponTargetType.ANY];
 const noDamage: DamageVsTarget = [0, 0, 0];
 const GAME_LOOPS_PER_SECOND = 22.4;
+// unit data speeds are per normal-speed second, which is 16 game loops
+const LOOPS_PER_NORMAL_SECOND = 16;
 
 const weaponsOf = (unit: Unit): SC2APIProtocol.Weapon[] => unit.data().weapons ?? [];
 const hasAttribute = (unit: Unit, attribute: number): boolean => (unit.data().attributes ?? []).includes(attribute);
@@ -384,7 +386,7 @@ function createUnit(unitData: SC2APIProtocol.Unit, world: World): Unit {
         },
         distanceToWeaponReady() {
             const cooldown = canAttack(this) ? this.weaponCooldown : -1;
-            return (this.realSpeed() / GAME_LOOPS_PER_SECOND) * cooldown;
+            return (this.realSpeed() / LOOPS_PER_NORMAL_SECOND) * cooldown;
         },
         weaponReady() {
             return canAttack(this) && this.weaponCooldown === 0;

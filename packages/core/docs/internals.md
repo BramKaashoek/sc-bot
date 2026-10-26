@@ -25,8 +25,9 @@ Although the `EventChannel` itself is completely synchronous, event dispatching 
   - `FrameSystem` runs first, getting the current observation and updating the `frame` resource, as well as populating `unitDestroyed` events from observation.
   - `UnitSystem` then adds new `UnitEntity`'s and updates existing ones on the `units` resource, creating a number of other events based on diffing unit data.
   - `MapSystem` lastly updates the `map` resource state, which includes things like visibility and creep data.
-- Next, the agent entity itself is dispatched.
-- Lastly, agent systems are ran *concurrently*.
+- Next, the agent entity itself is dispatched, under the commander `{ owner: 'agent', rank: -1 }`.
+- Then agent systems are ran *concurrently*, each under its own commander (`owner` = system name, `priority` = its `commandPriority`, `rank` = its index in `agent.use()` order). The commander lives in an `AsyncLocalStorage`, so it follows the handler through `await`s and (with Bluebird's `asyncHooks` on) Bluebird callbacks.
+- Lastly, `actions.flushQueuedActions()` arbitrates every command proposed during the step per unit tag, sends the survivors in one `RequestAction`, and writes one `commandResults` event (type `agent`) describing what was sent, dropped or rejected. Readers get it on the next dispatch. A flush error is logged, except `GameEndedError` and `ConnectionClosedError`, which propagate to the game loop. A command proposed after this point (from a dangling promise) goes out with the next step's flush.
 
 The reason the last step works even with concurrency is because events aren't destroyed until all of their readers consume them. This allows for an agent system to create an event, where some readers may consume it this frame, and others next frame. It may be possible to allow agent systems to define 'dependencies' on other agent systems as they are initially registered - allowing them to run in a certain order (or just have two naive batches). This may be implemented before v1 as discussions continue.
 
@@ -41,7 +42,9 @@ World { agent: Agent, data: DataStorage, resources: ResourceManager }
 World Data is a loose concept in `node-sc2`, it's used margionally by the engine to store and retrieve static data from `ResponseData`, but mostly it's meant as a safe space for systems to share data between each other (and register helpers as methods to act on that data). This is explained more in the Design Documnet [ADD LINK].
 
 #### Resources
-Resources are discreet entities that expose various segments of the API, with the goal being single-responsibility. Most of these resources have a matching engine system whose job is to be the sole mutator of each resource. Resources are extensible and can be set on the world, even allowing for the user to add a well-defined resource + engine-level system and integrate it like the built-ins. This will likely remain undocumented initially.
+Resources are discreet entities that expose various segments of the API, with the goal being single-responsibility. Most of these resources have a matching engine system whose job is to be the sole mutator of each resource. Resources live in a registry on the `ResourceManager`. A resource is defined by `{ name, create(world), reset?(resource, world) }` and added with `world.resources.register(definition)`, which creates it once and returns it (re-registering the same definition object returns the existing one; a different definition under a taken name throws). Its type comes from augmenting the `ResourceContainer` interface in `@sc-bot/core/types`. `createWorld` registers the built-ins in the order below; bots and plugins register theirs from a system's `setup`.
+
+When another game starts on the same engine, `resetGameState` calls `world.resources.reset(world)`, which resets every registered resource in registration order *in place*: the definition's `reset` when it has one, otherwise `Object.assign(resource, create(world))`. Object identity is kept, so destructured references stay valid. `frame` resets its step times, `units` clears its stores and `actions` drops proposed commands (it must not be recreated, since that would create a new proto client); `map`, `debug` and `events` are recreated in place. Resources added through `resources.set()` (such as `placer`) have no definition and are not reset. Earmarks live in `world.data` and are cleared separately.
 
 The built-in resources are as follows:
 - `frame` is of type `FrameResource`, and holds the current `gameLoop`, `observation`, and `gameInfo`, as well as appropriate methods to retrieve them.
@@ -49,7 +52,7 @@ The built-in resources are as follows:
 - `map` is of type `MapResource` and holds both cached data about the current map / grid layouts, as well as exposes methods to calculate paths. This includes expansion information and shortcut methods to gettin specific expansions.
 - `events` is of type `EventChannel` and can be used to manually create `readerIds`, and read or write events. For the most part, the regular dispatch cycles should take care of reading, but users can use this resource to create custom events by writing their blueprint to the channel.
 - `debug` is of type `Debugger` and is used to draw things to the game world or game screen or otherwise interact with the game for debugging or testing purposes (creating or destroying units, setting resources, etc etc).
-- `actions` is of type `ActionManager` and is the main way that most systems will interact with the transport layer. It can be used to directly make queries or send action commands, and also exposes a number of helper functions like `build`, `attack`, etc.
+- `actions` is of type `ActionManager` and is the main way that most systems will interact with the transport layer. It can be used to directly make queries or send raw commands (`sendAction`), and exposes helpers like `build`, `attack`, etc., which propose commands for the step-end flush described under Events.
 
 ## Other Concepts
 

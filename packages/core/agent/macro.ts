@@ -265,13 +265,8 @@ function selectBuildWorker(agent: Agent, position: Point2D, force = false): Unit
     return force ? randomOf(candidates) : undefined;
 }
 
-async function issue(agent: Agent, command: SC2APIProtocol.ActionRawUnitCommand) {
-    const { actions } = agent._world.resources.get();
-    if (agent.settings?.batchActions) {
-        actions.queueAction(command);
-        return;
-    }
-    await actions.sendAction(command);
+function issue(agent: Agent, command: SC2APIProtocol.ActionRawUnitCommand) {
+    agent._world.resources.get().actions.queueAction(command);
 }
 
 function spend(agent: Agent, { minerals, vespene }: { minerals: number; vespene: number }, supply = 0) {
@@ -296,7 +291,7 @@ async function buildNear(agent: Agent, unitType: number, near: Point2D, maxDista
     if (!builder || !abilityId) return false;
 
     spend(agent, agent.calculateCost(unitType));
-    await issue(agent, {
+    issue(agent, {
         abilityId: generalAbility(agent, abilityId),
         unitTags: [builder.tag!],
         targetWorldSpacePos: position,
@@ -503,13 +498,13 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
                 deficitMiningPlaces.splice(deficitMiningPlaces.indexOf(currentPlace), 1);
 
                 if (currentPlace.vespeneContents) {
-                    await gather(worker, currentPlace);
+                    gather(worker, currentPlace);
                 } else {
                     const localMinerals = mineralFields.filter(
                         (mineral) => distance(mineral.pos, currentPlace.pos) <= 8,
                     );
                     if (localMinerals.length > 0) {
-                        await gather(
+                        gather(
                             worker,
                             localMinerals.reduce((best, mineral) =>
                                 (mineral.mineralContents ?? 0) > (best.mineralContents ?? 0) ? mineral : best,
@@ -518,7 +513,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
                     }
                 }
             } else if ((worker.orders ?? []).length === 0 && allMineralsNearBase.length > 0) {
-                await gather(
+                gather(
                     worker,
                     allMineralsNearBase.reduce((best, mineral) =>
                         distance(mineral.pos, worker.pos) < distance(best.pos, worker.pos) ? mineral : best,
@@ -566,9 +561,9 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
 
         const abilityId = creationAbility(this, unitType);
         const supply = this.calculateSupplyCost(unitType);
-        const trainFrom = async (structure: Unit, queue: boolean) => {
+        const trainFrom = (structure: Unit, queue: boolean) => {
             spend(this, this.calculateCost(unitType), supply);
-            await issue(this, {
+            issue(this, {
                 abilityId: generalAbility(this, abilityId!),
                 unitTags: [structure.tag!],
                 queueCommand: queue,
@@ -594,7 +589,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
                 const pylon = randomOf(pylons);
                 const angle = Math.random() * 2 * Math.PI;
                 spend(this, this.calculateCost(unitType), supply);
-                await issue(this, {
+                issue(this, {
                     abilityId: WarpUnitAbility[unitType],
                     unitTags: [structure.tag!],
                     targetWorldSpacePos: { x: pylon.pos.x + Math.cos(angle) * 4, y: pylon.pos.y + Math.sin(angle) * 4 },
@@ -602,7 +597,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
                 });
             } else {
                 if (!abilityId) return trainedAmount;
-                await trainFrom(structure, false);
+                trainFrom(structure, false);
                 if (
                     isTerran &&
                     this.canAffordUnit(unitType) &&
@@ -612,7 +607,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
                     hasReactor(structure)
                 ) {
                     trainedAmount += 1;
-                    await trainFrom(structure, true);
+                    trainFrom(structure, true);
                 }
             }
 
@@ -651,7 +646,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
         if (!facility || !researchAbility) return false;
 
         spend(this, cost);
-        await issue(this, {
+        issue(this, {
             abilityId: researchAbility,
             unitTags: [facility.tag!],
             queueCommand: false,

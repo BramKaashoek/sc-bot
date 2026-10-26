@@ -15,7 +15,7 @@ const unitCommand = (command: SC2APIProtocol.ActionRawUnitCommand): SC2APIProtoc
 });
 
 describe('ActionManager', () => {
-    it('sends stop, hold position, repair, return cargo, generic ability and attack-move commands, ignoring non-object targets and rejecting attacks without a target or abilities without units', async () => {
+    it('sends stop, hold position, repair, return cargo, generic ability and attack-move commands, ignoring non-object targets and empty unit lists, rejecting attacks without a target and raw commands without units', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
         const { actions, map, units } = world.resources.get();
         const [marine, scv] = units.getByTag(['4354211841', '4344512513']);
@@ -30,65 +30,63 @@ describe('ActionManager', () => {
         await actions.do(Ability.ATTACK_ATTACK, marine.tag!, { target: depot, queue: true });
         await actions.move([marine], { x: 0, y: 7 });
         await actions.smart([scv], { x: 0, y: 0 });
-        await actions.attackMove([], { x: 10, y: 10 });
         await actions.do(Ability.MOVE, marine.tag!, { target: depot.tag as never });
         await actions.build(UnitType.SUPPLYDEPOT, { x: 0, y: 7 }, scv);
 
-        expect(world.client.sent.actions.slice(-12)).toEqual([
-            unitCommand({ abilityId: Ability.STOP, unitTags: [marine.tag!], queueCommand: false }),
-            unitCommand({ abilityId: Ability.HOLDPOSITION, unitTags: [marine.tag!], queueCommand: true }),
-            unitCommand({
+        await actions.flushQueuedActions();
+
+        expect(world.client.sent.actions.at(-1)!.actions!.map((action) => action.actionRaw!.unitCommand)).toEqual([
+            { abilityId: Ability.STOP, unitTags: [marine.tag!], queueCommand: false },
+            { abilityId: Ability.HOLDPOSITION, unitTags: [marine.tag!], queueCommand: true },
+            {
                 abilityId: Ability.EFFECT_REPAIR,
                 unitTags: [scv.tag!],
                 targetUnitTag: depot.tag,
                 queueCommand: true,
-            }),
-            unitCommand({ abilityId: Ability.HARVEST_RETURN, unitTags: [scv.tag!], queueCommand: false }),
-            unitCommand({ abilityId: Ability.EFFECT_STIM, unitTags: [marine.tag!], queueCommand: true }),
-            unitCommand({
+            },
+            { abilityId: Ability.HARVEST_RETURN, unitTags: [scv.tag!], queueCommand: false },
+            { abilityId: Ability.EFFECT_STIM, unitTags: [marine.tag!], queueCommand: true },
+            {
                 abilityId: Ability.MOVE,
                 unitTags: [scv.tag!],
                 targetWorldSpacePos: { x: 20, y: 20 },
                 queueCommand: false,
-            }),
-            unitCommand({
+            },
+            {
                 abilityId: Ability.ATTACK_ATTACK,
                 unitTags: [marine.tag!],
                 targetUnitTag: depot.tag,
                 queueCommand: true,
-            }),
-            unitCommand({
+            },
+            {
                 abilityId: Ability.MOVE,
                 unitTags: [marine.tag!],
                 queueCommand: false,
                 targetWorldSpacePos: { x: 0, y: 7 },
-            }),
-            unitCommand({
+            },
+            {
                 abilityId: Ability.SMART,
                 unitTags: [scv.tag!],
                 queueCommand: false,
                 targetWorldSpacePos: { x: 0, y: 0 },
-            }),
-            unitCommand({
-                abilityId: Ability.ATTACK,
-                unitTags: [],
-                queueCommand: false,
-                targetWorldSpacePos: { x: 10, y: 10 },
-            }),
-            unitCommand({ abilityId: Ability.MOVE, unitTags: [marine.tag!], queueCommand: false }),
-            unitCommand({
+            },
+            { abilityId: Ability.MOVE, unitTags: [marine.tag!], queueCommand: false },
+            {
                 abilityId: Ability.BUILD_SUPPLYDEPOT,
                 unitTags: [scv.tag!],
                 queueCommand: false,
                 targetWorldSpacePos: { x: 0, y: 7 },
-            }),
+            },
         ]);
 
         const sentBefore = world.client.sent.actions.length;
-        await expect(actions.do(Ability.STOP, [])).rejects.toBeInstanceOf(ActionManagerError);
+        await actions.do(Ability.STOP, []);
+        await actions.attackMove([], { x: 10, y: 10 });
         await expect(actions.attack([marine])).rejects.toBeInstanceOf(ActionManagerError);
+        expect(() => actions.queueAction({ abilityId: Ability.STOP })).toThrow(ActionManagerError);
         map.setLocations({ enemy: [] });
         await expect(actions.attackMove([marine])).rejects.toBeInstanceOf(ActionManagerError);
+        await actions.flushQueuedActions();
         expect(world.client.sent.actions.length).toBe(sentBefore);
     });
 
@@ -142,6 +140,7 @@ describe('ActionManager', () => {
         } finally {
             random.mockRestore();
         }
+        await actions.flushQueuedActions();
 
         expect(world.client.sent.actions.slice(sentBefore)).toEqual([
             {

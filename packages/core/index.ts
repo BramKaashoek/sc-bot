@@ -25,6 +25,16 @@ export { createAgent, createEngine, createSystem, createPlayer, taskFunctions };
 export { Units } from './resources/units-collection.ts';
 export { Ramp } from './utils/map/ramp.ts';
 export { PixelMap } from './utils/pixel-map.ts';
+export { canWinFight, simulateFight } from './utils/combat/combat-sim.ts';
+export {
+    DEFAULT_EFFECT_COSTS,
+    EFFECT_INFLUENCE,
+    INFLUENCE_DEFAULTS,
+    STATIC_DEFENSE,
+    UNIT_AVOIDANCE,
+    WEIGHT_COSTS,
+} from './constants/influence.ts';
+export type { EffectInfluence, InfluenceSource, StaticDefenseSource, WeightCost } from './constants/influence.ts';
 export {
     ActionManagerError,
     BuildError,

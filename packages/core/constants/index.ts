@@ -3,8 +3,10 @@ import * as Ability from './ability.ts';
 import * as Buff from './buff.ts';
 import Color from './color.ts';
 import * as Effect from './effect.ts';
+import * as EngagementResult from './engagement-result.ts';
 import * as enums from './enums.ts';
 import * as groups from './groups.ts';
+import * as UnitRole from './unit-role.ts';
 import * as UnitType from './unit-type.ts';
 import * as Upgrade from './upgrade.ts';
 
@@ -66,11 +68,22 @@ export {
     Color,
     Effect,
     EffectId,
+    EngagementResult,
     enums,
     groups,
+    UnitRole,
     UnitType,
     UnitTypeId,
     Upgrade,
     UpgradeId,
     WarpUnitAbility,
 };
+export {
+    DEFAULT_EFFECT_COSTS,
+    EFFECT_INFLUENCE,
+    INFLUENCE_DEFAULTS,
+    STATIC_DEFENSE,
+    UNIT_AVOIDANCE,
+    WEIGHT_COSTS,
+} from './influence.ts';
+export type { EffectInfluence, InfluenceSource, StaticDefenseSource, WeightCost } from './influence.ts';

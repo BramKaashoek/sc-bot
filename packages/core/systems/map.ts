@@ -15,7 +15,7 @@ import { MineralField, VespeneGeyser, Townhall, getFootprint } from '../utils/ge
 import { Alliance } from '../constants/enums.ts';
 import Color from '../constants/color.ts';
 import { UnitType, UnitTypeId } from '../constants/index.ts';
-import { vespeneGeyserTypes, mineralFieldTypes } from '../constants/groups.ts';
+import { flyingStructureTypes, vespeneGeyserTypes, mineralFieldTypes } from '../constants/groups.ts';
 import type { Expansion, Grid2D, MapSystem, Point2D, WPoint, World } from '../types.ts';
 
 const debugDrawPlacement = createDebug('sc2:DrawPlacementMap');
@@ -511,6 +511,19 @@ const mapSystem: MapSystem = {
                 map.setPathable(cell, true);
             });
         }
+    },
+    async onUnitTypeChanged(world, { unit, previousType }) {
+        const wasFlying = flyingStructureTypes.includes(previousType);
+        const isFlying = flyingStructureTypes.includes(unit.unitType!);
+        if (wasFlying === isFlying) return;
+
+        const { map } = world.resources.get();
+        const footprint = getFootprint(isFlying ? previousType : unit.unitType!, footprintData(world))!;
+
+        cellsInFootprint(createPoint2D(unit.pos), footprint).forEach((cell) => {
+            map.setPlaceable(cell, isFlying);
+            map.setPathable(cell, isFlying);
+        });
     },
     async onEnemyFirstSeen({ resources }, scoutedUnit) {
         const { map } = resources.get();

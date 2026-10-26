@@ -248,9 +248,12 @@ describe('createUnit', () => {
         await unitOf(world, marine).burrow();
         await unitOf(world, uprooted).toggle({ target: { x: 5, y: 6 } });
         await unitOf(world, marine).toggle();
+        await world.resources.get().actions.flushQueuedActions();
 
         expect(
-            world.client.sent.actions.slice(sentBefore).map((request) => request.actions![0].actionRaw!.unitCommand),
+            world.client.sent.actions
+                .slice(sentBefore)
+                .flatMap((request) => request.actions!.map((action) => action.actionRaw!.unitCommand)),
         ).toEqual([
             { abilityId: Ability.BURROWDOWN, unitTags: [roach.tag!], queueCommand: false },
             {
@@ -595,9 +598,16 @@ describe('createUnit', () => {
 
         expect(unarmed.weaponCooldown).toBe(0);
         expect(unitOf(world, coolingRaw).weaponReady()).toBe(false);
-        expect(unitOf(world, coolingRaw).distanceToWeaponReady()).toBeCloseTo((3 / 22.4) * 4.48, 10);
+        expect(unitOf(world, coolingRaw).distanceToWeaponReady()).toBeCloseTo((3 / 16) * 4.48, 10);
         expect(unitOf(world, readyRaw).weaponReady()).toBe(true);
         expect(unarmed.weaponReady()).toBe(false);
+
+        const realMarineRaw = rawUnit({ unitType: UnitType.MARINE, weaponCooldown: 16 });
+        const realMarineWorld = await worldWith({
+            units: [realMarineRaw],
+            unitTypes: [{ ...marineData, movementSpeed: 2.25 }],
+        });
+        expect(unitOf(realMarineWorld, realMarineRaw).distanceToWeaponReady()).toBeCloseTo(2.25, 10);
     });
 
     it('checks facing within an angle tolerance, normalising negative angles', async () => {

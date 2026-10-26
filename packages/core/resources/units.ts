@@ -10,6 +10,7 @@ import {
 import { UnitType } from '../constants/index.ts';
 import { Alliance, Attribute } from '../constants/enums.ts';
 import { WorkerRace } from '../constants/race-map.ts';
+import { NodeSC2Error } from '../engine/errors.ts';
 import { Units } from './units-collection.ts';
 import type { Point2D, Unit, UnitResource, World } from '../types.ts';
 
@@ -235,6 +236,9 @@ function createUnits(world: World): UnitResource {
             ];
 
             return this.getById(upgraderUnitTypeIds);
+        },
+        getArmyValue() {
+            throw new NodeSC2Error('not implemented');
         },
     };
 }

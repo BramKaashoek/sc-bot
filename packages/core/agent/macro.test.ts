@@ -5,7 +5,7 @@ import { Alliance, Attribute, Race } from '../constants/enums.ts';
 import { createTestWorld, loadFixture, stepTo } from '../test/create-test-world.ts';
 import { observation, rawUnit, toyFixture, unitTypeData } from '../test/factories.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
-import type { Point2D, Unit } from '../types.ts';
+import type { CommandResult, Point2D, Unit } from '../types.ts';
 
 type SentCommand = {
     tag: string;
@@ -428,15 +428,15 @@ describe('agent macro helpers', () => {
         });
     });
 
-    it('queues every macro command for one batched request after the step when batchActions is on, not ordering a queued producer twice', async () => {
-        const agent = createAgent({ settings: { batchActions: true } });
+    it('queues every macro command for one request after the step under the calling commander, not ordering a queued producer twice', async () => {
+        const agent = createAgent();
         const world = await createTestWorld('blueshift', { loop: 224, agent, onQuery: straightLinePathing });
+        const { actions, events } = world.resources.get();
+        const reader = events.createReader();
         const sentBefore = world.client.sent.actions.length;
 
-        const { results, commands } = await commandsAfterStep(
-            world,
-            world.client.fixture.observations[224],
-            async () => {
+        const { results, commands } = await commandsAfterStep(world, world.client.fixture.observations[224], () =>
+            actions.as({ owner: 'Macro' }, async () => {
                 await agent.expandNow();
                 const trained = [
                     await agent.train(UnitType.SCV, 1, undefined, false),
@@ -444,7 +444,7 @@ describe('agent macro helpers', () => {
                 ];
                 expect(world.client.sent.actions.length).toBe(sentBefore);
                 return trained;
-            },
+            }),
         );
 
         expect(results).toEqual([1, 0]);
@@ -458,6 +458,12 @@ describe('agent macro helpers', () => {
             },
             { tag: '4342677505', abilityId: Ability.TRAIN_SCV, queueCommand: false },
         ]);
+        expect(
+            events
+                .read(reader)
+                .filter(({ name }) => name === 'commandResults')
+                .flatMap(({ data }) => (data as CommandResult[]).map(({ owner }) => owner)),
+        ).toEqual(['Macro', 'Macro']);
     });
 
     it('picks a builder that only has a move order when no worker is idle or gathering', async () => {

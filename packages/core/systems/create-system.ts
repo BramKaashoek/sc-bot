@@ -186,6 +186,7 @@ export default function createSystem(
         configurable: true,
     });
 
+    systemWrapper.commandPriority = options.commandPriority ?? 0;
     systemWrapper._system = system;
     return systemWrapper;
 }

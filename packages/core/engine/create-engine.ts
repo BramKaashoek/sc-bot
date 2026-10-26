@@ -14,8 +14,9 @@ import createDebugSystem from '../systems/debug.ts';
 import createFrameSystem from '../systems/frame.ts';
 import createUnitSystem from '../systems/unit.ts';
 import createMapSystem from '../systems/map.ts';
+import { runAsCommander } from '../resources/command-context.ts';
 import { GameResult, PlayerType, Race, Status, StatusId } from '../constants/enums.ts';
-import { NodeSC2Error, GameEndedError } from './errors.ts';
+import { NodeSC2Error, GameEndedError, ConnectionClosedError } from './errors.ts';
 import type {
     Agent,
     CreateGameOptions,
@@ -444,8 +445,6 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
             this._totalLoopDelay = 0;
             if (gameSetUpBefore) resetGameState(world);
             gameSetUpBefore = true;
-            frame.resetStepTimes();
-            actions.clearQueuedActions();
 
             if (isManaged) {
                 agent.opponent = agent.opponent || {};
@@ -550,12 +549,14 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
         async dispatch() {
             const engineSystems = this.systems;
             await Bluebird.mapSeries(engineSystems, (system) => system(world)); // concurrency: 1
+            world.resources.step(world);
 
             // @FIXME: this duplicates logic from the system wrapper
 
             const { agent, resources } = world;
             const { events, frame } = resources.get();
             const agentHandlers = agent as unknown as Record<string, EventHandler>;
+            const agentCommander = { owner: 'agent', priority: agent.settings?.commandPriority ?? 0, rank: -1 };
             const eventsWithHandlers = events
                 .read(agent.readerId!)
                 .filter((event) => agentHandlers[`on${pascalCase(event.name)}`]);
@@ -564,8 +565,7 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
                     ? eventsWithHandlers.map((event) => {
                           const startedAt = performance.now();
                           const handler = agentHandlers[`on${pascalCase(event.name)}`];
-                          return handler
-                              .call(agent, world, event.data, event)
+                          return runAsCommander(agentCommander, () => handler.call(agent, world, event.data, event))
                               .catch((err: Error) => {
                                   if (err instanceof NodeSC2Error) {
                                       debugSilly(`Agent handler error: on${pascalCase(event.name)}: `, err);
@@ -587,11 +587,17 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
             const {
                 agent: { systems },
             } = world;
-            await Bluebird.map(systems, (system) => system(world));
+            await Bluebird.map(systems, (system, rank) =>
+                runAsCommander(
+                    { owner: system._system.name ?? 'unknown', priority: system.commandPriority, rank },
+                    () => system(world),
+                ),
+            );
 
-            await actions
-                .flushQueuedActions()
-                .catch((err: Error) => debugEngine(`Queued actions failed: ${err.message}`));
+            await actions.flushQueuedActions().catch((err: Error) => {
+                if (err instanceof GameEndedError || err instanceof ConnectionClosedError) throw err;
+                debugEngine(`Queued actions failed: ${err.message}`);
+            });
 
             // debug system runs last because it updates the in-client debug display
             return debugSystem(world);

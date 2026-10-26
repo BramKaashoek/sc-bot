@@ -1,6 +1,6 @@
 # @sc-bot/core
 
-`@sc-bot/core` is a framework for writing StarCraft II bots in TypeScript. It started as a fork of [node-sc2](https://github.com/node-sc2/core) and has been extended to cover what a [python-sc2](https://github.com/BurnySc2/python-sc2) (BurnySc2 7.3.0) bot author uses: chainable unit collections, combat math, macro helpers, ramps and walls, action batching, bot-vs-bot games, replays and more.
+`@sc-bot/core` is a framework for writing StarCraft II bots in TypeScript. It started as a fork of [node-sc2](https://github.com/node-sc2/core) and has been extended to cover what a [python-sc2](https://github.com/BurnySc2/python-sc2) (BurnySc2 7.3.0) bot author uses: chainable unit collections, combat math, macro helpers, ramps and walls, per-unit command arbitration with batched sends, bot-vs-bot games, replays and more.
 
 It talks to the game through the raw [s2client-proto](https://github.com/Blizzard/s2client-proto) API, using [`@node-sc2/proto`](https://github.com/node-sc2/proto) as the websocket transport.
 
@@ -23,6 +23,7 @@ This readme walks through everything the library offers. For exhaustive signatur
     - [frame](#frame)
     - [debug](#debug)
     - [events and data](#events-and-data)
+    - [Custom resources](#custom-resources)
 - [Constants](#constants)
 - [Where this library differs from python-sc2](#where-this-library-differs-from-python-sc2)
 - [Changes compared to node-sc2](#changes-compared-to-node-sc2)
@@ -157,7 +158,7 @@ Options (all optional):
 | `gameTimeLimit` | In game seconds. Once exceeded, the game is left and every participant is reported as `TIE`. |
 | `saveReplayAs` | Write the replay to this path when the game ends |
 
-**Several games on one engine.** `runGame` can be called again once a game has ended, on the same or another map. From the second game on, each game starts with an empty unit store (no enemy memory from the previous game), fresh map caches (combat rally, cached paths), no earmarks and cleared debug drawings; the first game's setup resets nothing. The unit store is cleared in place and the `map`, `events` and `debug` resources are reset in place, so references to the resources stay valid. Every system is unpaused, its `state` goes back to a deep copy of the `state` it was created with and its step timing is reset, and a build system's `buildOptions` (`paused`, `earmarks`) go back to their initial values. The build and unit plugins are applied only once, so a build order still runs once per step.
+**Several games on one engine.** `runGame` can be called again once a game has ended, on the same or another map. From the second game on, each game starts with an empty unit store (no enemy memory from the previous game), fresh map caches (combat rally, cached paths), no earmarks, cleared debug drawings, fresh step times and no proposed commands; the first game's setup resets nothing. Every registered resource, including your [custom resources](#custom-resources), is reset in place, so references to the resources stay valid. Every system is unpaused, its `state` goes back to a deep copy of the `state` it was created with and its step timing is reset, and a build system's `buildOptions` (`paused`, `earmarks`) go back to their initial values. The build and unit plugins are applied only once, so a build order still runs once per step.
 
 **Leaving.** `actions.surrender()` leaves the game. `runGame` then resolves normally with your player marked `DEFEAT`. If `saveReplayAs` is set, the replay is saved before any leave, including a raw `_client.leaveGame()` (SC2 refuses to save one afterwards).
 
@@ -240,7 +241,7 @@ When the process is started with `--LadderServer`, `--GamePort` and `--StartPort
 createAgent({
     settings: {
         race: Race.RANDOM,                    // requested by joinGame; runGame and runBotVsBot use the player entry's race instead
-        batchActions: false,                  // opt-in, see below
+        commandPriority: 0,                   // see Command arbitration
         skipAvailableAbilitiesQuery: false,   // opt-in, see below
     },
     interface: { raw: true, rawCropToPlayableArea: true },  // SC2APIProtocol.InterfaceOptions
@@ -253,7 +254,7 @@ createAgent({
 
 ### Settings
 
-- **`batchActions`**. When `true`, every command the macro helpers send (`train`, `research`, `distributeWorkers`, `expandNow`, and the build they start) goes through `actions.queueAction`. All queued commands are sent in one request at the end of the step, and duplicates are dropped (see [Batching](#batching)). Other `actions.*` methods still send immediately.
+- **`commandPriority`**. The priority of the commands the agent's own handlers propose, against those of its systems (see [Command arbitration](#command-arbitration)). Defaults to `0`.
 - **`skipAvailableAbilitiesQuery`**. By default the engine asks SC2 every step which abilities each of your units can use. With many units that query is expensive. When `true`, it is skipped. Call `await unit.fetchAvailableAbilities()` for the units you care about; the answer is cached for the current game loop, and the synchronous accessors (`unit.availableAbilities()`, `abilityAvailable()`, `canInject()`, `canBlink()`, `canMove()`) return what was fetched this loop, or nothing. Anything built on those accessors, such as `unit.inject()`, `unit.blink()`, `actions.warpIn` and build-order `ability` tasks, needs the fetch too.
 
 ```ts
@@ -321,7 +322,7 @@ import { MARINE, SCV, SUPPLYDEPOT } from '@sc-bot/core/constants/unit-type';
 import { TERRANINFANTRYWEAPONSLEVEL1 } from '@sc-bot/core/constants/upgrade';
 
 const bot = createAgent({
-    settings: { race: Race.TERRAN, batchActions: true },
+    settings: { race: Race.TERRAN },
     async onStep({ agent, resources }) {
         const { actions, map } = resources.get();
 
@@ -341,7 +342,7 @@ const bot = createAgent({
 });
 ```
 
-The helpers deduct what they spend from the agent's minerals and gas right away, and `train` also adds the supply it uses to `foodUsed`, so a second call in the same step doesn't spend the same money or supply twice. `train` and `research` also skip structures that already received a command for the current observation (`actions.unitTagsReceivedAction()`), and the worker picked for a build is only taken from idle workers when it hasn't received one.
+The helpers deduct what they spend from the agent's minerals and gas right away, and `train` also adds the supply it uses to `foodUsed`, so a second call in the same step doesn't spend the same money or supply twice. `train` and `research` also skip structures that already received a command for the current observation (`actions.unitTagsReceivedAction()`), and the worker picked for a build is only taken from idle workers when it hasn't received one. Their commands are proposed like every other command and go out at the end of the step (see [Command arbitration](#command-arbitration)); the money is deducted when they are proposed, even if the command later loses or SC2 rejects it, until the next observation corrects it.
 
 `agent.use(system)` mounts one system or an array of them; see [Systems](#systems).
 
@@ -374,6 +375,7 @@ Agents and systems react to the game through event handlers named `on` + the eve
 | `onStructureConstructionComplete` | An own structure finishes, or a structure is first seen already finished (the starting townhall, debug-spawned buildings) | `Unit` |
 | `onUnitSpawned` | An own non-structure unit is seen for the first time; once per tag per game, even if it later disappears from the observation (e.g. loaded into a transport) | `Unit` |
 | `onNewEffect` / `onExpiredEffect` | An effect (e.g. a storm) appeared / ended | The effect and its effect data |
+| `onCommandResults` | The step after proposed commands were flushed, once per flush that had any | `CommandResult[]`: per proposal, whether it was sent (`won`), `dropped` or `rejected` (see [Command arbitration](#command-arbitration)) |
 
 `onStructureConstructionStarted`, `onStructureConstructionComplete` and `onUnitSpawned` correspond to python-sc2's `on_building_construction_started`, `on_building_construction_complete` and `on_unit_created`. The other events keep node-sc2's behaviour.
 
@@ -442,13 +444,16 @@ createSystem({
         state: {},               // initial state
         stepIncrement: 8,        // agent systems: skip onStep until more than N game loops have passed;
                                  // defaults to 8 with an explicit type: 'agent', to 2 when type is left out
+        commandPriority: 0,      // priority of this system's commands, see Command arbitration
     },
     setup(world) { },            // synchronous, before onGameStart
     ...event handlers
 })
 ```
 
-Inside handlers, `this.state` is the system's state and `this.setState(partial)` shallow-merges into it (or pass a function `current => next`). `this.pause()` and `this.unpause()` stop and resume the system's handlers; while paused, an `onStepPaused(world)` handler, if the system has one, is called each step instead. Each step, mounted systems run concurrently with each other, after the agent's own handlers.
+Inside handlers, `this.state` is the system's state and `this.setState(partial)` shallow-merges into it (or pass a function `current => next`). `this.pause()` and `this.unpause()` stop and resume the system's handlers; while paused, an `onStepPaused(world)` handler, if the system has one, is called each step instead. Each step, mounted systems run concurrently with each other, after the agent's own handlers. The options (`state`, `stepIncrement`, `commandPriority`) can also be passed as `createSystem`'s second argument, which overrides `defaultOptions`.
+
+When two systems command the same unit in one step, the one with the higher `commandPriority` wins; at equal priority, the one mounted first by `agent.use()` wins, and the agent's own handlers beat every system. See [Command arbitration](#command-arbitration).
 
 ### Build systems
 
@@ -554,6 +559,8 @@ A system with `type: 'unit'` manages units by type (`units: [...]`) and/or label
 ```text
 const { actions, events, frame, map, units, debug } = resources.get();
 ```
+
+Bots and plugins can add their own; see [Custom resources](#custom-resources).
 
 ### units
 
@@ -715,7 +722,7 @@ On SC2 versions before 5.0.4 (base build 82457, which includes 4.10) the API mis
 
 ### actions
 
-`actions` sends commands and queries. Each command method resolves with the `ResponseAction` once SC2 has accepted the request.
+`actions` sends commands and queries. The unit command methods (`attack` to `do` below, plus `stop`, `holdPosition`, `repair` and `returnResource`) don't send right away: they propose the command and resolve with no value. The engine sends every proposal of the step in one request after all systems have run, one command set per unit (see [Command arbitration](#command-arbitration)). Given an empty unit list they do nothing. A method still rejects at once when its preconditions fail (`BuildError`, `TrainError`, `GatherError`, `ActionManagerError`); what happened to the command itself arrives the next step as an `onCommandResults` event.
 
 | Method | What it does |
 |---|---|
@@ -732,14 +739,14 @@ On SC2 versions before 5.0.4 (base build 82457, which includes 4.10) the API mis
 | `train(unitType, producer?)` | Train; finds an idle producer when none is given. Rejects (`TrainError`). |
 | `upgrade(upgradeId, facility?)` | Research |
 | `warpIn(unitType, { nearPosition?, maxQty?, highground? })` | Warp in at power fields. Rejects when nothing is affordable, no warp gate is ready, or no point is free. |
-| `swapBuildings(a, b)` | Lift two Terran buildings and land each in the other's spot. Resolves after both land commands; rejects if either can't lift or isn't finished. |
+| `swapBuildings(a, b)` | Lift two Terran buildings and land each in the other's spot. Sent immediately, step by step; resolves after both land commands, rejects if either can't lift or isn't finished. |
 | `do(abilityId, tags, { target?, queue? })` | Any ability |
-| `toggleAutocast(units, abilityId)` | |
-| `chatSend(message, teamOnly = false)` | |
+| `toggleAutocast(units, abilityId)` | Sent immediately |
+| `chatSend(message, teamOnly = false)` | Sent immediately |
 | `surrender()` | Leave the game; `runGame` resolves with your `DEFEAT` (see [Running games](#running-games)) |
 | `canPlace(unitType, positions)` | One random placeable position from the list (at most 10 are checked, sampled at random), or `false` |
 | `findPlacement(unitType, near, options?)` | The closest placeable position, searching outward in rings, or `false` |
-| `sendAction(commands)`, `sendQuery(query)` | Raw `ActionRawUnitCommand`s and `RequestQuery` |
+| `sendAction(commands)`, `sendQuery(query)` | Raw `ActionRawUnitCommand`s, sent immediately, and `RequestQuery` |
 
 `findPlacement` options: `maxDistance = 20`, `placementStep = 2`, `randomAlternative = true` (pick randomly among the valid candidates of the closest ring, instead of the single closest) and `addonPlace = false` (also require room for a Terran add-on).
 
@@ -779,11 +786,65 @@ export async function onStep({ resources }: World) {
 }
 ```
 
-#### Batching
+#### Command arbitration
 
-`actions.queueAction(command | command[])` collects raw unit commands; the engine sends them all in one request at the end of the step. When flushing, a command that repeats a unit's current order (same ability and target, not queued) is dropped for that unit, like python-sc2's `prevent_double_actions`. `actions.flushQueuedActions()` sends early and `actions.clearQueuedActions()` discards. `actions.unitTagsReceivedAction()` returns the tags that got a command (sent or queued) for the current observation.
+Every proposed command belongs to a commander: `'agent'` for the agent's own handlers, the system's `name` for a system's handlers. The engine tracks this through `await`s and Bluebird callbacks, so a handler doesn't pass anything. Commands proposed outside a step (in a test, say) belong to `'unknown'` and lose every tie.
 
-Batching is opt-in. Every other `actions.*` method still sends immediately; `settings.batchActions` routes the agent's macro helpers through the queue.
+At the end of the step, after all systems have run, the engine decides per unit (a command proposed after that, from a promise a handler didn't await, goes out with the next step's):
+
+- **One commander wins.** The commander with the highest priority wins: the agent's `settings.commandPriority` or a system's `commandPriority`, both `0` by default. At equal priority the agent's handlers win, then systems in `agent.use()` order. All commands of the other commanders for that unit are dropped.
+- **The winner keeps all its commands** for that unit, in the order it proposed them, so a build followed by a queued gather or two trains on a reactor both go out.
+- **Repeats are dropped.** A command that repeats the unit's current order (same ability and target, not queued) is not sent, like python-sc2's `prevent_double_actions`. Re-issuing an order every step is a no-op.
+- **Identical commands are merged.** Units whose only command is the same (ability, target, queue flag) get one command with all of them.
+- **A dropped or rejected build frees its worker.** The worker loses its `command` label in the same step, so it isn't reported stuck. Nothing is refunded: money spent on a proposal comes back with the next observation.
+
+`actions.as({ owner?, priority?, rank? }, fn)` runs `fn` with a different commander; what it doesn't set is taken from the current one. `rank` is the tie-break at equal priority, lower wins (the agent is `-1`, systems count from `0` in `use()` order).
+
+`sendAction`, `swapBuildings`, `toggleAutocast`, `chatSend` and `surrender` send immediately. Units given a command through `sendAction` count as commanded for the rest of the observation: a proposal from another commander is dropped unless it strictly outranks the sender (higher priority, or at equal priority a lower rank); the sender's own follow-ups still go out.
+
+`actions.queueAction(command | command[])` proposes raw `ActionRawUnitCommand`s under the current commander; it throws `ActionManagerError` for a command without `unitTags`. `actions.flushQueuedActions()` decides and sends early, `actions.clearQueuedActions()` discards the proposals, and `actions.unitTagsReceivedAction()` returns the tags that were proposed or sent for the current observation, by any commander.
+
+The step after a flush, handlers named `onCommandResults` receive one `CommandResult` per proposal and outcome (a proposal for several units that partly lost gets two):
+
+| Field | |
+|---|---|
+| `owner`, `command`, `tags` | Who proposed it, the command as proposed, and the units this outcome covers |
+| `outcome` | `'won'` (sent, SC2 accepted it), `'dropped'` (not sent) or `'rejected'` (SC2 refused it, or the request failed) |
+| `reason` | Dropped only: `'outranked'` or `'repeat'` |
+| `by` | Dropped because outranked: the winning commander |
+| `result` | SC2's `ActionResult` for a sent command |
+| `error` | Rejected because the request itself failed: its message |
+
+A command SC2 refuses is also logged on `sc2:debug:actionManager`; it doesn't throw anywhere.
+
+```ts
+import { createAgent, createSystem } from '@sc-bot/core';
+import type { CommandResult, World } from '@sc-bot/core';
+import { Alliance } from '@sc-bot/core/constants/enums';
+
+const defense = createSystem(
+    {
+        name: 'Defense',
+        async onStep({ resources }: World) {
+            const { units, actions } = resources.get();
+            const workers = units.getWorkers();
+            const threat = units.getCombatUnits(Alliance.ENEMY).first;
+            if (threat && workers.length > 0) await actions.attack(workers.slice(0, 4), threat);
+        },
+        async onCommandResults(world: World, results: CommandResult[]) {
+            for (const result of results.filter(({ outcome }) => outcome === 'rejected')) {
+                console.log(`${result.owner}: ${result.tags.length} units, result ${result.result ?? result.error}`);
+            }
+        },
+    },
+    { commandPriority: 10 },
+);
+
+const bot = createAgent({});
+bot.use([defense]);
+```
+
+The commander is tracked with `AsyncLocalStorage`. To carry it through Bluebird callbacks, importing `@sc-bot/core` turns on Bluebird's `asyncHooks` for the whole process, which costs about 0.1 ms per step with a handful of systems.
 
 ### map
 
@@ -905,6 +966,39 @@ export async function onStep({ agent, resources }: World) {
 
 `world.data` holds the game data from SC2 (`getUnitTypeData(id)`, `getAbilityData(id)`, `getUpgradeData(id)`, `getEffectData(id)`, `findUnitTypesWithAbility(abilityId)`) and earmarks. An earmark reserves money for later: `data.addEarmark({ name, minerals, vespene })`. While it exists, `agent.canAfford` and `agent.canAffordUpgrade` subtract it, except when called with that earmark's name; if that check passes, the earmark is settled (removed). `getEarmarkTotals(name?)` and `settleEarmark(name)` are available directly.
 
+### Custom resources
+
+A resource is registered from a definition: a `name`, a `create(world)` factory and an optional `reset(resource, world)`. `world.resources.register(definition)` creates the resource and returns it; call it from a system's `setup`, which runs every game. Registering the same definition object again returns the existing resource; registering another definition under a taken name throws `NodeSC2Error`. Declare the resource's type by augmenting the `ResourceContainer` interface of `@sc-bot/core/types` (augmenting `@sc-bot/core` itself doesn't merge). The key is typed as present before `register` has run, so register it before anything reads it.
+
+When a new game starts on the same engine, every registered resource is reset in registration order, keeping its identity, so references held from `resources.get()` stay valid. `reset` runs when given; without it, a fresh `create(world)` is assigned onto the existing object. Resources added with `resources.set()` are left alone.
+
+```ts
+import { createSystem } from '@sc-bot/core';
+import type { ResourceDefinition, Unit, World } from '@sc-bot/core';
+
+declare module '@sc-bot/core/types' {
+    interface ResourceContainer {
+        sightings: { tags: Set<string> };
+    }
+}
+
+const sightings: ResourceDefinition<'sightings'> = {
+    name: 'sightings',
+    create: () => ({ tags: new Set() }),
+    reset: (resource) => resource.tags.clear(),
+};
+
+export const scouting = createSystem({
+    name: 'Scouting',
+    setup(world: World) {
+        world.resources.register(sightings);
+    },
+    async onEnemyFirstSeen({ resources }: World, enemy: Unit) {
+        resources.get().sightings.tags.add(enemy.tag!);
+    },
+});
+```
+
 ## Constants
 
 Import constants by module path:
@@ -964,8 +1058,9 @@ Bug fixes that changed a signature or a failure mode:
 
 - `units.getByTag(tag)` returns `undefined` for an unknown tag (it used to return the tag string). The array form leaves unknown tags out and returns `Units`.
 - Every `units.*` getter, including `getClosest` and `getByTag(tags)`, returns `Units` instead of a plain array. See the [testing note](#the-units-collection).
+- The unit command methods of `actions` (`attack`, `move`, `build`, `train`, `do` and the rest, and the `Unit` shortcuts such as `useAbility`, `burrow` and `inject`) resolve with no value once the command is proposed, instead of with SC2's `ResponseAction`, and no longer reject when SC2 refuses the command; that arrives the next step through `onCommandResults` (see [Command arbitration](#command-arbitration)). Commands go out after all systems have run instead of during the step, conflicting commands for one unit resolve by priority and `use()` order instead of last-write-wins, and repeating a unit's current order is a no-op. Precondition errors still reject.
 - `actions.swapBuildings` awaits the whole lift-move-land sequence, resolves with the responses of both land commands (`ResponseAction[]`), and rejects on failure. It used to swallow errors.
-- `actions.attack` rejects with `ActionManagerError` when the target is missing, and `actions.attackMove` when no position is given and no enemy start location is known, instead of throwing a `TypeError`. Missing units are not an error there: the command is sent with whatever units are given, even none. `actions.do(abilityId, [])` rejects with `ActionManagerError` (it used to reject with a `TypeError`).
+- `actions.attack` rejects with `ActionManagerError` when the target is missing, and `actions.attackMove` when no position is given and no enemy start location is known, instead of throwing a `TypeError`. Missing units are not an error: the command methods resolve without proposing anything for an empty unit list (`do` used to reject with a `TypeError`). Only the raw `actions.queueAction` throws `ActionManagerError` for a command without units.
 - `actions.gather` rejects with `GatherError` when there is no completed own base to mine at, instead of crashing.
 - `actions.warpIn` rejects with `ActionManagerError` when there is no free warp-in point.
 - Event handlers are called as `(world, data, event)`, apart from the system hooks listed under [Events](#events). `onUnitTypeChanged` and `onUnitTookDamage` pass a single payload object.
@@ -992,7 +1087,7 @@ Bug fixes that changed a signature or a failure mode:
 - The agent's own `onGameStart` and `onStep` now also receive `(data, event)` after `world`, and `onGameStart` keeps an `agent.opponent.id` set before the game (it used to wipe the ladder's `--OpponentId`). Under a ladder manager the engine sets the id from `--OpponentId` at setup only when it is passed, so a preset id survives otherwise.
 - Units whose death SC2 reports are labelled `dead` as before, and dead enemies are now also removed from the unit store, since enemies are otherwise kept as memory.
 - The map system marks the cells of destructible rocks and xel'naga towers unplaceable (node-sc2 only marked unbuildable plates), so `isPlaceable`, `isPlaceableAt`, the placement grid and `map.path` treat them as blocked. Rocks whose shape isn't known (diagonal and very large ones) stay placeable.
-- Running another game on the same engine resets the unit store, map caches, earmarks, events and systems' step timing (see [Several games on one engine](#enginerungamemap-players-options)). Enemy memory and the cached combat rally used to carry over, and agent systems skipped their `onStep` until the game loop passed where the previous game ended. The first game no longer resets anything, and the build and unit plugins are no longer re-applied per game (which ran a build order once more per step for every extra game).
+- Running another game on the same engine resets every registered resource in place (unit store, map caches, events, debug drawings, step times, proposed commands, and custom resources through their own `reset`), earmarks and systems' step timing (see [Several games on one engine](#enginerungamemap-players-options)). Enemy memory and the cached combat rally used to carry over, and agent systems skipped their `onStep` until the game loop passed where the previous game ended. The first game no longer resets anything, and the build and unit plugins are no longer re-applied per game (which ran a build order once more per step for every extra game).
 - A game SC2 can't create rejects `runGame` and `runBotVsBot` with SC2's error (e.g. `Could not create a game on "<map>" (InvalidMapName): ...`). It used to hang or fail later with a misleading error.
 - A realtime game whose SC2 connection closes rejects with `ConnectionClosedError` instead of resolving `[world, undefined]`.
 - `onNewEffect` and `onExpiredEffect` fire only when an effect appears or ends. The checks were inverted, so both fired for effects that were still active.

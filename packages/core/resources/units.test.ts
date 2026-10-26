@@ -22,6 +22,13 @@ function editedObservation(
     return responseObservation;
 }
 
+function fogAround(responseObservation: SC2APIProtocol.ResponseObservation, center: { x: number; y: number }) {
+    const { data, size } = responseObservation.observation!.rawData!.mapState!.visibility!;
+    for (let dy = -2; dy <= 2; dy++)
+        for (let dx = -2; dx <= 2; dx++) data![(Math.floor(center.y) + dy) * size!.x! + Math.floor(center.x) + dx] = 1;
+    return responseObservation;
+}
+
 function pick(world: TestWorld, ...tags: string[]): Units {
     const { units } = world.resources.get();
     return Units.from(tags.map((tag) => units.getByTag(tag)!));
@@ -110,9 +117,13 @@ describe('UnitResource', () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
         const { units } = world.resources.get();
 
+        const zerglingsSpot = { x: 14.7, y: 24.8 };
         await stepTo(
             world,
-            editedObservation(world, 896, 940, (raws) => raws.filter((unit) => !ZERGLINGS.includes(unit.tag!))),
+            fogAround(
+                editedObservation(world, 896, 940, (raws) => raws.filter((unit) => !ZERGLINGS.includes(unit.tag!))),
+                zerglingsSpot,
+            ),
         );
 
         const [zergling] = pick(world, ZERGLINGS[0]);
@@ -124,8 +135,9 @@ describe('UnitResource', () => {
         expect([hatchery.isMemory(), hatchery.isSnapshot(), hatchery.age()]).toEqual([false, true, 0]);
         expect([overlord.isMemory(), overlord.isSnapshot(), overlord.age()]).toEqual([false, false, 0]);
 
-        const killed = editedObservation(world, 896, 944, (raws) =>
-            raws.filter((unit) => !ZERGLINGS.includes(unit.tag!)),
+        const killed = fogAround(
+            editedObservation(world, 896, 944, (raws) => raws.filter((unit) => !ZERGLINGS.includes(unit.tag!))),
+            zerglingsSpot,
         );
         killed.observation!.rawData!.event = { deadUnits: [ZERGLINGS[0]] };
         await stepTo(world, killed);

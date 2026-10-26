@@ -6,7 +6,51 @@ import EventChannel from '../resources/event-channel.ts';
 import Frame from '../resources/frame.ts';
 import MapManager from '../resources/map.ts';
 import UnitManager from '../resources/units.ts';
-import type { World } from '../types.ts';
+import { memoryResource } from '../resources/memory.ts';
+import { spatialResource } from '../resources/spatial.ts';
+import { influenceResource } from '../resources/influence.ts';
+import { pathingResource } from '../resources/pathing.ts';
+import { rolesResource } from '../resources/roles.ts';
+import { squadsResource } from '../resources/squads.ts';
+import { intelResource } from '../resources/intel.ts';
+import { placementResource } from '../resources/placement.ts';
+import { buildingsResource } from '../resources/buildings.ts';
+import { miningResource } from '../resources/mining.ts';
+import { flyingResource } from '../resources/flying.ts';
+import type { ResourceContainer, ResourceDefinition, World } from '../types.ts';
+
+type CoreResourceDefinition = { [K in keyof ResourceContainer]-?: ResourceDefinition<K> }[keyof ResourceContainer];
+
+function coreResources(client?: NodeSC2Proto.ProtoClient): CoreResourceDefinition[] {
+    return [
+        { name: 'frame', create: () => Frame(), reset: (frame) => frame.resetStepTimes() },
+        { name: 'map', create: (world) => MapManager(world) },
+        { name: 'debug', create: (world) => Debugger(world) },
+        {
+            name: 'units',
+            create: (world) => UnitManager(world),
+            reset: (units) => Object.values(units._units).forEach((store) => store.clear()),
+        },
+        { name: 'events', create: (world) => EventChannel(world) },
+        // recreating would build a new proto client
+        {
+            name: 'actions',
+            create: (world) => ActionManager(world, client),
+            reset: (actions) => actions.clearQueuedActions(),
+        },
+        memoryResource,
+        spatialResource,
+        influenceResource,
+        pathingResource,
+        rolesResource,
+        squadsResource,
+        intelResource,
+        placementResource,
+        buildingsResource,
+        miningResource,
+        flyingResource,
+    ];
+}
 
 function createWorld(client?: NodeSC2Proto.ProtoClient): World {
     const world = {
@@ -16,26 +60,14 @@ function createWorld(client?: NodeSC2Proto.ProtoClient): World {
     } as unknown as World;
 
     world.data = DataStorage();
-    world.resources = ResourceManager();
-
-    world.resources.set({
-        frame: Frame(),
-        map: MapManager(world),
-        debug: Debugger(world),
-        units: UnitManager(world),
-        events: EventChannel(world),
-        actions: ActionManager(world, client),
-    });
+    world.resources = ResourceManager(world);
+    coreResources(client).forEach((definition) => world.resources.register(definition));
 
     return world;
 }
 
 export function resetGameState(world: World): void {
-    const { map, units, events, debug } = world.resources.get();
-    Object.values(units._units).forEach((store) => store.clear());
-    Object.assign(map, MapManager(world));
-    Object.assign(events, EventChannel(world));
-    Object.assign(debug!, Debugger(world));
+    world.resources.reset(world);
     world.data.set('earmarks', []);
 }
 

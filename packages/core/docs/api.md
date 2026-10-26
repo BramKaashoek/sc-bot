@@ -156,7 +156,7 @@ Accepts a blueprint implementing `EventConsumer` and returns an `Agent`.
 blueprint = {
     settings: {
         race: Race.RANDOM, // requested by joinGame; runGame and runBotVsBot use the player entry's race instead
-        batchActions: false, // route the macro helpers' commands through actions.queueAction
+        commandPriority: 0, // priority of the agent's own commands against its systems' (see actions › Arbitration)
         skipAvailableAbilitiesQuery: false, // skip the per-step ability query; use unit.fetchAvailableAbilities()
     },
     interface: { raw: true, rawCropToPlayableArea: true }, // SC2APIProtocol.InterfaceOptions; `raw: true` is required
@@ -247,7 +247,7 @@ agent.distributeWorkers(resourceRatio = 2) => Promise<void> // moves idle and su
 agent.train(unitType, amount = 1, closestTo?, trainOnlyIdleBuildings = true) => Promise<number> // returns how many were started
 agent.research(upgradeId) => Promise<boolean>
 ```
-These follow python-sc2's `BotAI` helpers of the same names. `distributeWorkers` fills gas first when minerals/vespene is at least `resourceRatio` (or there is no vespene), otherwise minerals. `research` also checks the required building (eg. an armory for level 2 upgrades) and the previous level, and throws for an upgrade missing from the researched-from dictionary. They send their commands immediately, or through `actions.queueAction` when the agent's `settings.batchActions` is `true`. They deduct what they spend from the agent's minerals and gas right away, and `train` adds the supply it uses to `foodUsed`, so later calls in the same step see what is left.
+These follow python-sc2's `BotAI` helpers of the same names. `distributeWorkers` fills gas first when minerals/vespene is at least `resourceRatio` (or there is no vespene), otherwise minerals. `research` also checks the required building (eg. an armory for level 2 upgrades) and the previous level, and throws for an upgrade missing from the researched-from dictionary. They propose their commands through `actions.queueAction` under the calling commander, so they go out with the rest at the end of the step. They deduct what they spend from the agent's minerals and gas right away, and `train` adds the supply it uses to `foodUsed`, so later calls in the same step see what is left.
 
 ### *`agent.use(system) => void`*
 `System`'s (explained below) are mounted to your agent before the game starts, via `agent.use()`. It accepts either a single system, or an array of systems.
@@ -263,6 +263,7 @@ systemBlueprint = {
     defaultOptions: {
         state: {}, // allows you to preset a state on initialization
         stepIncrement: 8, // agent systems only: skip onStep until more than N game loops have passed; defaults to 8 with an explicit type: 'agent', to 2 when type is left out
+        commandPriority: 0, // priority of this system's commands; ties go to agent.use() order (see actions › Arbitration)
     },
     // a *synchronous* function of any additional setup you would like to run *before* the 'gameStart' event
     setup: (world: World) => void; 
@@ -280,7 +281,7 @@ Systems also implement the following properties:
         unpause(): void;
     }
 ```
-`createSystem` also takes an options object as a second argument (`{ state?, stepIncrement? }`), which overrides `defaultOptions`.
+`createSystem` also takes an options object as a second argument (`{ state?, stepIncrement?, commandPriority? }`), which overrides `defaultOptions`.
 
 A blueprint with `type: 'build'` is typed as `BuildSystemObject`: its `onStep` is `(world, gameLoop, task?: BuildTaskI, result?: BuildResult)`, where `task` and `result` are `undefined` while the order is paused or finished.
 
@@ -325,10 +326,23 @@ EventConsumer is a trait that represents a sum of the available event handlers t
         onChatReceived?: (world: World, chat: SC2APIProtocol.ChatReceived) => Promise<any>;
         onNewEffect?: (world: World, effect: Effect) => Promise<any>;
         onExpiredEffect?: (world: World, effect: Effect) => Promise<any>;
+        onCommandResults?: (world: World, results: CommandResult[], event?: SystemEvent) => Promise<any>;
 }
 ```
 
-`onBuildingConstructionStarted` fires when a new own structure appears unfinished, `onBuildingConstructionComplete` when one finishes or a new one appears already finished. The python-sc2 equivalents are `onStructureConstructionStarted` (also fires when an own unit turns into an unfinished structure while keeping its tag; on SC2 4.10 a drone's building gets a new tag instead, so for drones it fires alongside `onBuildingConstructionStarted` with the building, and the drone is reported destroyed when the building finishes), `onStructureConstructionComplete` (also for structures first seen finished, such as the starting townhall) and `onUnitSpawned` (own non-structure units, once per tag per game — unlike `onUnitCreated`, which also fires for structures). `onUnitTypeChanged` (own units only) receives `{ unit, previousType }` (morphs, sieging, lowering depots). `onUnitTookDamage` (own units only) receives `{ unit, amount }`, the health and shield lost since the previous frame. Event handlers are called as `(world, data, event)`, where `event` is the raw `SystemEvent` (`name`, `gameLoop`, ...); extra event fields are never spread into further arguments. This includes the agent's own `onStep` (`data` is the game loop) and `onGameStart` (`data` is `null`). The system hooks with their own arguments are the exceptions: a unit system's `onStep(world, units)`, `onNewUnit`, `onUnitIdle`, `onUnitDestroyed` and `idleFunctions` (`(world, unit)`), a build system's `onStep(world, gameLoop, task?, result?)` and `buildComplete(world, gameLoop)`, `onStepPaused(world)`, and `onGameStart(world)` of a system mounted after the game started. `event` is optional in the handler types, so handlers can also be called directly with two arguments. `onEnemyUnitLeftVision` fires for an enemy that was visible last frame and is not now; the unit stays in `units` as a memory (see `unit.isMemory()`).
+`onBuildingConstructionStarted` fires when a new own structure appears unfinished, `onBuildingConstructionComplete` when one finishes or a new one appears already finished. The python-sc2 equivalents are `onStructureConstructionStarted` (also fires when an own unit turns into an unfinished structure while keeping its tag; on SC2 4.10 a drone's building gets a new tag instead, so for drones it fires alongside `onBuildingConstructionStarted` with the building, and the drone is reported destroyed when the building finishes), `onStructureConstructionComplete` (also for structures first seen finished, such as the starting townhall) and `onUnitSpawned` (own non-structure units, once per tag per game — unlike `onUnitCreated`, which also fires for structures). `onUnitTypeChanged` (own units only) receives `{ unit, previousType }` (morphs, sieging, lowering depots). `onUnitTookDamage` (own units only) receives `{ unit, amount }`, the health and shield lost since the previous frame. Event handlers are called as `(world, data, event)`, where `event` is the raw `SystemEvent` (`name`, `gameLoop`, ...); extra event fields are never spread into further arguments. This includes the agent's own `onStep` (`data` is the game loop) and `onGameStart` (`data` is `null`). The system hooks with their own arguments are the exceptions: a unit system's `onStep(world, units)`, `onNewUnit`, `onUnitIdle`, `onUnitDestroyed` and `idleFunctions` (`(world, unit)`), a build system's `onStep(world, gameLoop, task?, result?)` and `buildComplete(world, gameLoop)`, `onStepPaused(world)`, and `onGameStart(world)` of a system mounted after the game started. `event` is optional in the handler types, so handlers can also be called directly with two arguments. `onEnemyUnitLeftVision` fires for an enemy that was visible last frame and is not now; the unit stays in `units` as a memory (see `unit.isMemory()`). `onCommandResults` receives, the step after each flush of proposed commands, one entry per (proposal, outcome):
+```ts
+CommandResult {
+    owner: string; // the proposing commander
+    command: SC2APIProtocol.ActionRawUnitCommand; // as proposed
+    tags: string[]; // the units this outcome covers
+    outcome: 'won' | 'dropped' | 'rejected';
+    reason?: 'outranked' | 'repeat'; // dropped only
+    by?: string; // dropped and outranked: the winning owner
+    result?: SC2APIProtocol.ActionResult; // won: SUCCESS; rejected by SC2: its code
+    error?: string; // rejected because the request failed
+}
+```
 
 As you can see, event handlers accept the `World` context as the first argument and some optional event-related data as the second argument. Unlike regular javascript event handlers, which are independent, `node-sc2` event handlers *can create backpressure*. This is a good thing, and is why they are expected to return a promise. Backpressure allows you to run your event handlers with a guarantee that they will complete *before the game step increments*. The easiest way to ensure this is simply implementing the handler as an async function, like the following:
 ```js
@@ -355,6 +369,12 @@ The `world` context is given as the first argument of every event consumer handl
         console.log(`My race this game is ${agent.race}`);
     }
 ```
+
+### *`world.resources.register<K>(definition: ResourceDefinition<K>) => NonNullable<ResourceContainer[K]>`*
+Creates and stores a resource from `{ name: K, create(world), reset?(resource, world) }` and returns it. Registering the same definition object again returns the existing resource, so it is safe from a system's `setup`; another definition under a taken name throws `NodeSC2Error`. Type the resource by augmenting `interface ResourceContainer` in `declare module '@sc-bot/core/types'`.
+
+### *`world.resources.reset(world: World) => void`*
+Resets every registered resource in registration order, in place: its `reset` when given, otherwise `Object.assign(resource, create(world))`. The engine calls it when another game starts on the same engine. Resources added with `resources.set()` are left alone.
 
 ## Unit
 A unit is a special type of object that represents a unit in game. Units implement the following properties:
@@ -410,7 +430,7 @@ Units also implement the following methods:
 unit.is(unitType), isWorker(), isTownhall(), isStructure(), isGasMine(), isMineralField(), isCombatUnit()
 unit.isEnemy(), isFinished(), isCurrent(), isCloaked(), isHolding(), isConstructing(), isFlyingOrGravitoned()
 unit.hasReactor(), hasTechLab(), canShootUp(), canInject(), canBlink(), canMove()
-unit.inject(target?), blink(target, opts?), burrow(opts?), toggle(opts?)
+unit.inject(target?), blink(target, opts?), burrow(opts?), toggle(opts?) // => Promise<void>, proposed like actions.do
 unit.addLabel(name, value), hasLabel(name), getLabel(name), removeLabel(name), hasNoLabels()
 unit.data(), typeData(unitType), getLife() // getLife is health as a percentage
 ```
@@ -440,7 +460,7 @@ unit.isFacing(other, angleError?) => boolean
 // abilities and commands
 unit.availableAbilities(), abilityAvailable(abilityId) // from this loop's ability query
 unit.fetchAvailableAbilities() => Promise<number[]> // queries SC2, cached per game loop
-unit.useAbility(abilityId, { target?, queue? }) => Promise<ResponseAction>
+unit.useAbility(abilityId, { target?, queue? }) => Promise<void> // proposes, like actions.do
 ```
 With the agent setting `skipAvailableAbilitiesQuery`, the synchronous accessors return only what `fetchAvailableAbilities()` fetched this loop.
 Buff time is exposed as the properties `buffDurationRemain` and `buffDurationMax`, and upgrade levels as `attackUpgradeLevel`, `armorUpgradeLevel` and `shieldUpgradeLevel`.
@@ -740,46 +760,74 @@ map.queryPathing(start: Point2D | Unit, end: Point2D) => Promise<number | null> 
 ### actions
 The action manager resource is the main way to interact with the API via commands (actions or queries).
 
-#### actions.attack(units?: Unit[], unit?: Unit, queue?: boolean): Promise<SC2APIProtocol.ResponseAction>;
-Command one or more units to attack another unit. Rejects with `ActionManagerError` when the target unit is missing. An empty or missing unit list is not an error: the command is sent with no units.
+The unit command methods below resolve with no value once the command is proposed; they don't wait for SC2. The engine arbitrates all proposals per unit at the end of the step and sends one request (see [Arbitration](#arbitration)). They still reject at once when their preconditions fail; what happened to the command arrives the next step as a `commandResults` event.
 
-#### actions.attackMove(u?: Unit[], p?: Point2D, queue?: boolean): Promise<SC2APIProtocol.ResponseAction>;
-Command one or more units to move and attack to a position. Without `p`, the first possible enemy start location is used; rejects with `ActionManagerError` when neither is available. Like `attack`, an empty unit list is sent as is.
+#### *`actions.attack(units?: Unit[], unit?: Unit, queue?: boolean) => Promise<void>`*
+Command one or more units to attack another unit. `queue = false`. Rejects with `ActionManagerError` when the target unit is missing. An empty or missing unit list proposes nothing.
 
-#### actions.build(unitType: number, target: Unit, worker?: Unit): Promise<SC2APIProtocol.ResponseAction>;
-#### actions.build(unitType: number, pos: Point2D, worker?: Unit): Promise<SC2APIProtocol.ResponseAction>;
-Command a given worker to build a `unitType` on either a position or a target unit. If no worker is given, the system will select the least busy, closest worker.
+#### *`actions.attackMove(u?: Unit[], p?: Point2D, queue?: boolean) => Promise<void>`*
+Command one or more units to move and attack to a position. Without `p`, the first possible enemy start location is used; rejects with `ActionManagerError` when neither is available. An empty unit list proposes nothing. `queue = false`.
 
-Will reject with an instance of `BuildError` with related message and `err.data` if the player is missing the necessary tech, can not afford it, gave a target the build ability doesn't accept (or none where one is required), or no builder is found.
+#### *`actions.build(unitType: number, target?: Unit, worker?: Unit) => Promise<void>`*
+#### *`actions.build(unitType: number, pos?: Point2D | null, worker?: Unit) => Promise<void>`*
+Command a given worker to build a `unitType` on either a position or a target unit. If no worker is given, the least busy, closest worker is selected. The worker gets the `command` label right away; if the build is dropped or SC2 rejects it, the label is removed again during the flush. A gas building is followed by a queued `gather` from the same commander. Nothing is refunded for a build that isn't sent.
 
-#### actions.do(abilityId: number, tags: string | string[], { target?, queue? }?): Promise<SC2APIProtocol.ResponseAction>;
-Command one or more units to do an ability, optionally on a target unit or point (any other `target` value is ignored). Rejects with an `ActionManagerError` for an empty tag list, and with an `Error` when SC2 doesn't accept the command.
+Rejects with `BuildError` (with `err.data`) if the player is missing the necessary tech, can not afford it, gave a target the build ability doesn't accept (or none where one is required), or no builder is found.
 
-#### actions.buildGasMine() => Promise<SC2APIProtocol.ResponseAction>;
-Will build an assimilator, refinery, or extractor on an open geyser in an existing expansion. Will reject with an instance of `BuildError` with related message and `err.data` if there are no free geysers on any owned expansions.
+#### *`actions.do(abilityId: number, tags: string | string[], opts?: AbilityOptions) => Promise<void>`*
+Command one or more units to do an ability, optionally on a target unit or point (`opts = { target?, queue? }`, `queue = false`; any other `target` value is ignored). An empty tag list proposes nothing.
 
-#### actions.gather(unit: Unit, mineralField?: Unit, queue?: boolean) => Promise<SC2APIProtocol.ResponseAction>;
-Given a worker unit and optionally a specific `mineralField`, will command the unit to gather minerals. When not given a target `mineralField`, it picks the closest finished own base that is below its ideal harvester count (or the closest base), and of that base's three nearest mineral fields the one closest to the worker. Rejects with `GatherError` for a unit that isn't a worker or MULE, or when there is no finished own base to mine at. NOTE: by default, the command is given *queued*, so it is safe to give after giving another command to a worker, or even to give to all workers `onUnitIdle`.
+#### *`actions.buildGasMine() => Promise<void>`*
+Will build an assimilator, refinery, or extractor on an open geyser in an existing expansion. Rejects with `BuildError` (with `err.data`) if there are no free geysers on any owned expansions.
 
-#### actions.mine(units: Unit[], target: Unit, queue?: boolean) => Promise<SC2APIProtocol.ResponseAction>;
-Like `gather`, but for mining gas. Currently must be given the target vespene mine.
+#### *`actions.gather(unit: Unit, mineralField?: Unit, queue?: boolean) => Promise<void>`*
+Given a worker unit and optionally a specific `mineralField`, commands the unit to gather minerals. When not given a target `mineralField`, it picks the closest finished own base that is below its ideal harvester count (or the closest base), and of that base's three nearest mineral fields the one closest to the worker. Rejects with `GatherError` for a unit that isn't a worker or MULE, or when there is no finished own base to mine at. `queue = true`, so it is safe to give after another command to a worker, or to all workers `onUnitIdle`; a worker with the `command` label is always queued.
 
-#### actions.move(units: Unit[], target: Point2D, queue?: boolean) => Promise<SC2APIProtocol.ResponseAction>;
-#### actions.move(units: Unit[], target: Unit, queue?: boolean) => Promise<SC2APIProtocol.ResponseAction>;
-Commands a list of units to move to a target position or target unit.
+#### *`actions.mine(units: Unit[], target: Unit, queue?: boolean) => Promise<void>`*
+Like `gather`, but for mining gas. Must be given the target gas building. `queue = true`.
 
-#### actions.train(unitType: number, tag?: Unit) => Promise<SC2APIProtocol.ResponseAction>;
-Given a `unitType` and, optionally, a production unit, will order to train a new unit from that facility.
-If no production unit is given, it will attempt to look up a current facility that is both capable of training the given `unitType`, *and* does not currently have a queue. If the player does not have the tech to train the unit, can not afford to train the unit, or there is no free production facility, this function will reject with an instance of `TrainError`.
+#### *`actions.move(units: Unit | Unit[], target: Point2D | Unit, queue?: boolean) => Promise<void>`*
+Commands units to move to a target position or target unit. `queue = false`.
 
-#### actions.upgrade(upgradeId: number, tag?: Unit) => Promise<SC2APIProtocol.ResponseAction>;
-Given an upgrade and, optionally, a research facility, will order to research the upgrade from that facility.
-If no research facility is given, it will attempt to look up a current facility that is both capable of researching the given upgrade, *and* does not currently have a queue. Rejects with `TrainError` when there is none.
+#### *`actions.smart(units: Unit[], target: Point2D | Unit, queue?: boolean) => Promise<void>`*
+Right-click. `queue = false`.
 
-#### actions.canPlace(unitType: number, positions: Point2D[]) => Promise<(Point2D | false)>;
+#### *`actions.patrol(units: Unit | Unit[], positions: [from: Point2D, to: Point2D] | Point2D, queue?: boolean) => Promise<void>`*
+Proposes a move to `from` (default: the first unit's position), then a queued patrol to `to`, from the same commander.
+
+#### *`actions.stop(units: Unit | Unit[], queue?: boolean) => Promise<void>`*
+#### *`actions.holdPosition(units: Unit | Unit[], queue?: boolean) => Promise<void>`*
+#### *`actions.returnResource(units: Unit | Unit[], queue?: boolean) => Promise<void>`*
+#### *`actions.repair(units: Unit | Unit[], target: Unit, queue?: boolean) => Promise<void>`*
+Shortcuts for `do` with the matching ability. `queue = false`. Like every high-level command method (`move`, `smart`, `patrol`, `mine`, ...), they resolve without proposing anything for an empty unit list.
+
+#### *`actions.train(unitType: number, unit?: Unit) => Promise<void>`*
+Given a `unitType` and, optionally, a production unit, orders a new unit from that facility.
+If no production unit is given, it looks up a facility that is both capable of training the given `unitType` *and* does not currently have a queue. If the player does not have the tech, can not afford the unit, or there is no free production facility, it rejects with `TrainError`.
+
+#### *`actions.upgrade(upgradeId: number, unit?: Unit) => Promise<void>`*
+Given an upgrade and, optionally, a research facility, orders the research from that facility.
+If no research facility is given, it looks up a facility that is both capable of researching the upgrade *and* does not currently have a queue. Rejects with `TrainError` when there is none.
+
+#### *`actions.warpIn(unitType: number, opts?: WarpInOptions) => Promise<void>`*
+Warps in up to `maxQty` units at distinct free points of a power field near `nearPosition` (`opts = { nearPosition?, maxQty?, highground? }`). Rejects with `ActionManagerError` when nothing is affordable, no warp gate is ready, or no point is free.
+
+#### *`actions.swapBuildings(unitA: Unit, unitB: Unit) => Promise<SC2APIProtocol.ResponseAction[]>`*
+Lifts, swaps and lands two Terran buildings, sending each step immediately (not through arbitration). Resolves with both land responses; rejects if either building can't lift or isn't finished, or SC2 refuses a step.
+
+#### *`actions.toggleAutocast(units: Unit | Unit[], abilityId: number) => Promise<SC2APIProtocol.ResponseAction>`*
+Sent immediately.
+
+#### *`actions.chatSend(message: string, teamOnly?: boolean) => Promise<SC2APIProtocol.ResponseAction>`*
+Sent immediately. `teamOnly = false`.
+
+#### *`actions.surrender() => Promise<unknown>`*
+Leaves the game and resolves with the leave-game response; `runGame` resolves with `DEFEAT`.
+
+#### *`actions.canPlace(unitType: number, positions: Point2D[]) => Promise<Point2D | false>`*
 Given a `unitType` and an array of positions, queries the game to check placability (of at most 10 positions, sampled randomly from longer lists). Returns either *a random position which returned a success*, or false.
 
-#### actions.findPlacement(unitType: number, near: Point2D, options?: FindPlacementOptions) => Promise<(Point2D | false)>;
+#### *`actions.findPlacement(unitType: number, near: Point2D, options?: FindPlacementOptions) => Promise<Point2D | false>`*
 Returns `near` itself when `unitType` can be placed there, otherwise searches outward in square rings `placementStep` apart and returns a position from the first ring with valid spots, or false.
 ```js
 options = {
@@ -790,27 +838,29 @@ options = {
 }
 ```
 
-#### Commands
-```ts
-actions.smart(units, target: Point2D | Unit, queue?) // right-click
-actions.patrol(units, [from, to] | to, queue?) // moves to `from` (default: the first unit's position), then patrols to `to`
-actions.stop(units, queue?), holdPosition(units, queue?), returnResource(units, queue?)
-actions.repair(units, target: Unit, queue?)
-actions.warpIn(unitType, { nearPosition?, maxQty?, highground? }) // rejects (ActionManagerError) when nothing is affordable, no warp gate is ready, or no point is free
-actions.swapBuildings(unitA, unitB) => Promise<ResponseAction[]> // lift, swap and land two Terran buildings; rejects if either can't lift or isn't finished
-actions.toggleAutocast(units, abilityId)
-actions.chatSend(message, teamOnly = false)
-actions.surrender() // leaves the game; runGame resolves with DEFEAT
-```
+#### Arbitration
+Each proposal carries the current commander, `{ owner, priority, rank }` (`CommandContext`): the agent's handlers run as `{ owner: 'agent', priority: settings.commandPriority ?? 0, rank: -1 }`, each agent system as `{ owner: name, priority: commandPriority, rank: <index in agent.use() order> }`, anything else as `{ owner: 'unknown', priority: 0, rank: Infinity }`. Per unit tag, the highest priority wins, ties go to the lowest rank. The winner keeps all its commands for that tag in proposal order; every other owner's are dropped (`reason: 'outranked'`). A command repeating the unit's current order (same ability and target, not queued) is dropped (`reason: 'repeat'`). Tags whose only command is identical (ability, target, queue flag) are merged into one command. Commanders are tracked with `AsyncLocalStorage`; importing the package turns on Bluebird's `asyncHooks` process-wide so Bluebird callbacks keep theirs (about 0.1 ms per step).
 
-#### Batching
-`actions.queueAction(command | command[])` collects raw unit commands; the engine sends them in one request at the end of the step. A queued command that repeats a unit's current order (same ability and target, not queued) is dropped, like python-sc2's `prevent_double_actions`. Every other `actions.*` method sends immediately; batching is opt-in. `actions.flushQueuedActions()` sends early and `actions.clearQueuedActions()` discards the queue. `actions.unitTagsReceivedAction()` returns the tags that got a command (sent or queued) for the current observation. The agent setting `batchActions` routes the macro helpers through the queue.
+#### *`actions.as<T>(context: Partial<CommandContext>, fn: () => T) => T`*
+Runs `fn` with the current commander overridden by `context`. Everything `fn` proposes, including after `await`s, belongs to that commander.
 
-#### actions.sendAction(unitCommand: ActionRawUnitCommand) => Promise<SC2APIProtocol.ResponseAction>;
-#### actions.sendAction(unitCommand: ActionRawUnitCommand[]) => Promise<SC2APIProtocol.ResponseAction>;
-A lower level interface to send arbitrary actions. Given either a single `ActionRawUnitCommand`, or an array of them, sends the action request and returns the response.
+#### *`actions.queueAction(commands: ActionRawUnitCommand | ActionRawUnitCommand[], opts?: { onNotSent?: (tags: string[], result: CommandResult) => void }) => void`*
+Proposes raw unit commands under the current commander. Throws `ActionManagerError` for a command with empty or missing `unitTags`. `onNotSent` is called during the flush with the proposal's tags that were dropped or rejected, before the `commandResults` event is written.
 
-#### actions.sendQuery(query: SC2APIProtocol.RequestQuery) => Promise<SC2APIProtocol.ResponseQuery>;
+#### *`actions.flushQueuedActions() => Promise<SC2APIProtocol.ResponseAction | undefined>`*
+Arbitrates and sends the proposals now (the engine calls it after all agent systems). Writes a `commandResults` event with a `CommandResult` per (proposal, outcome) when there were proposals, and resolves with SC2's response, or `undefined` when nothing was sent. Rejects when the request fails, after reporting every proposal in it as `rejected` with `error`. A result other than success is logged on `sc2:debug:actionManager`.
+
+#### *`actions.clearQueuedActions() => void`*
+Discards the proposals and forgets the units committed this observation.
+
+#### *`actions.unitTagsReceivedAction() => Set<string>`*
+The tags proposed or sent for the current observation, by any commander.
+
+#### *`actions.sendAction(unitCommand: ActionRawUnitCommand) => Promise<SC2APIProtocol.ResponseAction>`*
+#### *`actions.sendAction(unitCommand: ActionRawUnitCommand[]) => Promise<SC2APIProtocol.ResponseAction>`*
+Sends raw unit commands immediately and resolves with the response. Their tags count as committed under the current commander for the rest of the observation: a proposal from another commander is dropped unless it strictly outranks the sender; the sender's own follow-ups still go out. Not reported in `commandResults`.
+
+#### *`actions.sendQuery(query: SC2APIProtocol.RequestQuery) => Promise<SC2APIProtocol.ResponseQuery>`*
 A lower level interface to send arbitrary queries (such as `pathing`, `abilities`, or `placements`). Given a `RequestQuery`, returns a `ResponseQuery`.
 
 ### debug

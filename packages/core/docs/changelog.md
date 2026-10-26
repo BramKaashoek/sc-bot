@@ -2,11 +2,50 @@
 All notable changes to this project will be documented here.
 Please note, this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+- [Unreleased](#unreleased)
 - [v0.8.2 - 2019-01-11](#v082---2019-01-11)
 - [v0.8.1 - 2019-01-08](#v081---2019-01-08)
 - [v0.8.0 - 2019-01-01](#v080---2019-01-01)
 - [v0.7.1 - 2018-12-17](#v071---2018-12-17)
 - [v0.7.0 - 2018-12-14](#v070---2018-12-14)
+
+## Unreleased
+
+### core-arch: resource registry and command executor
+
+#### Added
+- Resource registry: `world.resources.register({ name, create, reset? })` adds a resource (from a system's `setup`), typed by augmenting `ResourceContainer` in `@sc-bot/core/types`; `world.resources.reset(world)` resets every registered resource in place when a new game starts on the same engine.
+- Command arbitration: every unit command is a proposal from a commander (the agent's handlers, or a system by name). At the end of the step the engine keeps one commander per unit (highest priority, then agent handlers, then `agent.use()` order), drops repeats of a unit's current order, merges identical commands and sends one request.
+- `commandPriority` as an agent setting and a system option (default `0`).
+- `actions.as(context, fn)` runs `fn` under another commander.
+- `commandResults` event and `onCommandResults(world, results: CommandResult[])` handler: the step after each flush, per proposal and outcome, `won`, `dropped` (`outranked` with the winner in `by`, or `repeat`) or `rejected` (SC2's `result`, or the request's `error`).
+- `queueAction(commands, { onNotSent })`: called during the flush for tags that weren't sent.
+- `CommandResult` and `CommandContext` types.
+
+#### Changed
+- `actions.attack`, `attackMove`, `move`, `smart`, `patrol`, `gather`, `mine`, `build`, `buildGasMine`, `train`, `upgrade`, `warpIn`, `do`, `stop`, `holdPosition`, `repair`, `returnResource` and the `Unit` shortcuts (`useAbility`, `inject`, `blink`, `burrow`, `toggle`) resolve with `void` once the command is proposed, instead of with `ResponseAction` after SC2 accepted it. They no longer reject when SC2 refuses the command; that is reported through `onCommandResults` and logged on `sc2:debug:actionManager`. Precondition errors (`BuildError`, `TrainError`, `GatherError`, `ActionManagerError`) still reject.
+- Commands go out after all systems have run instead of during the step. A command proposed after that flush (from a promise left dangling) goes out with the next step's.
+- Conflicting commands for one unit from different systems used to go to whichever request reached SC2 last; now one commander wins per unit.
+- Re-issuing a unit's current order (same ability and target, not queued) is never sent; before, only queued commands were checked.
+- An empty unit list is a no-op on every high-level command method (`attack`, `attackMove`, `move`, `smart`, `patrol`, `mine`, `do`, `stop`, `holdPosition`, `repair`, `returnResource`): it resolves without proposing anything. `do` used to throw, and `attack`/`attackMove` sent an empty command. Only the raw `actions.queueAction` throws `ActionManagerError` for a command without units.
+- A build that is dropped or that SC2 rejects removes the worker's `command` label during the flush, so the worker isn't marked stuck later. Nothing is refunded; the next observation restores the money.
+- The macro helpers (`train`, `research`, `distributeWorkers`, `expandNow`) always propose through the queue under the calling commander.
+- `actions.sendAction` still sends immediately; the units it commands count as taken for the rest of the observation: a proposal from another commander is dropped unless it strictly outranks the sender; the sender's own follow-ups still go out. `swapBuildings`, `toggleAutocast` and `chatSend` still send immediately.
+- A new game on the same engine resets every registered resource (including step times and proposed commands) through the registry.
+- Importing the package turns on Bluebird's `asyncHooks` for the whole process, so commanders survive Bluebird callbacks. It costs about 0.1 ms per step.
+
+#### Removed
+- The `batchActions` agent setting. Batching is the only mode.
+
+#### Migrating bot/
+- Remove `batchActions` from the agent settings if it is set.
+- Don't read the value of an `actions.*` command method or `unit.useAbility`; it is now `undefined`. To react to a command SC2 refused, add an `onCommandResults` handler (it sees `won`, `dropped` and `rejected` per command, the step after).
+- Same-unit conflicts between the bot's systems now resolve by `use()` order (build, economy, combat, military, log) unless a system sets `commandPriority`. Decide which system should win workers (combat pulling workers against economy, for example) and set `commandPriority` there.
+- Code that repeats the same order every step to "refresh" it now sends nothing after the first time; that is intended.
+- Code that relied on a command reaching SC2 mid-step (realtime) now sees it go out after all systems finish.
+- A command issued after the end-of-step flush, from a promise the handler didn't await, goes out next step.
+- A system mounted mid-game with `agent.use()` runs its `setup` and `onGameStart` right away inside the caller, so commands from those are attributed to the caller's commander. From the next step on, it proposes under its own name, ranked after the systems mounted before it.
+- To add a bot resource, augment `ResourceContainer` in `@sc-bot/core/types` and register its definition from a system's `setup`.
 
 ## v0.8.2 - 2019-01-11
 ## Highlights:

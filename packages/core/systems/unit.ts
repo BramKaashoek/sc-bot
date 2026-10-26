@@ -5,12 +5,15 @@ import type { Unit, UnitSystem, World } from '../types.ts';
 
 // python's on_unit_created fires once per tag per game, even if the unit later leaves the observation (e.g. loaded)
 const seenUnitTagsByWorld = new WeakMap<World, Set<string>>();
+// forgotten ghosts leave the units store, so a re-seen enemy would otherwise look new
+const seenEnemyTagsByWorld = new WeakMap<World, Set<string>>();
 
 const unitSystem: UnitSystem = {
     name: 'UnitSystem',
     type: 'engine',
     async onGameStart(world: World) {
         seenUnitTagsByWorld.set(world, new Set());
+        seenEnemyTagsByWorld.set(world, new Set());
         return this.onStep(world);
     },
     // @TODO: Figure out if units should be compared to the internal data cache, OR to the 'last frame' recieved
@@ -60,6 +63,8 @@ const unitSystem: UnitSystem = {
         const seenTags = new Set<string>();
         const seenUnitTags = seenUnitTagsByWorld.get(world) ?? new Set<string>();
         seenUnitTagsByWorld.set(world, seenUnitTags);
+        const seenEnemyTags = seenEnemyTagsByWorld.get(world) ?? new Set<string>();
+        seenEnemyTagsByWorld.set(world, seenEnemyTags);
 
         const writePythonStyleEvents = (
             incData: SC2APIProtocol.Unit,
@@ -236,11 +241,14 @@ const unitSystem: UnitSystem = {
                         });
                     }
                 } else if (unitData.alliance === Alliance.ENEMY) {
-                    events.write({
-                        name: 'enemyFirstSeen',
-                        data: newUnit,
-                        type: 'all',
-                    });
+                    if (!seenEnemyTags.has(unitData.tag!)) {
+                        seenEnemyTags.add(unitData.tag!);
+                        events.write({
+                            name: 'enemyFirstSeen',
+                            data: newUnit,
+                            type: 'all',
+                        });
+                    }
 
                     events.write({
                         name: 'enemyUnitEnteredVision',

@@ -4,8 +4,14 @@ import type { ChildProcess } from 'node:child_process';
 import type { BuildOrderStatus, BuildResult } from './constants/enums.ts';
 import type { Units } from './resources/units-collection.ts';
 import type { Ramp } from './utils/map/ramp.ts';
+import type { CommandContext } from './resources/command-context.ts';
+import type * as UnitRoles from './constants/unit-role.ts';
+import type { EngagementResult } from './constants/engagement-result.ts';
+import type { FightOptions, FightSimulation } from './utils/combat/combat-sim.ts';
 
-export type { BuildOrderStatus, BuildResult };
+export type { BuildOrderStatus, BuildResult, CommandContext, EngagementResult, FightOptions, FightSimulation };
+
+export type UnitRole = (typeof UnitRoles)[keyof typeof UnitRoles];
 
 declare global {
     namespace SC2APIProtocol {
@@ -41,6 +47,7 @@ export type SystemType = 'engine' | 'agent' | 'build' | 'unit';
 export type SystemOptions = {
     state?: any;
     stepIncrement?: number;
+    commandPriority?: number;
 };
 
 export interface SystemObject {
@@ -120,6 +127,7 @@ export interface BuilderSystem extends System {
 export interface SystemWrapper<T> {
     (world: World): Promise<any>;
     setup(world: World, isLateSetup?: boolean): void;
+    commandPriority: number;
     _system: System;
 }
 
@@ -171,7 +179,7 @@ export interface Agent extends PlayerData {
 }
 
 export type AgentSettings = {
-    batchActions?: boolean;
+    commandPriority?: number;
     skipAvailableAbilitiesQuery?: boolean;
 };
 
@@ -226,10 +234,10 @@ export interface Unit extends SC2APIProtocol.Unit {
     canMove: () => boolean;
     canShootUp: () => boolean;
     update: (unit: SC2APIProtocol.Unit) => void;
-    inject: (target?: Unit) => Promise<SC2APIProtocol.ResponseAction | undefined>;
-    blink: (target: Point2D, opts?: AbilityOptions) => Promise<SC2APIProtocol.ResponseAction | undefined>;
-    toggle: (options?: AbilityOptions) => Promise<SC2APIProtocol.ResponseAction | undefined>;
-    burrow: (options?: AbilityOptions) => Promise<SC2APIProtocol.ResponseAction | undefined>;
+    inject: (target?: Unit) => Promise<void>;
+    blink: (target: Point2D, opts?: AbilityOptions) => Promise<void>;
+    toggle: (options?: AbilityOptions) => Promise<void>;
+    burrow: (options?: AbilityOptions) => Promise<void>;
     addLabel: (name: string, value: any) => Map<string, any>;
     hasLabel: (name: string) => boolean;
     getLife: () => number;
@@ -278,7 +286,7 @@ export interface Unit extends SC2APIProtocol.Unit {
     isFlyingOrGravitoned: () => boolean;
     isMemory: () => boolean;
     age: () => number;
-    useAbility: (abilityId: AbilityId, options?: AbilityOptions) => Promise<SC2APIProtocol.ResponseAction>;
+    useAbility: (abilityId: AbilityId, options?: AbilityOptions) => Promise<void>;
 }
 
 export interface UnitResource {
@@ -318,6 +326,10 @@ export interface UnitResource {
     inProgress: (unitTypeId: number) => Units;
     withLabel: (label: string) => Units;
     withCurrentOrders: (abilityId: number) => Units;
+    getArmyValue(
+        alliance?: SC2APIProtocol.Alliance.Self | SC2APIProtocol.Alliance.Enemy,
+        opts?: { includePending?: boolean; includeGhosts?: boolean },
+    ): number;
 }
 
 export interface UnitFilter extends Partial<Unit> {}
@@ -455,42 +467,53 @@ export type WarpInOptions = {
     highground?: true;
 };
 
+export type CommandResult = {
+    owner: string;
+    command: SC2APIProtocol.ActionRawUnitCommand;
+    tags: string[];
+    outcome: 'won' | 'dropped' | 'rejected';
+    reason?: 'outranked' | 'repeat' | 'not-owner';
+    by?: string;
+    result?: SC2APIProtocol.ActionResult;
+    error?: string;
+};
+
 export interface ActionManager {
     _client: NodeSC2Proto.ProtoClient;
-    attack(units?: Unit[], unit?: Unit, queue?: boolean): Promise<SC2APIProtocol.ResponseAction>;
-    attackMove(u?: Unit[], p?: Point2D, queue?: boolean): Promise<SC2APIProtocol.ResponseAction>;
-    build(unitTypeId: number, target?: Unit, worker?: Unit): Promise<SC2APIProtocol.ResponseAction>;
-    build(unitTypeId: number, pos?: Point2D | null, worker?: Unit): Promise<SC2APIProtocol.ResponseAction>;
-    do(abilityId: number, tags: string, opts?: AbilityOptions): Promise<SC2APIProtocol.ResponseAction>;
-    do(abilityId: number, tags: string[], opts?: AbilityOptions): Promise<SC2APIProtocol.ResponseAction>;
-    buildGasMine: () => Promise<SC2APIProtocol.ResponseAction>;
-    gather: (unit: Unit, mineralField?: Unit, queue?: boolean) => Promise<SC2APIProtocol.ResponseAction>;
-    mine: (units: Unit[], target: Unit, queue?: boolean) => Promise<SC2APIProtocol.ResponseAction>;
-    move(units: Unit, target: Point2D, queue?: boolean): Promise<SC2APIProtocol.ResponseAction>;
-    move(units: Unit[], target: Point2D, queue?: boolean): Promise<SC2APIProtocol.ResponseAction>;
-    move(units: Unit, target: Unit, queue?: boolean): Promise<SC2APIProtocol.ResponseAction>;
-    move(units: Unit[], target: Unit, queue?: boolean): Promise<SC2APIProtocol.ResponseAction>;
-    patrol(
-        units: Unit | Unit[],
-        positions: [from: Point2D, to: Point2D] | Point2D,
-        queue?: boolean,
-    ): Promise<SC2APIProtocol.ResponseAction>;
-    train: (unitTypeId: number, unit?: Unit) => Promise<SC2APIProtocol.ResponseAction>;
-    upgrade: (upgradeId: number, tag?: Unit) => Promise<SC2APIProtocol.ResponseAction>;
-    smart(units: Unit[], target: Point2D, queue?: boolean): Promise<SC2APIProtocol.ResponseAction>;
-    smart(units: Unit[], target: Unit, queue?: boolean): Promise<SC2APIProtocol.ResponseAction>;
+    attack(units?: Unit[], unit?: Unit, queue?: boolean): Promise<void>;
+    attackMove(u?: Unit[], p?: Point2D, queue?: boolean): Promise<void>;
+    build(unitTypeId: number, target?: Unit, worker?: Unit): Promise<void>;
+    build(unitTypeId: number, pos?: Point2D | null, worker?: Unit): Promise<void>;
+    do(abilityId: number, tags: string, opts?: AbilityOptions): Promise<void>;
+    do(abilityId: number, tags: string[], opts?: AbilityOptions): Promise<void>;
+    buildGasMine: () => Promise<void>;
+    gather: (unit: Unit, mineralField?: Unit, queue?: boolean) => Promise<void>;
+    mine: (units: Unit[], target: Unit, queue?: boolean) => Promise<void>;
+    move(units: Unit, target: Point2D, queue?: boolean): Promise<void>;
+    move(units: Unit[], target: Point2D, queue?: boolean): Promise<void>;
+    move(units: Unit, target: Unit, queue?: boolean): Promise<void>;
+    move(units: Unit[], target: Unit, queue?: boolean): Promise<void>;
+    patrol(units: Unit | Unit[], positions: [from: Point2D, to: Point2D] | Point2D, queue?: boolean): Promise<void>;
+    train: (unitTypeId: number, unit?: Unit) => Promise<void>;
+    upgrade: (upgradeId: number, tag?: Unit) => Promise<void>;
+    smart(units: Unit[], target: Point2D, queue?: boolean): Promise<void>;
+    smart(units: Unit[], target: Unit, queue?: boolean): Promise<void>;
     swapBuildings(unitA: Unit, unitB: Unit): Promise<SC2APIProtocol.ResponseAction[]>;
-    warpIn(unitTypeId: number, opts: WarpInOptions): Promise<SC2APIProtocol.ResponseAction>;
+    warpIn(unitTypeId: number, opts: WarpInOptions): Promise<void>;
     canPlace: (unitTypeId: number, positions: Point2D[]) => Promise<Point2D | false>;
     findPlacement: (unitTypeId: number, near: Point2D, opts?: FindPlacementOptions) => Promise<Point2D | false>;
     sendAction(unitCommand: SC2APIProtocol.ActionRawUnitCommand): Promise<SC2APIProtocol.ResponseAction>;
     sendAction(unitCommand: SC2APIProtocol.ActionRawUnitCommand[]): Promise<SC2APIProtocol.ResponseAction>;
     sendQuery: (query: SC2APIProtocol.RequestQuery) => Promise<SC2APIProtocol.ResponseQuery>;
-    stop(units: Unit | Unit[], queue?: boolean): Promise<SC2APIProtocol.ResponseAction>;
-    holdPosition(units: Unit | Unit[], queue?: boolean): Promise<SC2APIProtocol.ResponseAction>;
-    repair(units: Unit | Unit[], target: Unit, queue?: boolean): Promise<SC2APIProtocol.ResponseAction>;
-    returnResource(units: Unit | Unit[], queue?: boolean): Promise<SC2APIProtocol.ResponseAction>;
-    queueAction(commands: SC2APIProtocol.ActionRawUnitCommand | SC2APIProtocol.ActionRawUnitCommand[]): void;
+    stop(units: Unit | Unit[], queue?: boolean): Promise<void>;
+    holdPosition(units: Unit | Unit[], queue?: boolean): Promise<void>;
+    repair(units: Unit | Unit[], target: Unit, queue?: boolean): Promise<void>;
+    returnResource(units: Unit | Unit[], queue?: boolean): Promise<void>;
+    queueAction(
+        commands: SC2APIProtocol.ActionRawUnitCommand | SC2APIProtocol.ActionRawUnitCommand[],
+        opts?: { onNotSent?: (tags: string[], result: CommandResult) => void },
+    ): void;
+    as<T>(context: Partial<CommandContext>, fn: () => T): T;
     unitTagsReceivedAction(): Set<string>;
     flushQueuedActions(): Promise<SC2APIProtocol.ResponseAction | undefined>;
     clearQueuedActions(): void;
@@ -687,6 +710,8 @@ export type EventConsumer = {
     onUpgradeComplete?(world: World, upgradeId: number, event?: SystemEvent): Promise<any>;
     onChatReceived?(world: World, chat: SC2APIProtocol.ChatReceived, event?: SystemEvent): Promise<any>;
     onUnitIdle?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
+    onCommandResults?(world: World, results: CommandResult[], event?: SystemEvent): Promise<any>;
+    onEnemyStrategyDetected?(world: World, data: EnemyStrategyDetected, event?: SystemEvent): Promise<any>;
     onUnitDamaged?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
     onUnitCreated?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
     onUnitFinished?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
@@ -779,23 +804,312 @@ export interface StorageBlueprint {
 
 export type DataStorage = StorageBlueprint & Map<string, any>;
 
-export type ResourceContainer = {
+export type MemorySettings = { expireGround: number; expireAir: number };
+
+export interface EnemyMemory {
+    getGhosts(): Units;
+    getSnapshots(): Units;
+    getEnemies(opts?: { includeGhosts?: boolean; structures?: boolean }): Units;
+    forget(tag: string): void;
+    configure(settings: Partial<MemorySettings>): void;
+}
+
+export type SpatialKind = 'enemy' | 'enemyGround' | 'enemyAir' | 'own' | 'ownGround' | 'ownAir';
+
+export interface SpatialIndex {
+    unitsInRange(from: Point2D | Unit, distance: number, kind: SpatialKind): Units;
+    anyInRange(from: Point2D | Unit, distance: number, kind: SpatialKind): boolean;
+    closest(from: Point2D | Unit, kind: SpatialKind, maxDistance?: number): Unit | undefined;
+}
+
+export type InfluenceLayer = 'ground' | 'air' | 'groundAvoidance' | 'airAvoidance';
+
+export interface InfluenceGrid {
+    readonly layer: InfluenceLayer;
+    readonly width: number;
+    readonly height: number;
+    readonly data: Float32Array;
+    get(point: Point2D): number;
+}
+
+export type InfluenceSettings = {
+    rangeBuffer: number;
+    effectsRangeBuffer: number;
+    costMultiplier: number;
+    effects: Partial<Record<number, { cost: number; range: number }>>;
+};
+
+export interface InfluenceResource {
+    getGrid(layer: InfluenceLayer): InfluenceGrid;
+    addCost(layers: InfluenceLayer | InfluenceLayer[], center: Point2D, radius: number, weight: number): void;
+    configure(settings: Partial<InfluenceSettings>): void;
+    drawDebug(layer: InfluenceLayer, opts?: { threshold?: number }): void;
+}
+
+export type PathOptions = { layer?: InfluenceLayer | InfluenceGrid; sensitivity?: number; maxExpanded?: number };
+
+export interface PathingResource {
+    findPath(start: Point2D, goal: Point2D, opts?: PathOptions): Point2D[];
+    nextPoint(
+        start: Point2D,
+        goal: Point2D,
+        opts?: PathOptions & { senseDanger?: boolean; dangerDistance?: number; dangerThreshold?: number },
+    ): Point2D;
+    closestSafeSpot(
+        from: Point2D,
+        opts?: { layer?: InfluenceLayer | InfluenceGrid; radius?: number },
+    ): Point2D | undefined;
+    isPositionSafe(point: Point2D, opts?: { layer?: InfluenceLayer | InfluenceGrid; limit?: number }): boolean;
+}
+
+export type RoleSettings = {
+    defaultRole: (unit: Unit) => UnitRole | undefined;
+    exclusive: UnitRole[];
+};
+
+export interface RolesResource {
+    assign(units: Unit | Unit[] | string | string[], role: UnitRole): void;
+    clear(units: Unit | Unit[] | string | string[]): void;
+    switchRole(from: UnitRole, to: UnitRole): void;
+    get(roles: UnitRole | UnitRole[], opts?: { types?: number | number[]; excludeTypes?: number | number[] }): Units;
+    roleOf(unit: Unit | string): UnitRole | undefined;
+    getTags(role: UnitRole): ReadonlySet<string>;
+    as<T>(role: UnitRole, fn: () => T, opts?: { priority?: number }): T;
+    mayCommand(owner: string, tag: string): boolean;
+    configure(settings: Partial<RoleSettings>): void;
+}
+
+export type Squad = {
+    id: string;
+    role: UnitRole;
+    units: Units;
+    tags: ReadonlySet<string>;
+    position: Point2D;
+    isMain: boolean;
+};
+
+export interface SquadsResource {
+    getSquads(role: UnitRole, opts?: { radius?: number; types?: number | number[] }): Squad[];
+    getMainSquad(role: UnitRole, opts?: { radius?: number; types?: number | number[] }): Squad | undefined;
+    getMainSquadPosition(role: UnitRole, opts?: { types?: number | number[] }): Point2D;
+}
+
+export type IntelFlag =
+    | 'workerRush'
+    | 'lingRush'
+    | 'roachRush'
+    | 'ravagerRush'
+    | 'marineRush'
+    | 'marauderRush'
+    | 'fourGate'
+    | 'proxyZealot'
+    | 'proxy'
+    | 'reaper'
+    | 'expanded'
+    | 'baseOutsideNatural'
+    | 'greedy'
+    | 'rushed';
+
+export type EnemyStrategyDetected = { flag: IntelFlag; gameLoop: number };
+
+export type BaseThreat = { townhall: Unit; ground: Units; air: Units; groundSupply: number; airSupply: number };
+
+export type IntelSettings = {
+    groundNearBase: number;
+    airNearBase: number;
+    groundLeavingBase: number;
+    airLeavingBase: number;
+    greedyTwoBaseBefore: number;
+    greedyThreeHatchBefore: number;
+};
+
+export interface IntelResource {
+    getBaseThreats(): BaseThreat[];
+    getMainThreat(kind: 'ground' | 'air'): BaseThreat | undefined;
+    has(flag: IntelFlag): boolean;
+    detectedAt(flag: IntelFlag): number | undefined;
+    getProxies(): Units;
+    configure(settings: Partial<IntelSettings>): void;
+}
+
+export type BuildingSize = '2x2' | '3x3' | '5x5';
+
+export type PlacementFlag =
+    | 'wall'
+    | 'reaperWall'
+    | 'bunker'
+    | 'supplyDepot'
+    | 'production'
+    | 'upgradeStructure'
+    | 'missileTurret'
+    | 'sensorTower'
+    | 'staticDefence'
+    | 'productionPylon'
+    | 'optimalPylon'
+    | 'custom';
+
+export type PlacementState = 'available' | 'reserved' | 'taken';
+
+export type Placement = {
+    readonly pos: Point2D;
+    readonly size: BuildingSize;
+    readonly base: Point2D;
+    readonly flags: ReadonlySet<PlacementFlag>;
+    readonly state: PlacementState;
+    readonly tag?: string;
+    readonly reservedAt?: number;
+};
+
+export type PlacementRequest = {
+    base?: Point2D;
+    closestTo?: Point2D;
+    flags?: PlacementFlag[];
+    findAlternative?: boolean;
+    reserve?: boolean;
+    powered?: boolean;
+    pylonBuildProgress?: number;
+};
+
+export type UserPlacement = { pos: Point2D; size?: BuildingSize; unitType?: number; flags?: PlacementFlag[] };
+
+export type PlacementSettings = { reservationTimeout: number };
+
+export interface PlacementResource {
+    request(unitType: number, opts?: PlacementRequest): Point2D | undefined;
+    reserve(pos: Point2D): boolean;
+    release(pos: Point2D): void;
+    canPlace(unitType: number, pos: Point2D, opts?: { includeAddon?: boolean }): boolean;
+    getPlacements(filter?: {
+        base?: Point2D;
+        size?: BuildingSize;
+        state?: PlacementState;
+        flag?: PlacementFlag;
+    }): Placement[];
+    add(placements: UserPlacement[]): void;
+    configure(settings: Partial<PlacementSettings>): void;
+    drawDebug(): void;
+}
+
+export type TrackedBuildStatus = 'moving' | 'ordered' | 'constructing' | 'done' | 'failed';
+
+export type TrackedBuild = {
+    readonly id: number;
+    readonly unitType: number;
+    readonly target: Point2D;
+    readonly geyserTag?: string;
+    readonly workerTag?: string;
+    readonly status: TrackedBuildStatus;
+    readonly requestedAt: number;
+    readonly attempts: number;
+    readonly structureTag?: string;
+    readonly failure?: 'timeout' | 'cancelled' | 'noWorker' | 'noPlacement' | 'blocked';
+};
+
+export type BuildOptions = {
+    at?: Point2D | Unit;
+    placement?: PlacementRequest;
+    worker?: Unit;
+    earmark?: string;
+};
+
+export type BuildingSettings = {
+    priority: number;
+    timeout: number;
+    maxAttempts: number;
+    cancelLowHp: 'tracked' | 'all' | 'off';
+};
+
+export interface BuildingTracker {
+    build(unitType: number, opts?: BuildOptions): TrackedBuild | undefined;
+    buildGas(opts?: { geyser?: Unit; max?: number }): TrackedBuild | undefined;
+    cancel(target: Unit | TrackedBuild): void;
+    pending(unitType?: number): number;
+    getTracked(): readonly TrackedBuild[];
+    configure(settings: Partial<BuildingSettings>): void;
+}
+
+export type MiningSettings = {
+    enabled: boolean;
+    priority: number;
+    workersPerGas: number;
+    speedMining: boolean;
+    townhallDistanceFactor: number;
+    keepSafe: boolean;
+    fleeAtHealth: number;
+    weightSafetyLimit: number;
+    selfDefence: boolean;
+    longDistanceMine: boolean;
+};
+
+export type MiningAssignment = { kind: 'mineral' | 'gas'; resourceTag: string; townhallTag: string };
+
+export interface MiningResource {
+    selectWorker(near: Point2D, opts?: { forceClose?: boolean; minHealth?: number; role?: UnitRole }): Unit | undefined;
+    release(worker: Unit | string): void;
+    getAssignment(worker: Unit | string): MiningAssignment | undefined;
+    getWorkersOn(resource: Unit | string): string[];
+    getMineralTarget(mineral: Unit | string): Point2D | undefined;
+    configure(settings: Partial<MiningSettings>): void;
+}
+
+export type FlightPlan = {
+    readonly tag: string;
+    readonly destination: Point2D;
+    readonly land: boolean;
+    readonly state: 'lifting' | 'flying' | 'landing';
+    readonly startedAt: number;
+};
+
+export interface FlyingStructures {
+    move(structure: Unit, destination: Point2D, opts?: { land?: boolean }): void;
+    swap(a: Unit, b: Unit): void;
+    addonSwap(structure: Unit | number, addon: number): boolean;
+    cancel(structure: Unit | string): void;
+    getPlans(): readonly FlightPlan[];
+    configure(settings: Partial<{ priority: number }>): void;
+}
+
+export interface ResourceContainer {
     actions: ActionManager;
     events: EventChannel;
     frame: FrameResource;
     map: MapResource;
     units: UnitResource;
+    memory: EnemyMemory;
+    spatial: SpatialIndex;
+    influence: InfluenceResource;
+    pathing: PathingResource;
+    roles: RolesResource;
+    squads: SquadsResource;
+    intel: IntelResource;
+    placement: PlacementResource;
+    buildings: BuildingTracker;
+    mining: MiningResource;
+    flying: FlyingStructures;
     debug?: Debugger;
     placer?: Placer;
+}
+
+export type ResourceDefinition<K extends keyof ResourceContainer = keyof ResourceContainer> = {
+    name: K;
+    create(world: World): NonNullable<ResourceContainer[K]>;
+    reset?(resource: NonNullable<ResourceContainer[K]>, world: World): void;
+    onStep?(resource: NonNullable<ResourceContainer[K]>, world: World): void;
 };
 
-export type Placer = { place?: (world: World, unitTypeId: number) => Point2D[] | undefined };
+export type Placer = {
+    place?: (world: World, unitTypeId: number) => Point2D[] | undefined;
+    placements?: (world: World) => UserPlacement[] | undefined;
+};
 
 export type IncomingResources = Partial<ResourceContainer>;
 
 export interface ResourceManager {
     set: (resource: IncomingResources) => void;
     get: () => Readonly<ResourceContainer>;
+    register<K extends keyof ResourceContainer>(definition: ResourceDefinition<K>): NonNullable<ResourceContainer[K]>;
+    reset(world: World): void;
+    step(world: World): void;
 }
 
 export interface World {

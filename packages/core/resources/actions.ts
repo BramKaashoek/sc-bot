@@ -8,7 +8,11 @@ import { GasMineRace } from '../constants/race-map.ts';
 import UnitAbilites from '../constants/unit-ability-map.ts';
 import createClient from '../engine/create-client.ts';
 import { ActionManagerError, BuildError, TrainError, GatherError } from '../engine/errors.ts';
-import type { AbilityOptions, ActionManager, Point2D, Unit, WarpInOptions, World } from '../types.ts';
+import { arbitrate } from './command-arbiter.ts';
+import { currentCommander, runAsCommander } from './command-context.ts';
+import type { Committed, Proposal } from './command-arbiter.ts';
+import type { CommandContext } from './command-context.ts';
+import type { AbilityOptions, ActionManager, CommandResult, Point2D, Unit, WarpInOptions, World } from '../types.ts';
 
 const { Alliance, Race, AbilityDataTarget } = enums;
 const debugActionManager = createDebug('sc2:debug:actionManager');
@@ -35,6 +39,10 @@ function shuffled<T>(arr: T[]): T[] {
     return copy;
 }
 
+const SUCCESS = 1 as SC2APIProtocol.ActionResult;
+
+type ExecutorProposal = Proposal & { onNotSent?: (tags: string[], result: CommandResult) => void };
+
 const CHAT_BROADCAST = 1 as SC2APIProtocol.ActionChat_Channel;
 const CHAT_TEAM = 2 as SC2APIProtocol.ActionChat_Channel;
 
@@ -42,26 +50,36 @@ const tagsOf = (units: Unit | Unit[]): string[] => (Array.isArray(units) ? units
 
 function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): ActionManager {
     const protoClient = client || createClient();
-    let queuedCommands: SC2APIProtocol.ActionRawUnitCommand[] = [];
-    let ordered: { gameLoop: number; observation: unknown; tags: Set<string> } = {
+    let proposals: ExecutorProposal[] = [];
+    let seq = 0;
+    let ordered: { gameLoop: number; observation: unknown; tags: Set<string>; committed: Committed } = {
         gameLoop: -1,
         observation: undefined,
         tags: new Set(),
+        committed: new Map(),
     };
 
-    const orderedThisObservation = () => {
+    const thisObservation = () => {
         const { frame } = world.resources.get();
         const gameLoop = frame.getGameLoop();
         const observation = frame._observation;
         if (ordered.gameLoop !== gameLoop || ordered.observation !== observation)
-            ordered = { gameLoop, observation, tags: new Set() };
-        return ordered.tags;
+            ordered = { gameLoop, observation, tags: new Set(), committed: new Map() };
+        return ordered;
     };
 
     const markOrdered = (commands: SC2APIProtocol.ActionRawUnitCommand[]) => {
-        const tags = orderedThisObservation();
+        const { tags } = thisObservation();
         commands.forEach((command) => (command.unitTags ?? []).forEach((tag) => tags.add(tag)));
     };
+
+    const commit = (tags: string[], commander: CommandContext) => {
+        const { committed } = thisObservation();
+        tags.forEach((tag) => committed.set(tag, commander));
+    };
+
+    const send = (commands: SC2APIProtocol.ActionRawUnitCommand[]) =>
+        protoClient.action({ actions: commands.map((unitCommand) => ({ actionRaw: { unitCommand } })) });
 
     const repeatsCurrentOrder = (command: SC2APIProtocol.ActionRawUnitCommand, tag: string): boolean => {
         if (command.queueCommand) return false;
@@ -85,9 +103,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
             const tags = (Array.isArray(ts) ? ts : [ts]).map((entry) =>
                 typeof entry === 'string' ? entry : entry.tag!,
             );
-            if (tags.length === 0) {
-                throw new ActionManagerError('do needs at least one unit', { data: { abilityId } });
-            }
+            if (tags.length === 0) return;
 
             const doAction: SC2APIProtocol.ActionRawUnitCommand = {
                 abilityId,
@@ -102,16 +118,11 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 doAction.targetWorldSpacePos = target;
             }
 
-            return this.sendAction(doAction).then(async (res) => {
-                if (res.result![0] !== 1) {
-                    throw new Error(`Could not perform ability, result ${res.result![0]}`);
-                }
-
-                return res;
-            });
+            this.queueAction(doAction);
         },
         async smart(us: Unit[], posOrUnit: Point2D | Unit, queue = false) {
             const units = Array.isArray(us) ? us : [us];
+            if (units.length === 0) return;
 
             const smartTo: SC2APIProtocol.ActionRawUnitCommand = {
                 abilityId: Ability.SMART,
@@ -125,16 +136,11 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 smartTo.targetWorldSpacePos = posOrUnit;
             }
 
-            return this.sendAction(smartTo).then(async (res) => {
-                if (res.result![0] !== 1) {
-                    throw new Error(`Could not SMART unit, result ${res.result![0]}`);
-                }
-
-                return res;
-            });
+            this.queueAction(smartTo);
         },
         async move(u: Unit | Unit[], target: Point2D | Unit, queue = false) {
             const units = Array.isArray(u) ? u : [u];
+            if (units.length === 0) return;
 
             const moveTo: SC2APIProtocol.ActionRawUnitCommand = {
                 abilityId: Ability.MOVE,
@@ -148,16 +154,11 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 moveTo.targetWorldSpacePos = target;
             }
 
-            return this.sendAction(moveTo).then((res) => {
-                if (res.result![0] !== 1) {
-                    throw new Error(`Could not move unit, result ${res.result![0]}`);
-                }
-
-                return res;
-            });
+            this.queueAction(moveTo);
         },
         async patrol(u: Unit | Unit[], p: [from: Point2D, to: Point2D] | Point2D, queue = false) {
             const units = Array.isArray(u) ? u : [u];
+            if (units.length === 0) return;
 
             const [from, to] = Array.isArray(p) ? p : [units[0].pos, p];
 
@@ -168,15 +169,8 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 queueCommand: true,
             };
 
-            return this.move(units, from, queue)
-                .then(() => this.sendAction(patrolToTo))
-                .then((res) => {
-                    if (res.result![0] !== 1) {
-                        throw new Error(`Could not patrol unit, result ${res.result![0]}`);
-                    }
-
-                    return res;
-                });
+            await this.move(units, from, queue);
+            this.queueAction(patrolToTo);
         },
         async attack(us?: Unit[], unit?: Unit, queue = false) {
             const units = (Array.isArray(us) ? us : [us]).filter((attacker) => attacker !== undefined);
@@ -185,8 +179,9 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                     data: { units: us, unit },
                 });
             }
+            if (units.length === 0) return;
 
-            return this.sendAction({
+            this.queueAction({
                 abilityId: Ability.ATTACK,
                 targetUnitTag: unit.tag,
                 unitTags: units.map((attacker) => attacker.tag!),
@@ -202,9 +197,10 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                     { data: { units: u, position: p } },
                 );
             }
+            if (units.length === 0) return;
 
             // SC2 remaps the generic ATTACK to each unit's own attack ability, as python-sc2 relies on
-            return this.sendAction({
+            this.queueAction({
                 abilityId: Ability.ATTACK,
                 targetWorldSpacePos: position,
                 unitTags: units.map((attacker) => attacker.tag!),
@@ -225,14 +221,25 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
             const unitAPos = unitA.pos as Point2D;
             const unitBPos = unitB.pos as Point2D;
 
-            await Promise.all([this.do(Ability.LIFT, unitA.tag!), this.do(Ability.LIFT, unitB.tag!)]);
+            const order = async (abilityId: number, unit: Unit, target?: Point2D) => {
+                const res = await this.sendAction({
+                    abilityId,
+                    unitTags: [unit.tag!],
+                    queueCommand: !!target,
+                    ...(target && { targetWorldSpacePos: target }),
+                });
+                if (res.result![0] !== 1) {
+                    throw new Error(`Could not perform ability, result ${res.result![0]}`);
+                }
+
+                return res;
+            };
+
+            await Promise.all([order(Ability.LIFT, unitA), order(Ability.LIFT, unitB)]);
             await Bluebird.delay(100);
-            await Promise.all([this.move([unitA], unitBPos, true), this.move([unitB], unitAPos, true)]);
+            await Promise.all([order(Ability.MOVE, unitA, unitBPos), order(Ability.MOVE, unitB, unitAPos)]);
             await Bluebird.delay(100);
-            return Promise.all([
-                this.do(Ability.LAND, unitA.tag!, { target: unitBPos, queue: true }),
-                this.do(Ability.LAND, unitB.tag!, { target: unitAPos, queue: true }),
-            ]);
+            return Promise.all([order(Ability.LAND, unitA, unitBPos), order(Ability.LAND, unitB, unitAPos)]);
         },
         async gather(unit: Unit, mineralField?: Unit, queue = true) {
             const { units } = world.resources.get();
@@ -276,16 +283,11 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 queueCommand: queue,
             };
 
-            return this.sendAction(sendToGather).then(async (res) => {
-                if (res.result![0] !== 1) {
-                    throw new Error(`Could not send to gather, result ${res.result![0]}`);
-                }
-
-                return res;
-            });
+            this.queueAction(sendToGather);
         },
         async mine(us: Unit[], target: Unit, queue = true) {
             const units = Array.isArray(us) ? us : [us];
+            if (units.length === 0) return;
 
             const sendToMine: SC2APIProtocol.ActionRawUnitCommand = {
                 abilityId: Ability.HARVEST_GATHER,
@@ -294,7 +296,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 queueCommand: queue,
             };
 
-            return this.sendAction(sendToMine);
+            this.queueAction(sendToMine);
         },
         canPlace: (async (unitTypeId: number, poses: Point2D[]) => {
             // limit to checking 10 placements because the client gets unhappy
@@ -468,20 +470,11 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 unitCommand.targetWorldSpacePos = pos;
             }
 
-            return this.sendAction(unitCommand).then(async (res) => {
-                // *do not delete any builder labels here* - it's not fully ack'd until next frame
-                if (res.result![0] !== 1) {
-                    debugActionManager(`failed request: ${JSON.stringify(unitCommand)}`);
-                    throw new Error(`Could not build, result ${res.result![0]}`);
-                }
+            this.queueAction(unitCommand, { onNotSent: () => builder.labels.delete('command') });
 
-                // @FIXME: is there any reason we should hold the loop on this? i feel like there might be...
-                if (unitTypeId === GasMineRace[world.agent.race!]) {
-                    await this.gather(builder);
-                }
-
-                return res;
-            });
+            if (unitTypeId === GasMineRace[world.agent.race!]) {
+                await this.gather(builder);
+            }
         },
         async buildGasMine() {
             const { map } = world.resources.get();
@@ -531,13 +524,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
 
             const unitCommand: SC2APIProtocol.ActionRawUnitCommand = { abilityId, unitTags: [trainer.tag!] };
 
-            return this.sendAction(unitCommand).then(async (res) => {
-                if (res.result![0] !== 1) {
-                    throw new Error(`Could not train, result ${res.result![0]}`);
-                }
-
-                return res;
-            });
+            this.queueAction(unitCommand);
         },
         async upgrade(upgradeId: number, upgradeFacility?: Unit) {
             const { units } = world.resources.get();
@@ -559,13 +546,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
             const { abilityId } = world.data.getUpgradeData(upgradeId);
             const unitCommand: SC2APIProtocol.ActionRawUnitCommand = { abilityId, unitTags: [upgrader.tag!] };
 
-            return this.sendAction(unitCommand).then(async (res) => {
-                if (res.result![0] !== 1) {
-                    throw new Error(`Could not start upgrade ${upgradeId}, result ${res.result![0]}`);
-                }
-
-                return res;
-            });
+            this.queueAction(unitCommand);
         },
         async warpIn(unitType: number, opts: WarpInOptions = {}) {
             const { units, map } = world.resources.get();
@@ -624,13 +605,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 targetWorldSpacePos: point,
             }));
 
-            return this.sendAction(commands).then(async (res) => {
-                if (res.result![0] !== 1) {
-                    throw new Error(`Could not warp in unit, result ${res.result![0]}`);
-                }
-
-                return res;
-            });
+            this.queueAction(commands);
         },
         async stop(units: Unit | Unit[], queue = false) {
             return this.do(Ability.STOP, tagsOf(units), { queue });
@@ -644,29 +619,110 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
         async returnResource(units: Unit | Unit[], queue = false) {
             return this.do(Ability.HARVEST_RETURN, tagsOf(units), { queue });
         },
-        queueAction(commands) {
+        queueAction(commands, { onNotSent } = {}) {
             const commandList = Array.isArray(commands) ? commands : [commands];
+            const untagged = commandList.find((command) => !command.unitTags?.length);
+            if (untagged) {
+                throw new ActionManagerError('a unit command needs at least one unit', { data: { command: untagged } });
+            }
+            const commander = currentCommander();
             markOrdered(commandList);
-            queuedCommands.push(...commandList);
+            commandList.forEach((command) => proposals.push({ ...commander, command, seq: seq++, onNotSent }));
+        },
+        as(context, fn) {
+            const overrides = Object.fromEntries(Object.entries(context).filter(([, value]) => value !== undefined));
+            return runAsCommander({ ...currentCommander(), ...overrides }, fn);
         },
         unitTagsReceivedAction() {
-            return orderedThisObservation();
+            return thisObservation().tags;
         },
         clearQueuedActions() {
-            queuedCommands = [];
+            proposals = [];
+            ordered = { ...ordered, committed: new Map() };
         },
         async flushQueuedActions() {
-            const pending = queuedCommands;
-            queuedCommands = [];
+            const pending = proposals;
+            proposals = [];
+            if (pending.length === 0) return undefined;
 
-            const commands = pending.flatMap((command) => {
-                const unitTags = command.unitTags!.filter((tag) => !repeatsCurrentOrder(command, tag));
-                if (unitTags.length === 0) return [];
-                return [unitTags.length === command.unitTags!.length ? command : { ...command, unitTags }];
+            const { committed } = thisObservation();
+            const { commands, dropped } = arbitrate(pending, committed, repeatsCurrentOrder);
+            const previousHolders = new Map<string, CommandContext | undefined>();
+            commands.forEach(({ covers }) =>
+                covers.forEach(({ proposal, tags }) => {
+                    tags.forEach((tag) => !previousHolders.has(tag) && previousHolders.set(tag, committed.get(tag)));
+                    commit(tags, proposal);
+                }),
+            );
+
+            const outcomes: { proposal: ExecutorProposal; result: CommandResult }[] = dropped.map(
+                ({ proposal, tags, reason, by }) => ({
+                    proposal,
+                    result: {
+                        owner: proposal.owner,
+                        command: proposal.command,
+                        tags,
+                        outcome: 'dropped',
+                        reason,
+                        ...(by && { by }),
+                    },
+                }),
+            );
+
+            let response: SC2APIProtocol.ResponseAction | undefined;
+            let failure: Error | undefined;
+            if (commands.length > 0) {
+                try {
+                    response = await send(commands.map(({ command }) => command));
+                } catch (err) {
+                    failure = err as Error;
+                }
+            }
+
+            commands.forEach(({ command, covers }, index) => {
+                const result = response?.result?.[index];
+                if (!failure && result !== SUCCESS) {
+                    debugActionManager(`command not accepted, result ${result}: ${JSON.stringify(command)}`);
+                }
+                covers.forEach(({ proposal, tags }) => {
+                    const base = { owner: proposal.owner, command: proposal.command, tags };
+                    if (failure || result !== SUCCESS) {
+                        tags.filter((tag) => committed.get(tag) === proposal).forEach((tag) => {
+                            const previous = previousHolders.get(tag);
+                            if (previous) committed.set(tag, previous);
+                            else committed.delete(tag);
+                        });
+                    }
+                    outcomes.push({
+                        proposal,
+                        result: failure
+                            ? { ...base, outcome: 'rejected', error: failure.message }
+                            : { ...base, outcome: result === SUCCESS ? 'won' : 'rejected', result },
+                    });
+                });
             });
-            if (commands.length === 0) return undefined;
 
-            return this.sendAction(commands);
+            const grouped = new Map<string, { proposal: ExecutorProposal; result: CommandResult }>();
+            outcomes.forEach(({ proposal, result }) => {
+                const { outcome, reason, by, result: code, error } = result;
+                const key = JSON.stringify([proposal.seq, outcome, reason, by, code, error]);
+                const group = grouped.get(key);
+                if (group) group.result.tags = [...group.result.tags, ...result.tags];
+                else grouped.set(key, { proposal, result });
+            });
+            const results = [...grouped.values()].sort((a, b) => a.proposal.seq - b.proposal.seq);
+
+            results.forEach(({ proposal, result }) => {
+                if (result.outcome !== 'won') proposal.onNotSent?.(result.tags, result);
+            });
+            if (results.length > 0) {
+                world.resources
+                    .get()
+                    .events.write({ name: 'commandResults', data: results.map(({ result }) => result) });
+            }
+
+            if (failure) throw failure;
+            return response;
         },
         async chatSend(message: string, teamOnly = false) {
             return protoClient.action({
@@ -686,19 +742,11 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
         },
         async sendAction(commands: SC2APIProtocol.ActionRawUnitCommand | SC2APIProtocol.ActionRawUnitCommand[]) {
             const actionList = Array.isArray(commands) ? commands : [commands];
+            const commander = currentCommander();
             markOrdered(actionList);
+            actionList.forEach((command) => commit(command.unitTags ?? [], commander));
 
-            const action = {
-                actions: actionList.map((command) => {
-                    return {
-                        actionRaw: {
-                            unitCommand: command,
-                        },
-                    };
-                }),
-            };
-
-            return protoClient.action(action);
+            return send(actionList);
         },
     };
 }
