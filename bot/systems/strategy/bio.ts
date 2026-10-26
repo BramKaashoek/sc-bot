@@ -26,5 +26,9 @@ export const bio: Strategy = {
         [MARAUDER]: 3,
         [MEDIVAC]: 1,
     },
-    upgrades: [STIMPACK, SHIELDWALL, TERRANINFANTRYWEAPONSLEVEL1],
+    upgrades: [
+        { upgrade: STIMPACK, minArmy: 3 },
+        { upgrade: SHIELDWALL, minArmy: 9 },
+        { upgrade: TERRANINFANTRYWEAPONSLEVEL1, minArmy: 15 },
+    ],
 };

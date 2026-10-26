@@ -1,20 +1,19 @@
 import type { ResourceManager } from '@sc-bot/core';
 import type { CombatState, DefenseTarget } from './types.ts';
+import { getUnitsCost } from './utils.ts';
+import { Alliance } from '@sc-bot/core/constants/enums';
 
 export const getDefenseTargets = (resources: ResourceManager): DefenseTarget[] => {
     const { units } = resources.get();
-    const enemies = units.getEnemyUnits();
+    const enemies = units.getEnemyUnits().filter((enemy) => enemy.isCombatUnit())
     const attackedBases = units
         .getBases()
         .map((base) => ({ base, enemies: enemies.closerThan(15, base.pos) }))
         .filter((e) => e.enemies.exists);
 
-    const defenseTargets = attackedBases.sort((a, b) => {
-        return (
-            b.enemies.filter((enemy) => enemy.isCombatUnit()).length -
-            a.enemies.filter((enemy) => enemy.isCombatUnit()).length
-        );
-    });
+    const defenseTargets = attackedBases.sort((a, b) =>
+        getUnitsCost(b.enemies) - getUnitsCost(a.enemies)
+    );
 
     return defenseTargets;
 };
@@ -31,6 +30,14 @@ export const defendTargets = async ({
     setState: (state: Partial<CombatState>) => void;
 }) => {
     const { units, actions, map } = resources.get();
+    const nextDefenses = { ...defenses }
+
+    for (const defense of Object.entries(defenses)) {
+        const [baseTag, { unitTags }] = defense
+        const alive = units.getAlive(Alliance.SELF).tagsIn(unitTags)
+        nextDefenses[baseTag] = { unitTags: [...alive.tags] }
+    }
+
 
     for (const target of defenseTargets) {
         // take worker rush into account

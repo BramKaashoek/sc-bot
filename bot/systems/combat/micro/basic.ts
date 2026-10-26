@@ -16,6 +16,7 @@ const hasStaleAttackOrder = (unit: Unit, target: Point2D) => {
     return unit.isAttacking() && !!orderPos && distance(orderPos as Point2D, target) > MOP_UP_RADIUS;
 };
 
+// TODO: avoid static defense range (airRange for flyers, groundRange otherwise) unless it is the target
 export class BasicMicro {
     async run(context: MicroContext, intent: MicroIntent) {
         if (intent === 'retreat') {
@@ -25,6 +26,7 @@ export class BasicMicro {
         }
     }
 
+    // TODO: move as a group: when not engaged, regroup at group.center if spread > ~6, else a-move to a waypoint ~8 cells along map.path(group.center, target), re-issuing only when it moved > ~3
     async attack({ resources, units, target }: MicroContext) {
         const { actions } = resources.get();
         const mopUpTargets = getMopUpTargets(resources, target);

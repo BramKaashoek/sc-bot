@@ -1,13 +1,15 @@
 import type { Point2D, ResourceManager, Units } from '@sc-bot/core';
-import { MARINE } from '@sc-bot/core/constants/unit-type';
+import { MARINE, MEDIVAC } from '@sc-bot/core/constants/unit-type';
 import { BasicMicro } from './basic.ts';
 import { MarineMicro } from './marine.ts';
+import { MedivacMicro } from './medivac.ts';
 import type { MicroIntent } from './types.ts';
 
 const basic = new BasicMicro();
 
 const micro: Record<number, BasicMicro> = {
     [MARINE]: new MarineMicro(),
+    [MEDIVAC]: new MedivacMicro(),
 };
 
 export const runMicro = async ({
