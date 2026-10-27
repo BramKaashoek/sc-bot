@@ -15,7 +15,7 @@ import { MineralField, VespeneGeyser, Townhall, getFootprint } from '../utils/ge
 import { Alliance } from '../constants/enums.ts';
 import Color from '../constants/color.ts';
 import { UnitType, UnitTypeId } from '../constants/index.ts';
-import { flyingStructureTypes, vespeneGeyserTypes, mineralFieldTypes } from '../constants/groups.ts';
+import { flyingStructureTypes, vespeneGeyserTypes, mineralFieldTypes, townhallTypes } from '../constants/groups.ts';
 import type { Expansion, Grid2D, MapSystem, Point2D, WPoint, World } from '../types.ts';
 
 const debugDrawPlacement = createDebug('sc2:DrawPlacementMap');
@@ -27,6 +27,12 @@ const silly = createDebug('sc2:silly:MapSystem');
 type PointCluster = Point2D[] & { centroid?: Point2D };
 
 const footprintData = (world: World) => ({ units: world.data.get('units'), abilities: world.data.get('abilities') });
+
+// SC2's pathing grid leaves a townhall's four corner cells pathable, and mining workers walk through them
+function pathingCells(unitType: number, pos: Point2D, cells: Point2D[]) {
+    if (!townhallTypes.includes(unitType)) return cells;
+    return cells.filter(({ x, y }) => Math.abs(x + 0.5 - pos.x) < 2 || Math.abs(y + 0.5 - pos.y) < 2);
+}
 
 const placementBlockers = (world: World) => {
     const { units } = world.resources.get();
@@ -475,10 +481,8 @@ const mapSystem: MapSystem = {
 
             const blockedCells = cellsInFootprint(createPoint2D(pos), footprint);
 
-            blockedCells.forEach((cell) => {
-                map.setPlaceable(cell, false);
-                map.setPathable(cell, false);
-            });
+            blockedCells.forEach((cell) => map.setPlaceable(cell, false));
+            pathingCells(newUnit.unitType!, pos, blockedCells).forEach((cell) => map.setPathable(cell, false));
         }
 
         if (newUnit.isTownhall()) {
@@ -506,10 +510,8 @@ const mapSystem: MapSystem = {
 
             const freedCells = cellsInFootprint(createPoint2D(pos), footprint);
 
-            freedCells.forEach((cell) => {
-                map.setPlaceable(cell, true);
-                map.setPathable(cell, true);
-            });
+            freedCells.forEach((cell) => map.setPlaceable(cell, true));
+            pathingCells(deadUnit.unitType!, pos, freedCells).forEach((cell) => map.setPathable(cell, true));
         }
     },
     async onUnitTypeChanged(world, { unit, previousType }) {
@@ -518,12 +520,12 @@ const mapSystem: MapSystem = {
         if (wasFlying === isFlying) return;
 
         const { map } = world.resources.get();
-        const footprint = getFootprint(isFlying ? previousType : unit.unitType!, footprintData(world))!;
+        const groundType = isFlying ? previousType : unit.unitType!;
+        const footprint = getFootprint(groundType, footprintData(world))!;
+        const cells = cellsInFootprint(createPoint2D(unit.pos), footprint);
 
-        cellsInFootprint(createPoint2D(unit.pos), footprint).forEach((cell) => {
-            map.setPlaceable(cell, isFlying);
-            map.setPathable(cell, isFlying);
-        });
+        cells.forEach((cell) => map.setPlaceable(cell, isFlying));
+        pathingCells(groundType, unit.pos, cells).forEach((cell) => map.setPathable(cell, isFlying));
     },
     async onEnemyFirstSeen({ resources }, scoutedUnit) {
         const { map } = resources.get();

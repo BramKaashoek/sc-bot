@@ -2,6 +2,7 @@ import { HARVEST_GATHER_MULE } from '../constants/ability.ts';
 import { GRAVITONBEAM } from '../constants/buff.ts';
 import { DisplayType } from '../constants/enums.ts';
 import { gatheringAbilities, returningAbilities } from '../constants/groups.ts';
+import { distanceSquared } from '../utils/geometry/point.ts';
 import type { Point2D, Unit } from '../types.ts';
 
 type Position = Unit | Point2D;
@@ -9,10 +10,7 @@ type UnitPredicate = (unit: Unit, index: number, array: Unit[]) => unknown;
 
 export const toPoint = (position: Position): Point2D => ('pos' in position ? position.pos : position);
 
-const squaredDistance = (unit: Unit, position: Position): number => {
-    const point = toPoint(position);
-    return (unit.pos.x - point.x) ** 2 + (unit.pos.y - point.y) ** 2;
-};
+const squaredDistance = (unit: Unit, position: Position): number => distanceSquared(unit.pos, toPoint(position));
 
 const usesAbility = (unit: Unit, abilityIds: number[]): boolean => {
     const [current] = unit.orders ?? [];
@@ -214,7 +212,7 @@ export class Units extends Array<Unit> {
     }
 
     randomGroupOf(count: number): Units {
-        if (count < 1) return new Units();
+        if (count < 1) return Units.from([]);
         if (count >= this.length) return this;
 
         const pool = [...this];
@@ -273,7 +271,7 @@ export class Units extends Array<Unit> {
     }
 
     furthestNUnits(position: Position, count: number): Units {
-        return this.sortedByDistanceTo(position).slice(-count);
+        return count <= 0 ? Units.from([]) : this.sortedByDistanceTo(position).slice(-count);
     }
 
     inDistanceOfGroup(other: Units, distance: number): Units {

@@ -1,14 +1,10 @@
+import { cellCentre } from '../utils/grid/cell.ts';
 import { createAStar } from '../utils/pathing/astar.ts';
 import type { InfluenceGrid, InfluenceLayer, Point2D, ResourceDefinition } from '../types.ts';
 
 const RETARGET_RADIUS = 3;
 
 type AStar = ReturnType<typeof createAStar>;
-
-const cellCentre = (index: number, width: number): Point2D => ({
-    x: (index % width) + 0.5,
-    y: Math.floor(index / width) + 0.5,
-});
 
 function clampedIndex(grid: InfluenceGrid, point: Point2D): number {
     const x = Math.min(grid.width - 1, Math.max(0, Math.floor(point.x)));

@@ -574,9 +574,7 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
                                   if (err instanceof NodeSC2Error) {
                                       debugSilly(`Agent handler error: on${pascalCase(event.name)}: `, err);
                                   } else {
-                                      console.warn(`Agent handler error: on${pascalCase(event.name)}: `);
-                                      debugEngine(err.message);
-                                      debugEngine(err.stack);
+                                      console.warn(`Agent handler error: on${pascalCase(event.name)}: `, err);
                                   }
                               })
                               .then(() => {

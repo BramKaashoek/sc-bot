@@ -206,6 +206,38 @@ describe('createUnit', () => {
         ).toEqual([true, false]);
     });
 
+    it('classifies rich gas mines and every mineral field variant as resource buildings', async () => {
+        const gasTypes = [
+            UnitType.REFINERY,
+            UnitType.ASSIMILATOR,
+            UnitType.EXTRACTOR,
+            UnitType.REFINERYRICH,
+            UnitType.ASSIMILATORRICH,
+            UnitType.EXTRACTORRICH,
+        ];
+        const mineralTypes = [
+            UnitType.MINERALFIELD,
+            UnitType.RICHMINERALFIELD,
+            UnitType.MINERALFIELD450,
+            UnitType.MINERALFIELDOPAQUE,
+            UnitType.MINERALFIELDOPAQUE900,
+        ];
+        const gases = gasTypes.map((unitType) => rawUnit({ unitType, alliance: Alliance.NEUTRAL }));
+        const minerals = mineralTypes.map((unitType) => rawUnit({ unitType, alliance: Alliance.NEUTRAL }));
+        const world = await worldWith({ units: [...gases, ...minerals] });
+
+        expect(gases.map((raw) => unitOf(world, raw).isGasMine())).toEqual(gasTypes.map(() => true));
+        expect(
+            world.resources
+                .get()
+                .units.getGasMines(Alliance.NEUTRAL)
+                .map((unit) => unit.tag)
+                .sort(),
+        ).toEqual(gases.map((raw) => raw.tag).sort());
+        expect(minerals.map((raw) => unitOf(world, raw).isMineralField())).toEqual(mineralTypes.map(() => true));
+        expect(minerals.map((raw) => unitOf(world, raw).isGasMine())).toEqual(mineralTypes.map(() => false));
+    });
+
     it('locates add-ons and reports harvester surplus', async () => {
         const terranStructure = [Attribute.ARMORED, Attribute.MECHANICAL, Attribute.STRUCTURE];
         const unitTypes = [

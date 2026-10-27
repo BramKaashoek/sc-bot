@@ -41,6 +41,7 @@ import {
     burrowedTypes,
     toggleAbilities,
 } from '../constants/groups.ts';
+import { distanceSquared } from '../utils/geometry/point.ts';
 import { isFlying, toPoint } from '../resources/units-collection.ts';
 import type { DamageVsTarget, Point2D, Point3D, Unit, World } from '../types.ts';
 
@@ -74,8 +75,6 @@ const weaponFor = (unit: Unit, targets: number[]): SC2APIProtocol.Weapon | undef
 
 const dpsOf = (weapon?: SC2APIProtocol.Weapon): number =>
     weapon ? (weapon.damage! * weapon.attacks!) / weapon.speed! : 0;
-
-const squaredDistance = (from: Point2D, to: Point2D): number => (from.x - to.x) ** 2 + (from.y - to.y) ** 2;
 
 const DISPLAY_TYPE_FIXED_BASE_BUILD = 82457;
 
@@ -400,19 +399,19 @@ function createUnit(unitData: SC2APIProtocol.Unit, world: World): Unit {
             } else {
                 return false;
             }
-            return squaredDistance(this.pos, target.pos) <= (this.radius + target.radius! + range + bonusDistance) ** 2;
+            return distanceSquared(this.pos, target.pos) <= (this.radius + target.radius! + range + bonusDistance) ** 2;
         },
         inAbilityCastRange(abilityId, target, bonusDistance = 0) {
             const { castRange = 0, target: targetType } = data.getAbilityData(abilityId) ?? {};
             if ('pos' in target) {
                 if (targetType !== AbilityDataTarget.UNIT && targetType !== AbilityDataTarget.POINTORUNIT) return false;
                 return (
-                    squaredDistance(this.pos, target.pos) <=
+                    distanceSquared(this.pos, target.pos) <=
                     (castRange + this.radius + target.radius! + bonusDistance) ** 2
                 );
             }
             if (targetType !== AbilityDataTarget.POINT && targetType !== AbilityDataTarget.POINTORUNIT) return false;
-            return Math.sqrt(squaredDistance(this.pos, target)) <= castRange + this.radius + bonusDistance;
+            return Math.sqrt(distanceSquared(this.pos, target)) <= castRange + this.radius + bonusDistance;
         },
         calculateDamageVsTarget(target, ignoreArmor = false, includeOverkillDamage = true) {
             const isBattlecruiser = this.unitType === UnitType.BATTLECRUISER;

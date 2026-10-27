@@ -51,7 +51,7 @@ describe('Units', () => {
         expect(tagsOf(group.inDistanceBetween(point, 1, 10))).toEqual([mid.tag]);
         expect(tagsOf(group.closestNUnits(point, 2))).toEqual([near.tag, mid.tag]);
         expect(tagsOf(group.furthestNUnits(point, 2))).toEqual([far.tag, farthest.tag]);
-        expect(tagsOf(group.furthestNUnits(point, 0))).toEqual([near.tag, mid.tag, far.tag, farthest.tag]);
+        expect(tagsOf(group.furthestNUnits(point, 0))).toEqual([]);
         expect(tagsOf(group.sortedByDistanceTo(point))).toEqual([near.tag, mid.tag, far.tag, farthest.tag]);
         expect(tagsOf(group.sortedByDistanceTo(originUnit, true))).toEqual([farthest.tag, far.tag, mid.tag, near.tag]);
         expect(tagsOf(group.inDistanceOfGroup(Units.from([originUnit]), 5.5))).toEqual([mid.tag, near.tag]);

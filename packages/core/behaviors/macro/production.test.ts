@@ -189,6 +189,13 @@ describe('productionController', () => {
         expect(build).not.toHaveBeenCalled();
     });
 
+    it('treats missing score as zero income instead of throwing', async () => {
+        const { world, build } = await setup([depot, busyRax('rax')]);
+        spyOn(world.resources.get().frame, 'getScore').mockReturnValue(null as never);
+        expect(await execute(world, { composition, base })).toBe(false);
+        expect(build).not.toHaveBeenCalled();
+    });
+
     it('returns false for Zerg', async () => {
         const { world, build } = await setup([busyRax('rax')], { race: Race.ZERG });
         expect(await execute(world, { composition, base })).toBe(false);

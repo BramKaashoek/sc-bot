@@ -60,37 +60,55 @@ describe('map system', () => {
     });
 
     it.each([
-        [UnitType.BARRACKS, UnitType.BARRACKSFLYING, 1],
-        [UnitType.COMMANDCENTER, UnitType.COMMANDCENTERFLYING, 2],
-    ])('frees the footprint of %p when it lifts and blocks it where it lands', async (landed, flying, half) => {
-        const fixture = toyFixture();
-        for (const unitType of [landed, flying]) {
-            fixture.data.units![unitType] ??= unitTypeData(unitType, { attributes: [Attribute.STRUCTURE] });
-        }
-        const world = await createTestWorld(fixture);
-        const { map } = world.resources.get();
-        const tag = '9001';
-        const base = fixture.observations[0].observation!.rawData!.units!;
-        const at = (gameLoop: number, unitType: number, y: number) =>
-            observation({ gameLoop, units: [...base, rawUnit({ tag, unitType, pos: { x: 14.5, y, z: 10 } })] });
-        const footprintState = (y: number) => {
-            const cells = [];
-            for (let dy = -half; dy <= half; dy++) {
-                for (let dx = -half; dx <= half; dx++) {
-                    const cell = { x: 14 + dx, y: Math.floor(y) + dy };
-                    cells.push(`${map.isPlaceable(cell)}/${map.isPathable(cell)}`);
-                }
+        [UnitType.BARRACKS, UnitType.BARRACKSFLYING, 1, 'false/false'],
+        [UnitType.COMMANDCENTER, UnitType.COMMANDCENTERFLYING, 2, 'false/true'],
+    ])(
+        'frees the footprint of %p when it lifts and blocks it where it lands, leaving townhall corners pathable',
+        async (landed, flying, half, landedCorner) => {
+            const fixture = toyFixture();
+            for (const unitType of [landed, flying]) {
+                fixture.data.units![unitType] ??= unitTypeData(unitType, { attributes: [Attribute.STRUCTURE] });
             }
-            return [...new Set(cells)];
-        };
+            const world = await createTestWorld(fixture);
+            const { map } = world.resources.get();
+            const tag = '9001';
+            const base = fixture.observations[0].observation!.rawData!.units!;
+            const depot = rawUnit({ tag: '9002', unitType: UnitType.SUPPLYDEPOT, pos: { x: 18, y: 7, z: 10 } });
+            const depotCells = () => [...new Set([17, 18].flatMap((x) => [6, 7].map((y) => map.isPathable({ x, y }))))];
+            const at = (gameLoop: number, unitType: number, y: number) =>
+                observation({
+                    gameLoop,
+                    units: [...base, depot, rawUnit({ tag, unitType, pos: { x: 14.5, y, z: 10 } })],
+                });
+            const footprintState = (y: number) => {
+                const body = new Set<string>();
+                const corners = new Set<string>();
+                for (let dy = -half; dy <= half; dy++) {
+                    for (let dx = -half; dx <= half; dx++) {
+                        const cell = { x: 14 + dx, y: Math.floor(y) + dy };
+                        const corner = Math.abs(dx) === half && Math.abs(dy) === half;
+                        (corner ? corners : body).add(`${map.isPlaceable(cell)}/${map.isPathable(cell)}`);
+                    }
+                }
+                return { body: [...body], corners: [...corners] };
+            };
+            const blocked = { body: ['false/false'], corners: [landedCorner] };
+            const free = { body: ['true/true'], corners: ['true/true'] };
 
-        await stepTo(world, at(8, landed, 10.5));
-        expect(footprintState(10.5)).toEqual(['false/false']);
-        await stepTo(world, at(16, flying, 10.5));
-        expect(footprintState(10.5)).toEqual(['true/true']);
-        await stepTo(world, at(24, flying, 4.5));
-        await stepTo(world, at(32, landed, 4.5));
-        expect(footprintState(4.5)).toEqual(['false/false']);
-        expect(footprintState(10.5)).toEqual(['true/true']);
-    });
+            await stepTo(world, at(8, landed, 10.5));
+            expect(footprintState(10.5)).toEqual(blocked);
+            await stepTo(world, at(16, flying, 10.5));
+            expect(footprintState(10.5)).toEqual(free);
+            await stepTo(world, at(24, flying, 4.5));
+            await stepTo(world, at(32, landed, 4.5));
+            expect(footprintState(4.5)).toEqual(blocked);
+            expect(footprintState(10.5)).toEqual(free);
+
+            const destroyed = observation({ gameLoop: 40, units: [...base, depot] });
+            destroyed.observation!.rawData!.event!.deadUnits = [tag];
+            await stepTo(world, destroyed);
+            expect(footprintState(4.5)).toEqual(free);
+            expect(depotCells()).toEqual([false]);
+        },
+    );
 });

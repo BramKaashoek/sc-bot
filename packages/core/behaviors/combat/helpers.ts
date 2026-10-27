@@ -1,6 +1,12 @@
 import { avgPoints, distance, distanceSquared, towards } from '../../utils/geometry/point.ts';
 import { isFlying } from '../../resources/units-collection.ts';
-import type { Point2D, Unit, World } from '../../types.ts';
+import type { InfluenceLayer, Point2D, Unit, World } from '../../types.ts';
+
+export type Target = Point2D | Unit;
+
+export const positionOf = (target: Target): Point2D => ('pos' in target ? target.pos : target);
+export const layerFor = (unit: Unit, layer?: InfluenceLayer): InfluenceLayer =>
+    layer ?? (isFlying(unit) ? 'air' : 'ground');
 
 export function attackReady(unit: Unit, target: Unit, stepLoops = 4): boolean {
     const canHit = unit.targetInRange(target, Number.POSITIVE_INFINITY);

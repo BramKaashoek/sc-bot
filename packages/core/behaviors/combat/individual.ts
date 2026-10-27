@@ -3,10 +3,17 @@ import { CloakState } from '../../constants/enums.ts';
 import * as UnitType from '../../constants/unit-type.ts';
 import { isFlying } from '../../resources/units-collection.ts';
 import { distance, distanceSquared } from '../../utils/geometry/point.ts';
-import { attackReady, center, inAttackRange, pickEnemyTarget, towards } from './helpers.ts';
+import {
+    attackReady,
+    center,
+    inAttackRange,
+    layerFor,
+    pickEnemyTarget,
+    positionOf,
+    towards,
+    type Target,
+} from './helpers.ts';
 import type { Behavior, InfluenceLayer, Point2D, Unit } from '../../types.ts';
-
-type Target = Point2D | Unit;
 
 type PathOptions = {
     layer?: InfluenceLayer;
@@ -15,9 +22,6 @@ type PathOptions = {
     dangerDistance?: number;
     dangerThreshold?: number;
 };
-
-const positionOf = (target: Target): Point2D => ('pos' in target ? target.pos : target);
-const layerFor = (unit: Unit, layer?: InfluenceLayer): InfluenceLayer => layer ?? (isFlying(unit) ? 'air' : 'ground');
 
 const KITE_IGNORED_TYPES = [
     UnitType.EGG,

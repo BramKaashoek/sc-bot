@@ -679,7 +679,7 @@ export interface FrameResource {
     getEffects: () => Array<SC2APIProtocol.Effect>;
     getMapState: () => SC2APIProtocol.MapState;
     getRender: () => SC2APIProtocol.ObservationRender;
-    getScore: () => SC2APIProtocol.Score;
+    getScore: () => SC2APIProtocol.Score | undefined;
     getFeatureLayer: () => SC2APIProtocol.ObservationFeatureLayer;
     timeInSeconds: () => number;
     _actionErrors: Array<SC2APIProtocol.ActionError>;

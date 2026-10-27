@@ -1,4 +1,4 @@
-import { distance } from '../utils/geometry/point.ts';
+import { avgPoints, distance } from '../utils/geometry/point.ts';
 import { Units } from './units-collection.ts';
 import type { Point2D, ResourceDefinition, Squad, SquadsResource, Unit, UnitRole } from '../types.ts';
 
@@ -14,11 +14,6 @@ type KeyState = {
 };
 
 const statesBySquads = new WeakMap<SquadsResource, Map<string, KeyState>>();
-
-const centroidOf = (units: Unit[]): Point2D => ({
-    x: units.reduce((sum, unit) => sum + unit.pos.x, 0) / units.length,
-    y: units.reduce((sum, unit) => sum + unit.pos.y, 0) / units.length,
-});
 
 const typeList = (types?: number | number[]) =>
     types === undefined ? [] : [...(Array.isArray(types) ? types : [types])].sort((a, b) => a - b);
@@ -70,7 +65,7 @@ function cluster(state: KeyState, role: UnitRole, members: Unit[], radius: numbe
     });
 
     state.squads.forEach((squad) => {
-        squad.centroid = centroidOf([...squad.tags].map((tag) => byTag.get(tag)!));
+        squad.centroid = avgPoints([...squad.tags].map((tag) => byTag.get(tag)!.pos));
     });
     return state.squads;
 }

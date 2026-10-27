@@ -1,4 +1,4 @@
-import { distance } from '../geometry/point.ts';
+import { avgPoints, distance } from '../geometry/point.ts';
 import { UnitType } from '../../constants/index.ts';
 import { mineralFieldTypes, vespeneGeyserTypes } from '../../constants/groups.ts';
 import type { PixelMap } from '../pixel-map.ts';
@@ -25,13 +25,6 @@ for (let x = -OFFSET_RANGE; x <= OFFSET_RANGE; x += 1) {
 const isGeyser = (resource: Unit) => vespeneGeyserTypes.includes(resource.unitType);
 const flooredCell = ({ x, y }: Point2D) => ({ x: Math.floor(x), y: Math.floor(y) });
 
-function clusterCenter(group: Unit[]): Point2D {
-    return {
-        x: group.reduce((sum, resource) => sum + resource.pos.x, 0) / group.length,
-        y: group.reduce((sum, resource) => sum + resource.pos.y, 0) / group.length,
-    };
-}
-
 function mergeResourceGroups(resources: Unit[], terrainHeight: PixelMap): Unit[][] {
     let groups = resources.map((resource) => [resource]);
     const sameLevel = (groupA: Unit[], groupB: Unit[]) =>
@@ -52,7 +45,8 @@ function mergeResourceGroups(resources: Unit[], terrainHeight: PixelMap): Unit[]
                 const groupA = groups[indexA];
                 const groupB = groups[indexB];
                 if (
-                    distance(clusterCenter(groupA), clusterCenter(groupB)) <= RESOURCE_SPREAD_THRESHOLD &&
+                    distance(avgPoints(groupA.map((r) => r.pos)), avgPoints(groupB.map((r) => r.pos))) <=
+                        RESOURCE_SPREAD_THRESHOLD &&
                     sameLevel(groupA, groupB)
                 ) {
                     groups = groups.filter((group) => group !== groupA && group !== groupB);

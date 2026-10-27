@@ -244,6 +244,11 @@ describe('createAgent', () => {
         expect(agent.opponent).toEqual({ id: 'ladder-42', race: Race.TERRAN });
     });
 
+    it('requests score in the default interface options unless the blueprint overrides them', () => {
+        expect(createAgent({}).interface).toEqual({ raw: true, score: true, rawCropToPlayableArea: true });
+        expect(createAgent({ interface: { raw: true } }).interface).toEqual({ raw: true });
+    });
+
     it('lets blueprint keys and assignment win over the added helpers and serializes before setup', () => {
         const calculateCost = () => ({ minerals: 1, vespene: 1 });
         const agent = createAgent({ supplyCap: 99, calculateCost } as never);

@@ -1,11 +1,17 @@
 import { ATTACK, MOVE } from '../../constants/ability.ts';
 import { isFlying } from '../../resources/units-collection.ts';
 import { distanceSquared } from '../../utils/geometry/point.ts';
-import { center, duplicateOrSimilarOrder, groupWeaponsOnCooldown, inAttackRange } from './helpers.ts';
+import {
+    center,
+    duplicateOrSimilarOrder,
+    groupWeaponsOnCooldown,
+    inAttackRange,
+    layerFor,
+    positionOf,
+    type Target,
+} from './helpers.ts';
 import { keepUnitSafe, shootTargetInRange } from './individual.ts';
 import type { Behavior, InfluenceLayer, Point2D, Unit, World } from '../../types.ts';
-
-type Target = Point2D | Unit;
 
 const DIRECTIONS: Point2D[] = [
     { x: 1, y: 0 },
@@ -17,9 +23,6 @@ const DIRECTIONS: Point2D[] = [
     { x: 1, y: -1 },
     { x: -1, y: 1 },
 ];
-
-const positionOf = (target: Target): Point2D => ('pos' in target ? target.pos : target);
-const layerFor = (unit: Unit, layer?: InfluenceLayer): InfluenceLayer => layer ?? (isFlying(unit) ? 'air' : 'ground');
 
 const byDistanceTo = (group: Unit[], point: Point2D, farthest: boolean) =>
     group.reduce((best, unit) => {

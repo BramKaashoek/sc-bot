@@ -61,8 +61,7 @@ describe.skipIf(!process.env.SC2PATH)('live speed mining', () => {
         Object.values(minerals).forEach((value) => expect(typeof value).toBe('number'));
     }, 600_000);
 
-    // backlog: speed mining slower than auto at step 1-2
-    it.failing('speed mining at step 2 mines more than mining disabled', () => {
+    it('speed mining at step 2 mines more than mining disabled', () => {
         expect(minerals.speed).toBeGreaterThan(minerals.auto!);
     });
 });

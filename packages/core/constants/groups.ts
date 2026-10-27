@@ -126,9 +126,19 @@ const mineralFieldTypes: UnitTypeGroup = [
     UnitType.RICHMINERALFIELD750,
     UnitType.BATTLESTATIONMINERALFIELD,
     UnitType.BATTLESTATIONMINERALFIELD750,
+    UnitType.MINERALFIELD450,
+    UnitType.MINERALFIELDOPAQUE,
+    UnitType.MINERALFIELDOPAQUE900,
 ];
 
-const gasMineTypes: UnitTypeGroup = [UnitType.EXTRACTOR, UnitType.ASSIMILATOR, UnitType.REFINERY];
+const gasMineTypes: UnitTypeGroup = [
+    UnitType.EXTRACTOR,
+    UnitType.ASSIMILATOR,
+    UnitType.REFINERY,
+    UnitType.EXTRACTORRICH,
+    UnitType.ASSIMILATORRICH,
+    UnitType.REFINERYRICH,
+];
 
 const techLabTypes: UnitTypeGroup = [
     UnitType.TECHLAB,

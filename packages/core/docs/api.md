@@ -51,8 +51,11 @@ options = {
     force: false, // on connect(), kill whatever already listens on `port` and launch a fresh SC2
     onGameEnd: undefined, // (results: PlayerResult[]) => void, called when a game ends
     client: undefined, // a proto client to use instead of a real connection (tests)
+    config: {}, // CoreConfigInput: gameStep, features and resources, merged over the config file
+    configFile: undefined, // string | false: path of the JSON config file; false reads none
 }
 ```
+`config` and `configFile` are resolved when the engine is created (see the readme's Config file section): defaults, then the file (`configFile`, else `SC_BOT_CONFIG`, else `sc-bot.config.json` in the working directory), then `config`, then the `STEP_COUNT` environment variable for `gameStep`. It throws `NodeSC2Error` for a named file that doesn't exist, for invalid JSON or JSON that isn't an object, for a `gameStep` or `STEP_COUNT` that isn't a positive integer and for a non-boolean feature; an unknown key under `features` logs a warning. The result is `world.config`.
 `engine.shutdown()` closes the connection to SC2.
 
 ### *`engine.connect() => Promise<SC2APIProtocol.ResponsePing>`*
@@ -246,11 +249,11 @@ agent.workerEnRouteToBuild(unitType) => number
 agent.getNextExpansion() => Promise<Point2D | null> // free expansion location closest to your start by SC2 ground distance
 agent.ownedExpansions() => Array<{ location: Point2D, townhall: Unit }>
 agent.expandNow(unitType?, maxDistance = 10, location?) => Promise<void> // builds a townhall at the next (or given) expansion
-agent.distributeWorkers(resourceRatio = 2) => Promise<void> // moves idle and surplus workers to undersaturated bases and gas
+agent.distributeWorkers(resourceRatio = 2, opts?: { workersPerGas?: number }) => Promise<void> // moves idle and surplus workers to undersaturated bases and gas
 agent.train(unitType, amount = 1, closestTo?, trainOnlyIdleBuildings = true) => Promise<number> // returns how many were started
 agent.research(upgradeId) => Promise<boolean>
 ```
-These follow python-sc2's `BotAI` helpers of the same names. `distributeWorkers` fills gas first when minerals/vespene is at least `resourceRatio` (or there is no vespene), otherwise minerals. `research` also checks the required building (eg. an armory for level 2 upgrades) and the previous level, and throws for an upgrade missing from the researched-from dictionary. They propose their commands through `actions.queueAction` under the calling commander, so they go out with the rest at the end of the step. They deduct what they spend from the agent's minerals and gas right away, and `train` adds the supply it uses to `foodUsed`, so later calls in the same step see what is left.
+These follow python-sc2's `BotAI` helpers of the same names. `distributeWorkers` fills gas first when minerals/vespene is at least `resourceRatio` (or there is no vespene), otherwise minerals. `workersPerGas = 3` caps the target per gas building at `min(ideal, workersPerGas)`; it must be an integer from 0 to 3 or the call rejects with a `RangeError`. Workers above the cap join the pool like any surplus and go to the deficit places the ratio favours, and `0` leaves gas empty. `research` also checks the required building (eg. an armory for level 2 upgrades) and the previous level, and throws for an upgrade missing from the researched-from dictionary. They propose their commands through `actions.queueAction` under the calling commander, so they go out with the rest at the end of the step. They deduct what they spend from the agent's minerals and gas right away, and `train` adds the supply it uses to `foodUsed`, so later calls in the same step see what is left.
 
 ### *`agent.use(system) => void`*
 `System`'s (explained below) are mounted to your agent before the game starts, via `agent.use()`. It accepts either a single system, or an array of systems.
@@ -331,10 +334,11 @@ EventConsumer is a trait that represents a sum of the available event handlers t
         onExpiredEffect?: (world: World, effect: Effect) => Promise<any>;
         onCommandResults?: (world: World, results: CommandResult[], event?: SystemEvent) => Promise<any>;
         onEnemyStrategyDetected?: (world: World, data: EnemyStrategyDetected, event?: SystemEvent) => Promise<any>;
+        onEnemyRaceDetected?: (world: World, race: SC2APIProtocol.Race, event?: SystemEvent) => Promise<any>;
 }
 ```
 
-`onBuildingConstructionStarted` fires when a new own structure appears unfinished, `onBuildingConstructionComplete` when one finishes or a new one appears already finished. The python-sc2 equivalents are `onStructureConstructionStarted` (also fires when an own unit turns into an unfinished structure while keeping its tag; on SC2 4.10 a drone's building gets a new tag instead, so for drones it fires alongside `onBuildingConstructionStarted` with the building, and the drone is reported destroyed when the building finishes), `onStructureConstructionComplete` (also for structures first seen finished, such as the starting townhall) and `onUnitSpawned` (own non-structure units, once per tag per game — unlike `onUnitCreated`, which also fires for structures). `onEnemyStrategyDetected` receives `EnemyStrategyDetected` (`{ flag: IntelFlag; gameLoop: number }`) once per flag per game, in the step `intel` first sets it. `onUnitTypeChanged` (own units only) receives `{ unit, previousType }` (morphs, sieging, lowering depots). `onUnitTookDamage` (own units only) receives `{ unit, amount }`, the health and shield lost since the previous frame. Event handlers are called as `(world, data, event)`, where `event` is the raw `SystemEvent` (`name`, `gameLoop`, ...); extra event fields are never spread into further arguments. This includes the agent's own `onStep` (`data` is the game loop) and `onGameStart` (`data` is `null`). The system hooks with their own arguments are the exceptions: a unit system's `onStep(world, units)`, `onNewUnit`, `onUnitIdle`, `onUnitDestroyed` and `idleFunctions` (`(world, unit)`), a build system's `onStep(world, gameLoop, task?, result?)` and `buildComplete(world, gameLoop)`, `onStepPaused(world)`, and `onGameStart(world)` of a system mounted after the game started. `event` is optional in the handler types, so handlers can also be called directly with two arguments. `onEnemyUnitLeftVision` fires for an enemy that was visible last frame and is not now; the unit stays in `units` as a memory (see `unit.isMemory()`). `onCommandResults` receives, the step after each flush of proposed commands, one entry per (proposal, outcome):
+`onBuildingConstructionStarted` fires when a new own structure appears unfinished, `onBuildingConstructionComplete` when one finishes or a new one appears already finished. The python-sc2 equivalents are `onStructureConstructionStarted` (also fires when an own unit turns into an unfinished structure while keeping its tag; on SC2 4.10 a drone's building gets a new tag instead, so for drones it fires alongside `onBuildingConstructionStarted` with the building, and the drone is reported destroyed when the building finishes), `onStructureConstructionComplete` (also for structures first seen finished, such as the starting townhall) and `onUnitSpawned` (own non-structure units, once per tag per game — unlike `onUnitCreated`, which also fires for structures). `onEnemyStrategyDetected` receives `EnemyStrategyDetected` (`{ flag: IntelFlag; gameLoop: number }`) once per flag per game, in the step `intel` first sets it. `onEnemyRaceDetected` receives the `Race` of a random opponent once per game, in the first step an enemy unit is alive, after `agent.opponent.race` is set; it never fires when the race was known at game start. Agent systems get it in that step, the agent's own handler in the next. `onUnitTypeChanged` (own units only) receives `{ unit, previousType }` (morphs, sieging, lowering depots). `onUnitTookDamage` (own units only) receives `{ unit, amount }`, the health and shield lost since the previous frame. Event handlers are called as `(world, data, event)`, where `event` is the raw `SystemEvent` (`name`, `gameLoop`, ...); extra event fields are never spread into further arguments. This includes the agent's own `onStep` (`data` is the game loop) and `onGameStart` (`data` is `null`). The system hooks with their own arguments are the exceptions: a unit system's `onStep(world, units)`, `onNewUnit`, `onUnitIdle`, `onUnitDestroyed` and `idleFunctions` (`(world, unit)`), a build system's `onStep(world, gameLoop, task?, result?)` and `buildComplete(world, gameLoop)`, `onStepPaused(world)`, and `onGameStart(world)` of a system mounted after the game started. `event` is optional in the handler types, so handlers can also be called directly with two arguments. `onEnemyUnitLeftVision` fires for an enemy that was visible last frame and is not now; the unit stays in `units` as a memory (see `unit.isMemory()`). `onCommandResults` receives, the step after each flush of proposed commands, one entry per (proposal, outcome):
 ```ts
 CommandResult {
     owner: string; // the proposing commander
@@ -364,8 +368,9 @@ As a final note, if you purposely have some extended calculation to do, or you *
 ## World
 The `World` is the context of a single game of Starcraft 2. It's defined like this:
 ```ts
-World { agent: Agent, data: DataStorage, resources: ResourceManager }
+World { agent: Agent, data: DataStorage, resources: ResourceManager, config: Readonly<CoreConfig> }
 ```
+`world.config` is the frozen config the engine resolved (see `createEngine`): `CoreConfig { gameStep: number; features: { chatDebug: boolean; eagerMapAnalysis: boolean }; resources: ResourceSettings }`, defaults `4`, `false`, `true` and `{}`. `ResourceSettings` maps a resource name to the settings type of its `configure`. `CoreConfig` is an interface, so other packages can add their own top-level sections by declaration merging; core keeps them unvalidated. The registry passes `config.resources.<name>` to that resource's `configure` after creating it and after every `resources.reset`, and warns once for a section whose resource has no `configure`.
 The `world` context is given as the first argument of every event consumer handler, and therefore available in any invokable part of your agent and/or systems. The easiest way to utilize it is via destructuring. Here is an example of a system logging the agent's race:
 
 ```js
@@ -885,6 +890,21 @@ debug.useDebugWidget(id, data, { title? }) // a line in the on-screen debug widg
 ```
 Drawing helpers (`setDrawCells`, `setDrawSpheres`, `setDrawLines`, `setDrawTextWorld`, `setDrawTextScreen`) are unchanged.
 
+#### Chat commands
+With `features.chatDebug` on (default off), the engine mounts a system that reads the agent's own chat (`chat.playerId === agent.playerId`); other players' chat and non-commands are ignored. Case-insensitive; it sends debug requests and chat replies, never unit commands. A bad command (usage, count that isn't a positive integer, unknown unit name, bad player id) is answered with `actions.chatSend(error)`.
+```text
+create | make <count> <UnitType> [playerId]    debug.createUnit at the camera (map centre without one), for playerId or you
+kill | destroy <count> <UnitType> [playerId]   debug.killUnit on the first <count> of that type: your units, or the enemy units of playerId; chat reply "Can't find any of those" when none
+cooldown                                       debug.cooldown()
+food | supply                                  debug.food()
+god                                            debug.god()
+resources | money                              debug.allResources()
+reveal | show | show-map                       debug.showMap()
+tech | tech-tree                               debug.techTree()
+upgrades                                       debug.upgrade()
+```
+`<UnitType>` is a unit-type constant name; one trailing `s` is accepted (`marines`).
+
 ### memory
 Enemy ghosts (`unit.isMemory()`) stay in `units` until memory forgets them. Each step, a ghost older than its expiry is deleted, and so is one whose four surrounding cells are all visible (unless burrowed). A forgotten tag that is seen again doesn't fire `onEnemyFirstSeen` again.
 
@@ -1167,6 +1187,63 @@ Plans each structure to land at the other's current position. No checks; `action
 
 #### *`flying.configure(settings: Partial<{ priority: number }>) => void`*
 `priority = 10`. Settings survive a new game on the same engine; plans don't.
+
+### mapAnalysis
+Regions and chokes of the start pathing grid (minerals walkable, structures ignored), computed once per game with a distance-to-wall watershed. Runs in the first per-step hook when `features.eagerMapAnalysis` is on (the default), otherwise on the first accessor call. Accessors throw `MapDecompositionError` when the start grids are missing; the eager run never throws.
+```ts
+Choke = {
+    id: number;
+    center: Point2D; // cell centre
+    sides: [Point2D, Point2D]; // the two ends, cell centres
+    points: Point2D[]; // the choke's cells, integer coordinates
+    width: number;
+    regions: [number, number]; // ids of the two regions it joins
+    ramp?: Ramp; // set when the choke touches a ramp
+}
+Region = { id: number; area: number; center: Point2D; chokes: Choke[]; expansions: Expansion[] }
+BaseChoke = { choke: Choke; pathDistance: number } // ground distance from the base to the choke centre
+DefensivePosition = BaseChoke & { position: Point2D }
+```
+
+#### *`mapAnalysis.getChokes() => Choke[]`*
+Every choke, as a copy, ordered by `regions` then `center`.
+
+#### *`mapAnalysis.getRegions() => Region[]`*
+Every region, as a copy. Ids are `0..n-1`.
+
+#### *`mapAnalysis.getRegion(point: Point2D) => Region | undefined`*
+`undefined` for an unwalkable cell or a point off the map.
+
+#### *`mapAnalysis.isInChoke(point: Point2D) => boolean`*
+
+#### *`mapAnalysis.getBaseChokes(base: Expansion | Point2D) => BaseChoke[]`*
+The chokes of the region that holds `base`, nearest by ground distance first. A point that isn't walkable is moved to the nearest walkable cell within 4. Unreachable chokes are left out; `[]` when `base` resolves to no cell.
+
+#### *`mapAnalysis.getDefensivePosition(base: Expansion | Point2D, opts?: { towards?: Point2D; offset?: number }) => DefensivePosition | undefined`*
+The `base` choke that minimises the ground distance from the base plus the distance to `towards`, with `position` up to `offset` cells back from the choke centre down the path to the base. `towards` is the first possible enemy start, else the map centre; `offset = defenseOffset` (4). `undefined` when the base's region has no reachable choke.
+
+#### *`mapAnalysis.getDefensiveThird() => Expansion | undefined`*
+The one of `map.getThirds()` with the longest `pathFromEnemy` (a missing path counts as longest); `undefined` when there are no thirds.
+
+#### *`mapAnalysis.getPerimeter(region: Region) => Point2D[]`*
+The region's cells that are 4-adjacent to an unwalkable or off-grid cell, as cell centres sorted by angle (`atan2`, from -PI) around `region.center`. Cached per region; a copy is returned.
+
+#### *`mapAnalysis.getEnemyMainRamp() => Ramp | undefined`*
+`getDefensivePosition(enemyMain, { towards: ownStart })?.choke.ramp`. `undefined` without an enemy main expansion or when that choke has no ramp.
+
+#### *`mapAnalysis.configure(settings: Partial<MapAnalysisSettings>) => void`*
+```ts
+MapAnalysisSettings = {
+    maxChokeWidth: 14, // wider passages are not chokes
+    peakRatio: 2.2, // how narrow a passage must be, relative to the areas it joins, to split them
+    minRegionArea: 150, // smaller regions are merged into a neighbour
+    defenseOffset: 4, // default offset of getDefensivePosition
+}
+```
+The analysis is recomputed on the next accessor call. Settings survive a new game on the same engine; the analysis doesn't. A `resources.mapAnalysis` section of the config file is passed here.
+
+#### *`mapAnalysis.drawDebug() => void`*
+Sets the `debug` cell drawing `mapAnalysisChokes` to every choke cell (`C<id>`) and region centre (`R<id>`). Does nothing without the `debug` resource.
 
 ### events
 TBD

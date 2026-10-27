@@ -3,7 +3,7 @@ import Color from '../constants/color.ts';
 import { Race } from '../constants/enums.ts';
 import { flyingStructureTypes, gasMineTypes } from '../constants/groups.ts';
 import * as UnitType from '../constants/unit-type.ts';
-import { distance, distanceSquared } from '../utils/geometry/point.ts';
+import { distance, distanceSquared, towards } from '../utils/geometry/point.ts';
 import { getFootprint } from '../utils/geometry/units.ts';
 import { isFlying } from './units-collection.ts';
 import {
@@ -72,12 +72,6 @@ const freshState = (settings: PlacementSettings): State => ({
 });
 
 const samePos = (a: Point2D, b: Point2D) => a.x === b.x && a.y === b.y;
-
-function towards(from: Point2D, to: Point2D, length: number): Point2D {
-    const d = distance(from, to);
-    if (d === 0) return from;
-    return { x: from.x + ((to.x - from.x) / d) * length, y: from.y + ((to.y - from.y) / d) * length };
-}
 
 function closest<T extends { pos: Point2D }>(items: T[], to: Point2D): T | undefined {
     let best: T | undefined;

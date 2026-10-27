@@ -57,7 +57,7 @@ export function productionController({
             const { agent } = world;
             if (agent.race === Race.ZERG) return false;
             const { buildings, frame, units } = world.resources.get();
-            const score = frame.getScore().scoreDetails;
+            const score = frame.getScore()?.scoreDetails;
             const rateMinerals = (score?.collectionRateMinerals ?? 0) + 1;
             const rateVespene = (score?.collectionRateVespene ?? 0) + 1;
             const totalUnits = entries.reduce((sum, { unitType }) => sum + ownUnitCount(world, unitType), 0);

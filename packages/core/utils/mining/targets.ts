@@ -1,13 +1,7 @@
 import type { Point2D } from '../../types.ts';
-import { closestPoint, distance } from '../geometry/point.ts';
+import { closestPoint, distance, towards } from '../geometry/point.ts';
 
 const TOWNHALL_RADIUS = 2.75;
-
-function towards(from: Point2D, to: Point2D, length: number): Point2D {
-    const d = distance(from, to);
-    if (d === 0) return from;
-    return { x: from.x + ((to.x - from.x) / d) * length, y: from.y + ((to.y - from.y) / d) * length };
-}
 
 export function circleIntersections(c0: Point2D, r0: number, c1: Point2D, r1: number): Point2D[] {
     const d = distance(c0, c1);

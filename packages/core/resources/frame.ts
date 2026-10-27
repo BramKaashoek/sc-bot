@@ -24,7 +24,7 @@ function createFrame(): FrameResource {
             return this._feature!;
         },
         getScore() {
-            return this._score!;
+            return this._score ?? undefined;
         },
         getGameInfo() {
             return this._gameInfo!;

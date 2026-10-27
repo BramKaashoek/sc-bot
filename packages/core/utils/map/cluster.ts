@@ -1,6 +1,6 @@
-import type { Cluster, Point2D, Unit } from '../../types.ts';
+import type { Cluster, Unit } from '../../types.ts';
 import { vespeneGeyserTypes } from '../../constants/groups.ts';
-import { add, multiply, divide, areEqual, distanceSquared, getNeighbors } from '../geometry/point.ts';
+import { add, multiply, divide, distanceSquared } from '../geometry/point.ts';
 
 function createClusters(units: Unit[], distanceApart = 15.0): Cluster[] {
     const squaredDistanceApart = distanceApart * distanceApart;
@@ -43,37 +43,4 @@ function createClusters(units: Unit[], distanceApart = 15.0): Cluster[] {
     }, [] as Cluster[]);
 }
 
-function clusterByNeighbor(points: Point2D[]): Point2D[][] {
-    const sorted = points.slice().sort((a, b) => {
-        if (a.y < b.y) {
-            return -1;
-        } else if (a.y > b.y) {
-            return 1;
-        } else {
-            if (a.x < b.x) {
-                return -1;
-            } else if (a.x > b.x) {
-                return 1;
-            } else {
-                return 0;
-            }
-        }
-    });
-
-    return sorted.reduce((sets, point) => {
-        const connected = sets.filter((set) =>
-            set.some((setPoint) => {
-                return getNeighbors(setPoint).some((spn) => areEqual(spn, point));
-            }),
-        );
-
-        if (connected.length <= 0) return [...sets, [point]];
-
-        const merged = [...connected.flat(), point];
-        const firstIndex = sets.indexOf(connected[0]);
-        const rest = sets.filter((set) => !connected.includes(set));
-        return [...rest.slice(0, firstIndex), merged, ...rest.slice(firstIndex)];
-    }, [] as Point2D[][]);
-}
-
-export { createClusters, clusterByNeighbor };
+export { createClusters };

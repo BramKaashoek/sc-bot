@@ -34,6 +34,7 @@ This readme walks through everything the library offers. For exhaustive signatur
     - [buildings](#buildings)
     - [mining](#mining)
     - [flying](#flying)
+    - [mapAnalysis](#mapanalysis)
     - [Custom resources](#custom-resources)
 - [Utilities](#utilities)
 - [Constants](#constants)
@@ -119,6 +120,8 @@ The pieces:
 | `force` | `false` | When launching, kill whatever process already listens on the port and start a fresh SC2 instead of reusing it |
 | `onGameEnd` | | Called with the `PlayerResult[]` when a game ends |
 | `client` | | A proto client to use instead of a real connection (the test harness passes a fake one) |
+| `config` | `{}` | Inline [config](#config-file): step size, feature toggles and per-resource settings. Overrides the config file. |
+| `configFile` | | Path of the [config file](#config-file) to read, or `false` to read none. Without it, `SC_BOT_CONFIG` or `sc-bot.config.json` in the working directory. |
 
 `engine.connect()` must resolve before anything else. `engine.shutdown()` closes the connection.
 
@@ -241,10 +244,38 @@ When the process is started with `--LadderServer`, `--GamePort` and `--StartPort
 
 | Variable | Effect |
 |---|---|
-| `STEP_COUNT` | Game loops per step (default 4) |
+| `STEP_COUNT` | Game loops per step (default 4). Overrides `gameStep` from the [config](#config-file). |
+| `SC_BOT_CONFIG` | Path of the [config file](#config-file), instead of `sc-bot.config.json` in the working directory |
 | `DELAY` | Milliseconds to wait before each step, to watch a game slowly |
 | `DEBUG` | Logging through the [`debug`](https://github.com/debug-js/debug) package. `DEBUG=sc2:debug:*` is useful; `DEBUG=sc2:*` is very verbose. |
 | `SC2PATH` | SC2 install root, see [Finding StarCraft II](#finding-starcraft-ii) |
+
+### Config file
+
+The engine reads an optional JSON file, `sc-bot.config.json` in the working directory (or the path in `SC_BOT_CONFIG`, or the `configFile` option; a relative path is resolved against the working directory). A missing file at the default path is fine. All keys are optional; this is the shape with the defaults:
+
+```json
+{
+    "gameStep": 4,
+    "features": { "chatDebug": false, "eagerMapAnalysis": true },
+    "resources": {}
+}
+```
+
+| Key | Effect |
+|---|---|
+| `gameStep` | Game loops per step. A positive integer. |
+| `features.chatDebug` | Turns on [chat debug commands](#debug). |
+| `features.eagerMapAnalysis` | Runs the [`mapAnalysis`](#mapanalysis) at game start. When `false`, it runs on the first query. |
+| `resources.<name>` | Settings for that resource, passed to its `configure()`: `{ "resources": { "mapAnalysis": { "peakRatio": 2.5 }, "memory": { "expireGround": 60 } } }`. |
+
+Other top-level sections are allowed and kept as they are on `world.config`, without validation, for bots and plugins that read their own section.
+
+Sources are applied in this order, later ones winning: the defaults, the file, the inline `createEngine({ config })` option, then the `STEP_COUNT` environment variable (for `gameStep` only). `features` is merged key by key and `resources` per resource name (the keys inside one resource's section are merged too); any other top-level section from a later source replaces the earlier one whole. `createEngine({ config: { gameStep: 2 }, configFile: false })` ignores any file.
+
+The settings of `resources.<name>` are passed to the resource's `configure()` when it is created and again after every game reset (a second game on the same engine). Your own `configure()` calls win only until that reset, so a bot that wants its own values should call `configure()` from `setup` or `onGameStart`; one call made once after `createEngine` is overwritten by the file's section from the second game on. A section for a resource without `configure()` is ignored with a warning.
+
+`createEngine` throws when a file named through `SC_BOT_CONFIG` or `configFile` doesn't exist, when the file isn't valid JSON (the message names the path) or doesn't hold a JSON object, when `gameStep` or `STEP_COUNT` isn't a positive integer, or when a feature isn't a boolean. An unknown key under `features` logs a warning.
 
 ## Agents
 
@@ -293,7 +324,7 @@ Without the setting, `fetchAvailableAbilities()` returns the result of the per-s
 
 ### Player data
 
-The agent is updated every step with the player fields from the observation: `playerId`, `minerals`, `vespene`, `foodCap`, `foodUsed`, `foodArmy`, `foodWorkers`, `idleWorkerCount`, `armyCount`, `warpGateCount`, `larvaCount`, `powerSources`, `upgradeIds` and `camera`. `agent.race` is the race you actually got (useful with random), and `agent.opponent` holds `{ race, id }` as far as they are known. An `id` set before the game is kept when the race is filled in at game start; under a ladder manager it is `--OpponentId` (see [Ladder play](#ladder-play)).
+The agent is updated every step with the player fields from the observation: `playerId`, `minerals`, `vespene`, `foodCap`, `foodUsed`, `foodArmy`, `foodWorkers`, `idleWorkerCount`, `armyCount`, `warpGateCount`, `larvaCount`, `powerSources`, `upgradeIds` and `camera`. `agent.race` is the race you actually got (useful with random), and `agent.opponent` holds `{ race, id }` as far as they are known. Against a random opponent `opponent.race` is `NORACE` at game start and is set the first step an enemy unit is alive, from that unit's race, together with an `onEnemyRaceDetected` event; code that cached it at game start should read it again or handle that event. A race known at game start never changes. An `id` set before the game is kept when the race is filled in at game start; under a ladder manager it is `--OpponentId` (see [Ladder play](#ladder-play)).
 
 ### Cost, supply and affordability
 
@@ -324,7 +355,7 @@ These follow python-sc2's `BotAI` helpers of the same names:
 | `getNextExpansion()` | `Promise<Point2D \| null>`: the expansion location without a townhall of yours that is closest by SC2 ground distance from your start |
 | `ownedExpansions()` | `{ location, townhall }[]` |
 | `expandNow(unitType?, maxDistance = 10, location?)` | Builds a townhall at the next (or given) expansion |
-| `distributeWorkers(resourceRatio = 2)` | Sends idle workers, and workers above saturation, to bases and gas buildings below saturation. Use it or [`mining`](#mining), not both. |
+| `distributeWorkers(resourceRatio = 2, { workersPerGas = 3 })` | Sends idle workers, and workers above saturation, to bases and gas buildings below saturation. `workersPerGas` caps the target per gas building (an integer from 0 to 3, otherwise it throws a `RangeError`); workers above the cap join the pool and go to whichever below-saturation place `resourceRatio` favours, and `0` keeps gas empty. Use it or [`mining`](#mining), not both. |
 | `train(unitType, amount = 1, closestTo?, trainOnlyIdleBuildings = true)` | Starts up to `amount` units across your production structures, larva and warp gates, using reactors for two at a time and tech labs where required. Resolves with how many were started. |
 | `research(upgradeId)` | Starts the upgrade if it is affordable, the required building exists, the previous level is done, and an idle (and, for Protoss, powered) research structure is free. Resolves `false` otherwise. Throws for an upgrade that isn't in the researched-from dictionary. |
 
@@ -393,6 +424,7 @@ Agents and systems react to the game through event handlers named `on` + the eve
 | `onUnitSpawned` | An own non-structure unit is seen for the first time; once per tag per game, even if it later disappears from the observation (e.g. loaded into a transport) | `Unit` |
 | `onNewEffect` / `onExpiredEffect` | An effect (e.g. a storm) appeared / ended | The effect and its effect data |
 | `onCommandResults` | The step after proposed commands were flushed, once per flush that had any | `CommandResult[]`: per proposal, whether it was sent (`won`), `dropped` or `rejected` (see [Command arbitration](#command-arbitration)) |
+| `onEnemyRaceDetected` | A random opponent's race was identified, from the first enemy unit alive. Once per game; never fires when the race was known at game start. Agent systems see it in the step it is detected, the agent's own handler in the next one. | `Race` |
 | `onEnemyStrategyDetected` | [intel](#intel) detects a strategy flag for the first time this game, in the same step | `EnemyStrategyDetected`: `{ flag, gameLoop }` |
 
 `onStructureConstructionStarted`, `onStructureConstructionComplete` and `onUnitSpawned` correspond to python-sc2's `on_building_construction_started`, `on_building_construction_complete` and `on_unit_created`. The other events keep node-sc2's behaviour.
@@ -578,7 +610,7 @@ A system with `type: 'unit'` manages units by type (`units: [...]`) and/or label
 `world.resources.get()` returns the resources, best destructured:
 
 ```text
-const { actions, events, frame, map, units, debug, memory, spatial, influence, pathing, roles, squads, intel, placement, buildings, mining, flying } = resources.get();
+const { actions, events, frame, map, units, debug, memory, spatial, influence, pathing, roles, squads, intel, placement, buildings, mining, flying, mapAnalysis } = resources.get();
 ```
 
 Bots and plugins can add their own; see [Custom resources](#custom-resources).
@@ -877,6 +909,8 @@ The `map` resource covers the map layout: start locations, expansions, ramps, gr
 
 `getExpansionLocations()` returns every possible townhall position, computed with python-sc2's algorithm.
 
+For regions, chokes and defensive positions, see [`mapAnalysis`](#mapanalysis).
+
 **The grid follows lift and land.** When a structure lifts off (or a flying one lands), the map system frees (or blocks) its footprint cells in the placement and pathing grids in the same step, so `isPlaceable`, `isPlaceableAt`, `path` and [`placement`](#placement) see the building's real position.
 
 **Locations.** `getLocations()` returns `{ self, enemy }`, where `enemy` is an array of possible enemy start points. `getCombatRally()` is a gathering point on the path from your natural towards the map center, 5% further along per base you own (the map center on a map without expansions). `getCenter(pathable?)`, `getSize()`.
@@ -984,6 +1018,22 @@ export async function onStep({ agent, resources }: World) {
 | `drawBox(min, max, color?)` | Draw a box for one step |
 | `setDrawCells`, `setDrawSpheres`, `setDrawLines`, `setDrawTextWorld`, `setDrawTextScreen` | Persistent drawings, keyed by id; `removeCommand(id)` removes one |
 | `quickSave()`, `quickLoad()` | Single-player only |
+
+**Chat commands.** With `features.chatDebug` on (see [Config file](#config-file); off by default, so an opponent's or a ladder game's chat can't trigger anything), the engine reads your own chat as debug commands, using ares-sc2's aliases. They are case-insensitive, other players' chat and other messages are ignored, and nothing is ever sent as a unit command. A malformed command, such as an unknown unit name or a count that isn't a positive integer, is answered in chat with the reason.
+
+| Chat | Effect |
+|---|---|
+| `create \| make <count> <UnitType> [playerId]` | Spawns units at the camera (the map centre when there is no camera) for you, or for that player. |
+| `kill \| destroy <count> <UnitType> [playerId]` | Kills the first `count` units of that type: yours, or that player's known ones. Replies "Can't find any of those" when there are none. |
+| `cooldown` | `debug.cooldown()` |
+| `food` \| `supply` | `debug.food()` |
+| `god` | `debug.god()` |
+| `resources` \| `money` | `debug.allResources()` |
+| `reveal` \| `show` \| `show-map` | `debug.showMap()` |
+| `tech` \| `tech-tree` | `debug.techTree()` |
+| `upgrades` | `debug.upgrade()` |
+
+`<UnitType>` is a name from the unit-type constants, such as `MARINE` or `ZERGLING`, in any case; a plural (`marines`) works too. `kill` with a player id picks among that player's currently visible units; remembered ones out of sight are skipped.
 
 ### events and data
 
@@ -1379,6 +1429,54 @@ export async function onStep({ resources }: World) {
 }
 ```
 
+### mapAnalysis
+
+`mapAnalysis` splits the map into regions joined by chokes, once per game, and answers where to hold a base. It works on the static pathing grid at game start (minerals and geysers count as walkable, structures are ignored), splitting it with a distance-to-wall watershed: a narrow passage between two wide areas becomes a choke, and every connected stretch of choke between two regions is one `Choke`. A `Choke` has `id`, `center`, `sides` (its two ends), `points` (the cells, as integer `{ x, y }`), `width`, `regions` (the two region ids it joins) and `ramp` when it lies on a [ramp](#map). A `Region` has `id`, `area` (cells), `center`, `chokes` and `expansions`. Regions are not split by height; ramps are linked through `choke.ramp`.
+
+By default the analysis runs in the first step, before your game-start handler. Set `features.eagerMapAnalysis` to `false` (see [Config file](#config-file)) to run it on the first query instead. Accessors throw `MapDecompositionError` when the map has no start grids (some custom maps); the eager run never throws and only logs on `sc2:debug:mapAnalysis`.
+
+| Method | Returns |
+|---|---|
+| `getChokes()`, `getRegions()` | Every choke and region, as a copy. Region ids are `0..n-1`. |
+| `getRegion(point)` | The region of a point, `undefined` on an unwalkable cell or off the map |
+| `isInChoke(point)` | Whether the point is on a choke cell |
+| `getBaseChokes(base)` | The chokes of the region holding `base` (an `Expansion` or a point), as `{ choke, pathDistance }`, ordered by ground distance from the base. Unreachable chokes are left out. |
+| `getDefensivePosition(base, { towards?, offset? })` | `{ choke, pathDistance, position }`, or `undefined` when the base's region has no reachable choke. The choke is the one on the shortest ground route between the base and `towards` (default: the first possible enemy start, else the map centre); `position` is that choke's centre moved up to `offset` cells back towards the base (default: `defenseOffset`). |
+| `getDefensiveThird()` | The one of `map.getThirds()` with the longest path from the enemy, `undefined` when there are no thirds |
+| `getPerimeter(region)` | The region's cells next to an unwalkable or off-map cell, as cell centres ordered by angle around `region.center` |
+| `getEnemyMainRamp()` | The ramp of the choke guarding the enemy main on the way to your start. `undefined` without an enemy main expansion, or when that choke isn't a ramp. |
+| `configure(settings)` | Changes the settings; the analysis is recomputed on the next query. Settings survive a new game on the same engine. |
+| `drawDebug()` | Draws every choke cell (`C<id>`) and region centre (`R<id>`) through the [`debug`](#debug) resource, a no-op without it |
+
+Settings, with defaults:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `maxChokeWidth` | `14` | A passage wider than this is not a choke |
+| `peakRatio` | `2.2` | How narrow a passage must be, relative to the two areas it joins, to split them. Higher merges more (fewer regions); lower splits more. |
+| `minRegionArea` | `150` | Smaller regions are merged into a neighbour |
+| `defenseOffset` | `4` | Default `offset` of `getDefensivePosition` |
+
+If a map is split badly, tune these, from `configure` or the config file's `resources.mapAnalysis` section.
+
+```ts
+import type { World } from '@sc-bot/core';
+import { Alliance } from '@sc-bot/core/constants/enums';
+
+export async function onStep({ resources }: World) {
+    const { map, mapAnalysis, units, actions } = resources.get();
+
+    const defence = mapAnalysis.getDefensivePosition(map.getNatural());
+    if (!defence) return;
+
+    const outside = units.getAlive(Alliance.ENEMY).filter(enemy => !mapAnalysis.getRegion(enemy.pos));
+    console.log(`holding choke ${defence.choke.id} (width ${defence.choke.width.toFixed(1)}), ${outside.length} enemies outside any region`);
+
+    const army = units.getCombatUnits();
+    if (army.length > 0) await actions.attackMove(army, defence.position);
+}
+```
+
 ### Custom resources
 
 A resource is registered from a definition: a `name`, a `create(world)` factory and an optional `reset(resource, world)`. `world.resources.register(definition)` creates the resource and returns it; call it from a system's `setup`, which runs every game. Registering the same definition object again returns the existing resource; registering another definition under a taken name throws `NodeSC2Error`. Declare the resource's type by augmenting the `ResourceContainer` interface of `@sc-bot/core/types` (augmenting `@sc-bot/core` itself doesn't merge). The key is typed as present before `register` has run, so register it before anything reads it.
@@ -1558,6 +1656,10 @@ Where ares-sc2 does something this library deliberately doesn't:
 - **Low-HP cancel needs damage.** A structure is cancelled only on a step in which its health dropped (ares' `on_structure_took_damage`), below `max(50, 9% of max health)`; an unfinished structure that starts below the threshold isn't cancelled for it. The default `'tracked'` mode leaves out builds the tracker adopted.
 - **`buildGas` geyser pick.** It takes the free geyser closest to one of your townhalls.
 - **Mining details.** Workers that are `command`-labelled or constructing are never selected or commanded; assignments are recomputed every step (ares: every fourth); long-distance mining judges a field's safety at the worker's speed-mining stand point (the mineral's own cell is never safe) and recomputes the safe fields each step (ares caches them); a fleeing worker with no safe spot gets no command; gather and return use `HARVEST_GATHER`/`HARVEST_RETURN` (like ares), while `actions.gather` sends `SMART`.
+- **Chokes.** Regions and chokes come from a distance-to-wall watershed on the start pathing grid, not from map_analyzer. Regions are not split by height; a ramp is linked from the choke it touches (`choke.ramp`). The analysis doesn't react to buildings or pathing changes, and the per-map special cases in ares' defensive third (Oxide, Glittering) aren't ported.
+- **JSON config.** The config file is JSON (`sc-bot.config.json`) with a fixed set of keys, where ares reads YAML.
+- **Chat debug.** It only handles your own chat and is off unless `features.chatDebug` is set.
+- **Workers per gas.** It is an option of each `distributeWorkers` call, not a persistent setting as with ares' mediator. [`mining`](#mining) takes the same name in its own settings.
 - **Roles aren't labels.** Roles live in the `roles` resource. Unit systems give labelled units special handling, so storing roles as labels would change how every unit with a default role is dispatched.
 
 ## Changes compared to node-sc2
@@ -1649,6 +1751,7 @@ The test helpers live inside the package and aren't part of its exports, so they
 
 - Influence has no climber, air-vs-ground, ground-to-air, tactical or priority grids, and ignores KD8 charges, parasitic bombs and force fields (see [Where this library differs from ares-sc2](#where-this-library-differs-from-ares-sc2)).
 - The fight simulation (`simulateFight`, `canWinFight`) doesn't model splash, healing (medivacs, transfuse, repair), spells, terrain, chokes or high ground, bunker passengers, or micro; units don't move apart from the `timingAdjust` start delay. A sieged tank's minimum range is judged on the starting positions, so a unit that would walk inside it still gets shelled. As in the rest of the combat math, upgrade-dependent bonuses (range, attack speed, ...) count for your own units only.
+- Overlord and scout spots are not implemented.
 - Placement does no burrowed-unit or blocked-spot detection beyond the placement grid, and Zerg has no precomputed spots.
 - Mining has no vespene boost, and speed mining is weaker at the default step of 4 game loops than at 2 or 1.
 - The launcher waits for a freshly started SC2 to listen on its port without a timeout.

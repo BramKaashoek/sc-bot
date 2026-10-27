@@ -113,6 +113,30 @@ Please note, this project adheres to [Semantic Versioning](https://semver.org/sp
 - Optional: enable mining with `mining.configure({ enabled: true })` instead of relying on SC2's auto-mining, and then stop calling `distributeWorkers`, which competes with it. Worker pulls from the bot's systems keep working: they run at priority 0 against mining's -10.
 - Optional: use `flying.addonSwap` instead of hand-rolled add-on swaps. Note that flying commands run at priority 10, so commands from the bot to a structure in transit are dropped as outranked until its plan ends or you call `flying.cancel`; a plan whose destination never accepts a landing is re-proposed every step until then.
 
+### parity-6a: map analysis, config file, chat debug, enemy race, workers per gas
+
+#### Added
+- `mapAnalysis` resource: the start pathing grid split into regions joined by chokes (distance-to-wall watershed), once per game. `getChokes`, `getRegions`, `getRegion`, `isInChoke`, `getBaseChokes`, `getDefensivePosition`, `getDefensiveThird`, `getPerimeter`, `getEnemyMainRamp`, `configure({ maxChokeWidth: 14, peakRatio: 2.2, minRegionArea: 150, defenseOffset: 4 })`, `drawDebug`. Ramps are linked through `choke.ramp`; regions are not split by height.
+- JSON config file (`sc-bot.config.json` in the working directory, `SC_BOT_CONFIG`, or `createEngine({ configFile })`) and `createEngine({ config })`: `gameStep`, `features` (`chatDebug`, `eagerMapAnalysis`) and per-resource settings under `resources.<name>`, passed to each resource's `configure()` on creation and after every game reset. `world.config` holds the frozen result; other top-level sections are kept unvalidated.
+- Chat debug (`features.chatDebug`, off by default): your own chat as debug commands (`create`/`make`, `kill`/`destroy`, `cooldown`, `food`, `god`, `resources`, `reveal`, `tech`, `upgrades`), with errors answered in chat.
+- `onEnemyRaceDetected(world, race)` handler and `enemyRaceDetected` event: once per game, against a random opponent.
+- `distributeWorkers(resourceRatio, { workersPerGas })`, an integer from 0 to 3 (default 3).
+- Types: `CoreConfig`, `CoreConfigInput`, `ResourceSettings`, `MapAnalysisSettings`, `MapAnalysisResource`, `Choke`, `Region`, `BaseChoke`, `DefensivePosition`.
+
+#### Changed
+- A `sc-bot.config.json` in the working directory is now read when it exists. A malformed one, or a named file that doesn't exist, fails engine creation. `STEP_COUNT` still overrides `gameStep` from every source.
+- Against a random opponent, `agent.opponent.race` is `NORACE` at game start and changes to the opponent's race on the first step an enemy unit is alive.
+- Map analysis runs in the first step by default; turn it off with `features.eagerMapAnalysis: false`.
+
+#### Migrating bot/
+- Nothing breaks. `STEP_COUNT` keeps its meaning.
+- If the bot runs from a directory with a `sc-bot.config.json`, that file is now read.
+- Code that cached `agent.opponent.race` at game start should read it again later or handle `onEnemyRaceDetected`.
+- Optional: use `mapAnalysis.getDefensivePosition(map.getNatural())` instead of hand-coded natural defence spots, and `getDefensiveThird()` for the safer third.
+- Optional: set `features.chatDebug` to spawn and kill units from chat while testing.
+- Optional: pass `{ workersPerGas }` to `distributeWorkers` for a mineral-heavy split.
+- A `configure()` call made once after `createEngine` is overridden by the config file's section from the second game on; call it from `setup` or `onGameStart`.
+
 ## v0.8.2 - 2019-01-11
 ## Highlights:
 Another small patch to get out some more important fixes:

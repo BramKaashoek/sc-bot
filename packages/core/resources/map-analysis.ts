@@ -1,6 +1,7 @@
 import createDebug from 'debug';
 import { MapDecompositionError } from '../engine/errors.ts';
 import { analyzeChokes } from '../utils/map/chokes.ts';
+import { cellCentre } from '../utils/grid/cell.ts';
 import { createDistanceField } from '../utils/map/distance-field.ts';
 import type {
     BaseChoke,
@@ -58,11 +59,6 @@ type State = {
 };
 
 const states = new WeakMap<MapAnalysisResource, State>();
-
-const cellCentre = (cell: number, width: number): Point2D => ({
-    x: (cell % width) + 0.5,
-    y: Math.floor(cell / width) + 0.5,
-});
 
 const cellPoint = (cell: number, width: number): Point2D => ({ x: cell % width, y: Math.floor(cell / width) });
 

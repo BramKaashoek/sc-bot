@@ -28,6 +28,9 @@ const difficulty = Difficulty[(process.env.DIFFICULTY ?? 'EASY').toUpperCase() a
 
 export const MACRO_OWNER = 'behaviors-bot:macro';
 const NEARBY_ENEMY_RANGE = 14;
+const HOME_DEFENSE_RANGE = 25;
+const ATTACK_SUPPLY = 20;
+const RETREAT_SUPPLY = 8;
 
 export const composition = {
     [MARINE]: { proportion: 0.7, priority: 2 },
@@ -49,41 +52,53 @@ const macro = ({ resources }: World) => {
     );
 };
 
-const fight = async ({ resources }: World) => {
-    const { squads, spatial, behaviors, map } = resources.get();
-    const target = map.getLocations().enemy[0];
+const fight = async (world: World, army: { attacking: boolean }) => {
+    const { squads, spatial, behaviors, map, units } = world.resources.get();
+    const { foodArmy = 0 } = world.agent;
+    if (foodArmy >= ATTACK_SUPPLY) army.attacking = true;
+    else if (foodArmy < RETREAT_SUPPLY) army.attacking = false;
 
-    for (const squad of squads.getSquads(ATTACKING)) {
-        const members = [...squad.units];
-        const medivacs = members.filter((unit) => unit.unitType === MEDIVAC);
-        const group = members.filter((unit) => unit.unitType !== MEDIVAC);
-        const enemies = [...spatial.unitsInRange(squad.position, NEARBY_ENEMY_RANGE, 'enemyGround')];
+    const members = squads.getSquads(ATTACKING).flatMap((squad) => [...squad.units]);
+    if (members.length === 0) return;
+    const position = squads.getMainSquadPosition(ATTACKING);
+    const medivacs = members.filter((unit) => unit.unitType === MEDIVAC);
+    const group = members.filter((unit) => unit.unitType !== MEDIVAC);
 
-        const winning = enemies.length === 0 || canWinFight(group, enemies) >= VICTORY_CLOSE;
+    const intruders = units
+        .getBases()
+        .flatMap((base) => [...spatial.unitsInRange(base.pos!, HOME_DEFENSE_RANGE, 'enemyGround')]);
+    const nearby = [...spatial.unitsInRange(position, NEARBY_ENEMY_RANGE, 'enemyGround')];
+    const enemies = intruders.length > 0 ? intruders : nearby;
+    const target =
+        intruders.length > 0 ? intruders[0].pos! : army.attacking ? map.getLocations().enemy[0] : map.getCombatRally();
+
+    const winning = enemies.length === 0 || canWinFight(group, enemies) >= VICTORY_CLOSE;
+    await behaviors.run(
+        !winning
+            ? keepGroupSafe({ group, closeEnemy: enemies, layer: 'ground' })
+            : army.attacking || intruders.length > 0
+              ? plan(
+                    stutterGroupForward({ group, groupPosition: position, target, enemies }),
+                    aMoveGroup({ group, target }),
+                )
+              : aMoveGroup({ group, target }),
+        { role: ATTACKING },
+    );
+
+    for (const medivac of medivacs) {
         await behaviors.run(
-            winning
-                ? plan(
-                      stutterGroupForward({ group, groupPosition: squad.position, target, enemies }),
-                      aMoveGroup({ group, target }),
-                  )
-                : keepGroupSafe({ group, closeEnemy: enemies, layer: 'ground' }),
+            plan(
+                medivacHeal({ unit: medivac, allies: group, layer: 'air' }),
+                pathUnitToTarget({ unit: medivac, target: position, layer: 'air' }),
+            ),
             { role: ATTACKING },
         );
-
-        for (const medivac of medivacs) {
-            await behaviors.run(
-                plan(
-                    medivacHeal({ unit: medivac, allies: group, layer: 'air' }),
-                    pathUnitToTarget({ unit: medivac, target: squad.position, layer: 'air' }),
-                ),
-                { role: ATTACKING },
-            );
-        }
     }
 };
 
-export const createBot = () =>
-    createAgent({
+export const createBot = () => {
+    const army = { attacking: false };
+    return createAgent({
         settings: { race: Race.TERRAN },
         async onGameStart({ resources }: World) {
             const { mining, roles } = resources.get();
@@ -96,9 +111,10 @@ export const createBot = () =>
         async onStep(world: World) {
             const { actions, behaviors } = world.resources.get();
             await actions.as({ owner: MACRO_OWNER }, () => behaviors.run(macro(world)));
-            await fight(world);
+            await fight(world, army);
         },
     });
+};
 
 if (import.meta.main) {
     const engine = createEngine();

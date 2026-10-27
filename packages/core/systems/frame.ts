@@ -53,7 +53,7 @@ const createFrameSystem = (isRealtime: () => boolean): FrameSystem => ({
             frame._result = responseObservation.playerResult;
             frame._render = observation.renderData!;
             frame._feature = observation.featureLayerData!;
-            frame._score = observation.score!;
+            frame._score = observation.score;
         }
 
         frame._actionErrors = responseObservation.actionErrors ?? [];

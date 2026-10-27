@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import createEngine from './create-engine.ts';
-import { Difficulty, PlayerType, Race } from '../constants/enums.ts';
+import { Alliance, Difficulty, PlayerType, Race } from '../constants/enums.ts';
 import { ATTACKING, BUILDING, GATHERING } from '../constants/unit-role.ts';
 import { createBot, MACRO_OWNER } from '../examples/behaviors-bot.ts';
 import type { CommandResult, World } from '../types.ts';
@@ -46,6 +46,8 @@ describe.skipIf(!process.env.SC2PATH)('live behaviors sample bot', () => {
         const owners = new Set<string>();
         let reader: string | undefined;
         let last = { supply: 0, townhalls: 0, upgrades: 0 };
+        const seen = new Map<string, number>();
+        let lost = 0;
         const onStep = bot.onStep!.bind(bot);
         bot.onStep = async (world: World) => {
             const { events, units } = world.resources.get();
@@ -56,6 +58,17 @@ describe.skipIf(!process.env.SC2PATH)('live behaviors sample bot', () => {
                 .filter(({ name }) => name === 'commandResults')
                 .flatMap(({ data }) => data as CommandResult[])
                 .forEach(({ owner }) => owners.add(owner));
+            const alive = new Set<string>();
+            units.getAlive(Alliance.SELF).forEach((u) => {
+                alive.add(u.tag);
+                if (!u.isStructure() && !u.isWorker()) seen.set(u.tag, u.unitType!);
+            });
+            seen.forEach((_, tag) => {
+                if (!alive.has(tag)) {
+                    lost += 1;
+                    seen.delete(tag);
+                }
+            });
             last = {
                 supply: bot.foodUsed ?? 0,
                 townhalls: units.getBases().length,
@@ -74,6 +87,7 @@ describe.skipIf(!process.env.SC2PATH)('live behaviors sample bot', () => {
             { gameTimeLimit: GAME_SECONDS },
         );
 
+        console.log(`LIVE ${JSON.stringify({ ...last, owners: [...owners], lost })}`);
         expect(last.supply).toBeGreaterThanOrEqual(MIN_SUPPLY);
         expect(last.townhalls).toBeGreaterThanOrEqual(MIN_TOWNHALLS);
         expect(last.upgrades).toBeGreaterThanOrEqual(1);

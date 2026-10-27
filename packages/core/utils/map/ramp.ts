@@ -1,17 +1,10 @@
 import { PixelMap } from '../pixel-map.ts';
-import { distance } from '../geometry/point.ts';
+import { avgPoints, distance } from '../geometry/point.ts';
 import type { Point2D } from '../../types.ts';
 
 const RAMP_WALL_OFFSET = 0.5;
 const WALL_UPPER_SIZES = [2, 5];
 const MINIMUM_RAMP_SIZE = 8;
-
-function centerOf(points: Point2D[]): Point2D {
-    return {
-        x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
-        y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
-    };
-}
 
 function maxBy(points: Point2D[], score: (point: Point2D) => number): Point2D {
     return points.reduce((best, point) => (score(point) > score(best) ? point : best));
@@ -55,8 +48,8 @@ export class Ramp {
         this.points = points;
         this.upper = extremeHeightPoints(points, heightAt, true);
         this.lower = extremeHeightPoints(points, heightAt, false);
-        this.topCenter = centerOf(this.upper);
-        this.bottomCenter = centerOf(this.lower);
+        this.topCenter = avgPoints(this.upper);
+        this.bottomCenter = avgPoints(this.lower);
         this.startLocation = startLocation;
     }
 
