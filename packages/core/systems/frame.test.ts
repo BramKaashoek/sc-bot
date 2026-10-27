@@ -11,7 +11,7 @@ describe('frame system', () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
         const { frame } = world.resources.get();
 
-        expect([frame.time(), frame.timeFormatted(), frame.timeInSeconds()]).toEqual([40, '00:40', 39]);
+        expect([frame.time(), frame.timeFormatted()]).toEqual([40, '00:40']);
         expect(frame.getAlerts()).toEqual([]);
         expect(frame.getActionErrors()).toEqual([]);
 

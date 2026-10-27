@@ -102,12 +102,12 @@ export const miningResource: ResourceDefinition<'mining'> = {
             initialSplit: true,
         };
 
-        const pick = (near: Point2D, forceClose: boolean, minHealth: number) =>
-            pickWorker(world, state, near, forceClose, minHealth);
+        const pick = (near: Point2D, forceClose: boolean, minHealth: number, exclude?: ReadonlySet<string>) =>
+            pickWorker(world, state, near, forceClose, minHealth, exclude);
 
         const mining: MiningResource = {
-            selectWorker(near, { forceClose = false, minHealth = 0, role } = {}) {
-                const worker = pick(near, forceClose, minHealth);
+            selectWorker(near, { forceClose = false, minHealth = 0, role, exclude } = {}) {
+                const worker = pick(near, forceClose, minHealth, exclude);
                 if (!worker) return undefined;
                 unassign(state, worker.tag);
                 world.resources.get().roles.assign(worker, role ?? BUILDING);
@@ -213,10 +213,17 @@ function dropLostResources(world: World, state: MiningState, townhalls: Units) {
     });
 }
 
-function pickWorker(world: World, state: MiningState, near: Point2D, forceClose: boolean, minHealth: number) {
+function pickWorker(
+    world: World,
+    state: MiningState,
+    near: Point2D,
+    forceClose: boolean,
+    minHealth: number,
+    exclude?: ReadonlySet<string>,
+) {
     const { units } = world.resources.get();
     const workers = managedWorkers(world).filter(
-        (worker) => !isBusy(worker) && worker.health! / worker.healthMax! >= minHealth,
+        (worker) => !isBusy(worker) && !exclude?.has(worker.tag) && worker.health! / worker.healthMax! >= minHealth,
     );
     if (workers.length === 0) return undefined;
 

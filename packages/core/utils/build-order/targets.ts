@@ -1,7 +1,6 @@
 import * as BuildTargets from '../../constants/build-target.ts';
 import { Alliance } from '../../constants/enums.ts';
 import { gasMineTypes, townhallTypes } from '../../constants/groups.ts';
-import { ASSIMILATORRICH, EXTRACTORRICH, REFINERYRICH } from '../../constants/unit-type.ts';
 import { distance, towards } from '../geometry/point.ts';
 import type { BuildTarget, Expansion, PlacementFlag, PlacementRequest, Point2D, World } from '../../types.ts';
 
@@ -39,7 +38,6 @@ const PROXY_TARGETS: BuildTarget[] = [
     BuildTargets.MAP_CENTER,
 ];
 
-const GAS_TYPES = [...gasMineTypes, ASSIMILATORRICH, EXTRACTORRICH, REFINERYRICH];
 const RAMP_ENEMY_DISTANCE = 10;
 const ENEMY_NAT_VISION_DISTANCE = 10;
 const SCOUT_POINT_SPACING = 4;
@@ -87,7 +85,7 @@ export function structurePlacement(
     unitType: number,
     target?: BuildTarget,
 ): { at: Point2D } | { placement: PlacementRequest } | { near: Point2D } | undefined {
-    if (GAS_TYPES.includes(unitType)) return undefined;
+    if (gasMineTypes.includes(unitType)) return undefined;
     if (target === undefined) return undefined;
     if (townhallTypes.includes(unitType)) {
         const base = ownBase(world, target);

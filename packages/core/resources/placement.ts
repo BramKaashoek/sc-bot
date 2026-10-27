@@ -1,7 +1,7 @@
 import createDebug from 'debug';
 import Color from '../constants/color.ts';
 import { Race } from '../constants/enums.ts';
-import { flyingStructureTypes, gasMineTypes } from '../constants/groups.ts';
+import { addonHostTypes, flyingStructureTypes, gasMineTypes } from '../constants/groups.ts';
 import * as UnitType from '../constants/unit-type.ts';
 import { distance, distanceSquared, towards } from '../utils/geometry/point.ts';
 import { footprintData, getFootprint } from '../utils/geometry/units.ts';
@@ -55,8 +55,6 @@ const DEFAULT_SETTINGS: PlacementSettings = { reservationTimeout: 60 };
 const RESERVATION_CHECK_LOOPS = 16;
 const RAMP_EXCLUSION_SQUARED = 36;
 const POWER_RANGE_SQUARED = 6.5 ** 2;
-const ADDON_HOSTS = [UnitType.BARRACKS, UnitType.FACTORY, UnitType.STARPORT];
-const GAS_TYPES = [...gasMineTypes, UnitType.REFINERYRICH, UnitType.ASSIMILATORRICH, UnitType.EXTRACTORRICH];
 const CREEP_EXEMPT = [UnitType.HATCHERY, UnitType.NYDUSCANAL];
 const SIZE_BY_WIDTH: Record<number, BuildingSize> = { 2: '2x2', 3: '3x3', 5: '5x5' };
 const WIDTH_BY_SIZE: Record<BuildingSize, number> = { '2x2': 2, '3x3': 3, '5x5': 5 };
@@ -177,12 +175,12 @@ function cellsFree(world: World, x0: number, y0: number, w: number, h: number, c
     return true;
 }
 
-function canPlace(world: World, unitType: number, pos: Point2D, includeAddon = ADDON_HOSTS.includes(unitType)) {
+function canPlace(world: World, unitType: number, pos: Point2D, includeAddon = addonHostTypes.includes(unitType)) {
     const { units } = world.resources.get();
-    if (GAS_TYPES.includes(unitType)) {
+    if (gasMineTypes.includes(unitType)) {
         return !units
             .getAll()
-            .some((unit) => GAS_TYPES.includes(unit.unitType) && distanceSquared(unit.pos, pos) < 12.25);
+            .some((unit) => gasMineTypes.includes(unit.unitType) && distanceSquared(unit.pos, pos) < 12.25);
     }
 
     const footprint = getFootprint(unitType, footprintData(world));

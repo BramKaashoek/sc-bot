@@ -1,57 +1,28 @@
 import createDebug from 'debug';
 import { Ability, UnitType, WarpUnitAbility } from '../constants/index.ts';
 import { Alliance, Race } from '../constants/enums.ts';
-import { mineralFieldTypes, reactorTypes, techLabTypes } from '../constants/groups.ts';
+import {
+    addonHostTypes,
+    creationAbilityOverrides,
+    gasMineTypes,
+    mineralFieldTypes,
+    reactorTypes,
+    researcherEquivalents,
+    techLabTypes,
+} from '../constants/groups.ts';
+import { TownhallRace, TownhallWithFlyingRace, WorkerRace } from '../constants/race-map.ts';
 import { techAlias } from '../constants/dicts/tech-alias.ts';
 import { techRequirement } from '../constants/dicts/tech-requirement.ts';
 import { trainedFrom } from '../constants/dicts/trained-from.ts';
 import { researchedFrom } from '../constants/dicts/researched-from.ts';
 import { researchRequirements } from '../constants/dicts/research-requirements.ts';
-import { GATHERING } from '../constants/unit-role.ts';
 import { distance } from '../utils/geometry/point.ts';
-import type { Agent, OwnedExpansion, Point2D, Unit } from '../types.ts';
+import { townhallCenter } from '../utils/map/townhall.ts';
+import type { Agent, Cost, OwnedExpansion, Point2D, Unit, World } from '../types.ts';
 
 const debug = createDebug('sc2:debug:Macro');
 
-const EXPANSION_GAP_THRESHOLD = 15;
-
-const RACE_TOWNHALLS: Record<number, number[]> = {
-    [Race.PROTOSS]: [UnitType.NEXUS],
-    [Race.TERRAN]: [
-        UnitType.COMMANDCENTER,
-        UnitType.ORBITALCOMMAND,
-        UnitType.PLANETARYFORTRESS,
-        UnitType.COMMANDCENTERFLYING,
-        UnitType.ORBITALCOMMANDFLYING,
-    ],
-    [Race.ZERG]: [UnitType.HATCHERY, UnitType.LAIR, UnitType.HIVE],
-};
-
-const START_TOWNHALL: Record<number, number> = {
-    [Race.PROTOSS]: UnitType.NEXUS,
-    [Race.TERRAN]: UnitType.COMMANDCENTER,
-    [Race.ZERG]: UnitType.HATCHERY,
-};
-
-const WORKER_TYPES = [UnitType.SCV, UnitType.PROBE, UnitType.DRONE, UnitType.DRONEBURROWED];
-
-const GAS_BUILDING_TYPES = [
-    UnitType.ASSIMILATOR,
-    UnitType.ASSIMILATORRICH,
-    UnitType.EXTRACTOR,
-    UnitType.EXTRACTORRICH,
-    UnitType.REFINERY,
-    UnitType.REFINERYRICH,
-];
-
-const MINERAL_TYPES = [
-    ...mineralFieldTypes,
-    UnitType.MINERALFIELD450,
-    UnitType.MINERALFIELDOPAQUE,
-    UnitType.MINERALFIELDOPAQUE900,
-];
-
-const ADDON_PRODUCERS = [UnitType.BARRACKS, UnitType.FACTORY, UnitType.STARPORT];
+const CONTEXT_WORKER_TYPES = [...Object.values(WorkerRace), UnitType.DRONEBURROWED];
 
 const TERRAN_STRUCTURES_REQUIRE_SCV = [
     UnitType.ARMORY,
@@ -135,18 +106,10 @@ export const REQUIRES_TECHLAB = [
     UnitType.RAVEN,
 ];
 
-const RESEARCH_EQUIVALENT_STRUCTURES: Record<number, number[]> = {
-    [UnitType.SPIRE]: [UnitType.SPIRE, UnitType.GREATERSPIRE],
-    [UnitType.GREATERSPIRE]: [UnitType.SPIRE, UnitType.GREATERSPIRE],
-    [UnitType.HATCHERY]: [UnitType.HATCHERY, UnitType.LAIR, UnitType.HIVE],
-    [UnitType.LAIR]: [UnitType.HATCHERY, UnitType.LAIR, UnitType.HIVE],
-    [UnitType.HIVE]: [UnitType.HATCHERY, UnitType.LAIR, UnitType.HIVE],
-};
-
 type AbilityProgress = { counts: Map<number, number>; maxProgress: Map<number, number> };
 
 // python-sc2's hand-written equivalents plus the API's tech aliases, so e.g. a TECHLAB requirement is met by any add-on tech lab
-function techEquivalents(unitType: number): number[] {
+export function techEquivalents(unitType: number): number[] {
     const aliased = Object.entries(techAlias)
         .filter(([, aliases]) => aliases.includes(unitType))
         .map(([aliasType]) => Number(aliasType));
@@ -173,7 +136,7 @@ function context(agent: Agent) {
     const { units, actions, map } = agent._world.resources.get();
     const own = units.getAlive(Alliance.SELF);
     const structures = own.filter((unit) => unit.isStructure());
-    const townhallTypes = RACE_TOWNHALLS[agent.race!] ?? Object.values(RACE_TOWNHALLS).flat();
+    const townhallTypes = TownhallWithFlyingRace[agent.race!] ?? Object.values(TownhallWithFlyingRace).flat();
 
     return {
         actions,
@@ -182,11 +145,11 @@ function context(agent: Agent) {
         structures,
         townhalls: structures.filter((unit) => townhallTypes.includes(unit.unitType)),
         gasBuildings: structures.filter(
-            (unit) => GAS_BUILDING_TYPES.includes(unit.unitType) || Boolean(unit.vespeneContents),
+            (unit) => gasMineTypes.includes(unit.unitType) || Boolean(unit.vespeneContents),
         ),
-        workers: own.filter((unit) => !unit.isStructure() && WORKER_TYPES.includes(unit.unitType)),
+        workers: own.filter((unit) => !unit.isStructure() && CONTEXT_WORKER_TYPES.includes(unit.unitType)),
         larva: own.filter((unit) => unit.unitType === UnitType.LARVA),
-        mineralFields: units.getAlive(Alliance.NEUTRAL).filter((unit) => MINERAL_TYPES.includes(unit.unitType)),
+        mineralFields: units.getAlive(Alliance.NEUTRAL).filter((unit) => mineralFieldTypes.includes(unit.unitType)),
     };
 }
 
@@ -195,114 +158,94 @@ function receivedThisFrame(agent: Agent): Set<string> {
 }
 
 function creationAbility({ _world: world }: Agent, unitType: number): number | undefined {
-    // The API reports LURKERASPECTMPFROMHYDRALISKBURROWED instead of MORPH_LURKER, as python-sc2 patches
-    if (unitType === UnitType.LURKERMP) return Ability.MORPH_LURKER;
-    return world.data.getUnitTypeData(unitType)?.abilityId || undefined;
+    return creationAbilityOverrides[unitType] ?? (world.data.getUnitTypeData(unitType)?.abilityId || undefined);
 }
 
 function generalAbility({ _world: world }: Agent, abilityId: number): number {
     return world.data.getAbilityData(abilityId)?.remapsToAbilityId || abilityId;
 }
 
-function researchAbilityOf({ _world: world }: Agent, upgradeId: number): number | undefined {
+export function researchAbilityOf({ _world: world }: Agent, upgradeId: number): number | undefined {
     return researchRequirements[upgradeId]?.ability ?? world.data.getUpgradeData(upgradeId)?.abilityId;
 }
 
-function abilitiesCountAndBuildProgress(agent: Agent): AbilityProgress {
-    const { own } = context(agent);
+function abilitiesCountAndBuildProgress(agent: Agent, own = context(agent).own): AbilityProgress {
+    const { units } = agent._world.resources.get();
     const counts = new Map<number, number>();
     const maxProgress = new Map<number, number>();
+    const orders = own.flatMap((unit) => unit.orders ?? []);
+    orders.forEach((order) => increment(counts, order.abilityId!));
+
+    // A constructing SCV, or an add-on's parent, keeps its build order, so its structure is already counted
+    const hasBuildOrder = (abilityId: number, structure: Unit) =>
+        orders.some((order) => {
+            if (order.abilityId !== abilityId) return false;
+            const target = order.targetWorldSpacePos ?? units.getByTag(order.targetUnitTag!)?.pos;
+            return !!target && distance({ x: target.x!, y: target.y! }, structure.pos) < 1;
+        });
 
     own.forEach((unit) => {
-        (unit.orders ?? []).forEach((order) => increment(counts, order.abilityId!));
-
-        // Terran structures are counted from the constructing SCV's order instead
-        if (unit.buildProgress === 1 || (agent.race === Race.TERRAN && unit.isStructure())) return;
+        if (unit.buildProgress === 1) return;
 
         let abilityId: number | undefined;
+        let amount = 1;
         if (unit.unitType === UnitType.ARCHON) {
             abilityId = Ability.ARCHON_WARP_TARGET;
-            increment(counts, abilityId, 2);
-        } else if (CREATION_ABILITY_FIX[unit.unitType]) {
-            abilityId = CREATION_ABILITY_FIX[unit.unitType];
-            increment(counts, abilityId);
+            amount = 2;
         } else {
-            abilityId = creationAbility(agent, unit.unitType);
+            abilityId = CREATION_ABILITY_FIX[unit.unitType] ?? creationAbility(agent, unit.unitType);
             if (!abilityId) return;
-            increment(counts, abilityId);
         }
+        if (
+            agent.race === Race.TERRAN &&
+            unit.isStructure() &&
+            (reactorTypes.includes(unit.unitType) ||
+                techLabTypes.includes(unit.unitType) ||
+                hasBuildOrder(abilityId, unit))
+        ) {
+            return;
+        }
+        increment(counts, abilityId, amount);
         maxProgress.set(abilityId, Math.max(maxProgress.get(abilityId) ?? 0, unit.buildProgress ?? 0));
     });
 
     return { counts, maxProgress };
 }
 
-function selectBuildWorker(agent: Agent, position: Point2D, force = false): Unit | undefined {
-    const { mining } = agent._world.resources.get();
-    const mined = mining.isEnabled() ? mining.selectWorker(position, { forceClose: true, role: GATHERING }) : undefined;
-    if (mined) return mined;
+function trackedNotStarted(agent: Agent, own: Unit[], unitType: number, abilityId: number): number {
+    const active = agent._world.resources
+        .get()
+        .buildings.getTracked()
+        .filter(({ unitType: type, status }) => type === unitType && status !== 'done' && status !== 'failed');
+    if (active.length === 0) return 0;
 
-    const { workers } = context(agent);
-    const received = receivedThisFrame(agent);
-    const isIdle = (worker: Unit) => (worker.orders ?? []).length === 0;
-    const isGathering = (worker: Unit) =>
-        (worker.orders ?? []).length > 0 &&
-        generalAbility(agent, worker.orders![0].abilityId!) === Ability.HARVEST_GATHER;
-
-    const nearby = workers.filter(
-        (worker) => (isGathering(worker) || isIdle(worker)) && distance(worker.pos, position) < 20,
+    const ordered = new Set(
+        own.filter((unit) => (unit.orders ?? []).some((order) => order.abilityId === abilityId)).map(({ tag }) => tag),
     );
-    const candidates = nearby.length > 0 ? nearby : workers;
-    if (candidates.length === 0) return undefined;
-
-    const preferIdle = [...candidates]
-        .sort((left, right) => distance(left.pos, position) - distance(right.pos, position))
-        .sort((left, right) => Number(isIdle(right)) - Number(isIdle(left)));
-
-    const moveOrGather = [Ability.MOVE, Ability.GENERAL_MOVE, Ability.HARVEST_GATHER];
-    const builder = preferIdle.find(
-        (worker) =>
-            (!received.has(worker.tag!) && isIdle(worker)) ||
-            ((worker.orders ?? []).length === 1 &&
-                moveOrGather.includes(generalAbility(agent, worker.orders![0].abilityId!))),
-    );
-    if (builder) return builder;
-    return force ? randomOf(candidates) : undefined;
+    const structures = own.filter((unit) => unit.isStructure());
+    return active.filter(
+        ({ workerTag, target }) =>
+            !ordered.has(workerTag!) && !structures.some((structure) => distance(structure.pos, target) < 1),
+    ).length;
 }
 
 function issue(agent: Agent, command: SC2APIProtocol.ActionRawUnitCommand) {
     agent._world.resources.get().actions.queueAction(command);
 }
 
-function spend(agent: Agent, { minerals, vespene }: { minerals: number; vespene: number }, supply = 0) {
+export function spend(agent: Agent, { minerals, vespene }: Cost, supply = 0) {
     agent.minerals = (agent.minerals ?? 0) - minerals;
     agent.vespene = (agent.vespene ?? 0) - vespene;
     if (supply > 0) agent.foodUsed = (agent.foodUsed ?? 0) + supply;
 }
 
-async function buildNear(agent: Agent, unitType: number, near: Point2D, maxDistance: number): Promise<boolean> {
-    if (!agent.canAffordUnit(unitType)) return false;
-
-    const { actions } = context(agent);
-    const position = await actions.findPlacement(unitType, near, {
-        maxDistance,
-        randomAlternative: false,
-        placementStep: 1,
-    });
-    if (!position) return false;
-
-    const builder = selectBuildWorker(agent, near);
-    const abilityId = creationAbility(agent, unitType);
-    if (!builder || !abilityId) return false;
-
-    spend(agent, agent.calculateCost(unitType));
-    issue(agent, {
-        abilityId: generalAbility(agent, abilityId),
-        unitTags: [builder.tag!],
-        targetWorldSpacePos: position,
-        queueCommand: false,
-    });
-    return true;
+// Unlike agent.canAfford this never settles the earmark, which the tracker must keep until it sends BUILD
+export function affordable({ agent, data }: World, { minerals, vespene }: Cost, earmarkName?: string | null): boolean {
+    const reserved = data.getEarmarkTotals(earmarkName);
+    return (
+        (agent.minerals ?? 0) - reserved.minerals >= minerals &&
+        (!vespene || (agent.vespene ?? 0) - reserved.vespene >= vespene)
+    );
 }
 
 type MacroHelpers = Pick<
@@ -315,14 +258,14 @@ type MacroHelpers = Pick<
     | 'getNextExpansion'
     | 'ownedExpansions'
     | 'expandNow'
-    | 'distributeWorkers'
     | 'train'
     | 'research'
 >;
 
 export const macroHelpers: MacroHelpers & ThisType<Agent> = {
     alreadyPending(unitType) {
-        const { counts } = abilitiesCountAndBuildProgress(this);
+        const own = this._world.resources.get().units.getAlive(Alliance.SELF);
+        const { counts } = abilitiesCountAndBuildProgress(this, own);
 
         if (unitType === UnitType.ARCHON) return (counts.get(Ability.ARCHON_WARP_TARGET) ?? 0) / 2;
         if (CREATION_ABILITY_FIX[unitType]) return counts.get(CREATION_ABILITY_FIX[unitType]) ?? 0;
@@ -332,7 +275,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
             debug(`Unknown creation ability in alreadyPending for unit type ${unitType}`);
             return 0;
         }
-        return counts.get(abilityId) ?? 0;
+        return (counts.get(abilityId) ?? 0) + trackedNotStarted(this, own, unitType, abilityId);
     },
     alreadyPendingUpgrade(upgradeId) {
         if ((this.upgradeIds ?? []).includes(upgradeId)) return 1;
@@ -396,15 +339,14 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
             }).length;
     },
     async getNextExpansion() {
-        const { map, townhalls } = context(this);
+        const { map } = context(this);
         const { x, y } = map.getLocations().self;
         const start = { x, y };
 
         let closest: Point2D | null = null;
         let bestDistance = Infinity;
-        for (const location of map.getExpansionLocations()) {
-            if (townhalls.some((townhall) => distance(townhall.pos, location) < EXPANSION_GAP_THRESHOLD)) continue;
-
+        for (const expansion of map.getAvailableExpansions()) {
+            const location = townhallCenter(expansion);
             const pathingDistance = await map.queryPathing(start, location);
             if (pathingDistance === null) continue;
 
@@ -416,121 +358,31 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
         return closest;
     },
     ownedExpansions() {
-        const { map, townhalls } = context(this);
-        return map.getExpansionLocations().flatMap((location): OwnedExpansion[] => {
-            const townhall = townhalls.find((candidate) => distance(candidate.pos, location) < EXPANSION_GAP_THRESHOLD);
-            return townhall ? [{ location, townhall }] : [];
-        });
+        const { map } = context(this);
+        return map.getOccupiedExpansions().map(
+            (expansion): OwnedExpansion => ({
+                location: townhallCenter(expansion),
+                townhall: expansion.getBase()!,
+            }),
+        );
     },
-    async expandNow(unitType, maxDistance = 10, location) {
-        const building = unitType ?? START_TOWNHALL[this.race!];
+    async expandNow(unitType, location) {
+        const building = unitType ?? TownhallRace[this.race!]?.[0];
         const target = location ?? (await this.getNextExpansion());
         if (!target) {
             debug('Trying to expandNow() but bot is out of locations to expand to');
             return;
         }
-        await buildNear(this, building, target, maxDistance);
-    },
-    async distributeWorkers(resourceRatio = 2, { workersPerGas = 3 } = {}) {
-        if (!Number.isInteger(workersPerGas) || workersPerGas < 0 || workersPerGas > 3) {
-            throw new RangeError(`workersPerGas must be an integer from 0 to 3, got ${workersPerGas}`);
-        }
-        const { mineralFields, workers, townhalls, gasBuildings } = context(this);
-        const bases = townhalls.filter((townhall) => townhall.buildProgress === 1);
-        if (mineralFields.length === 0 || workers.length === 0 || bases.length === 0) return;
-
-        const workerPool = workers.filter((worker) => (worker.orders ?? []).length === 0);
-        const readyGas = gasBuildings.filter((gas) => gas.buildProgress === 1);
-        const deficitMiningPlaces: Unit[] = [];
-        const closestBase = (place: Unit) =>
-            bases.reduce((best, base) => (distance(base.pos, place.pos) < distance(best.pos, place.pos) ? base : best));
-
-        [...new Set([...bases, ...readyGas])].forEach((miningPlace) => {
-            const difference = miningPlace.vespeneContents
-                ? miningPlace.assignedHarvesters! - Math.min(miningPlace.idealHarvesters!, workersPerGas)
-                : miningPlace.surplusHarvesters();
-            if (!difference) return;
-
-            let localWorkers: Unit[];
-            if (miningPlace.vespeneContents) {
-                const base = closestBase(miningPlace);
-                localWorkers = workers.filter(
-                    (worker) =>
-                        orderTarget(worker) === miningPlace.tag ||
-                        (worker.isCarryingVespene() && orderTarget(worker) === base.tag),
-                );
-            } else {
-                const localMineralTags = new Set(
-                    mineralFields
-                        .filter((mineral) => distance(mineral.pos, miningPlace.pos) <= 8)
-                        .map((mineral) => mineral.tag),
-                );
-                localWorkers = workers.filter((worker) => {
-                    const target = orderTarget(worker);
-                    return (
-                        (typeof target === 'string' && localMineralTags.has(target)) ||
-                        (worker.isCarryingMinerals() && target === miningPlace.tag)
-                    );
-                });
-            }
-
-            if (difference > 0) {
-                workerPool.push(...localWorkers.slice(0, difference));
-            } else {
-                deficitMiningPlaces.push(...Array.from({ length: -difference }, () => miningPlace));
-            }
-        });
-
-        const allMineralsNearBase =
-            workerPool.length > deficitMiningPlaces.length
-                ? mineralFields.filter((mineral) => bases.some((base) => distance(mineral.pos, base.pos) <= 8))
-                : [];
-
-        const gather = (worker: Unit, target: Unit) =>
-            issue(this, {
-                abilityId: Ability.HARVEST_GATHER,
-                unitTags: [worker.tag!],
-                targetUnitTag: target.tag,
-                queueCommand: false,
-            });
-
-        const minerals = this.minerals ?? 0;
-        const vespene = this.vespene ?? 0;
-        const preferGas = !vespene || minerals / vespene >= resourceRatio;
-
-        for (const worker of workerPool) {
-            if (deficitMiningPlaces.length > 0) {
-                const preferred = deficitMiningPlaces.filter((place) => Boolean(place.vespeneContents) === preferGas);
-                const possiblePlaces = preferred.length > 0 ? preferred : deficitMiningPlaces;
-                const currentPlace = possiblePlaces.reduce((best, place) =>
-                    distance(place.pos, worker.pos) < distance(best.pos, worker.pos) ? place : best,
-                );
-                deficitMiningPlaces.splice(deficitMiningPlaces.indexOf(currentPlace), 1);
-
-                if (currentPlace.vespeneContents) {
-                    gather(worker, currentPlace);
-                } else {
-                    const localMinerals = mineralFields.filter(
-                        (mineral) => distance(mineral.pos, currentPlace.pos) <= 8,
-                    );
-                    if (localMinerals.length > 0) {
-                        gather(
-                            worker,
-                            localMinerals.reduce((best, mineral) =>
-                                (mineral.mineralContents ?? 0) > (best.mineralContents ?? 0) ? mineral : best,
-                            ),
-                        );
-                    }
-                }
-            } else if ((worker.orders ?? []).length === 0 && allMineralsNearBase.length > 0) {
-                gather(
-                    worker,
-                    allMineralsNearBase.reduce((best, mineral) =>
-                        distance(mineral.pos, worker.pos) < distance(best.pos, worker.pos) ? mineral : best,
-                    ),
-                );
-            }
-        }
+        const { buildings } = this._world.resources.get();
+        // money is only spent once BUILD is ordered, so canAfford keeps passing while the worker walks
+        const tracked = buildings
+            .getTracked()
+            .some(
+                ({ unitType, target: at, status }) =>
+                    unitType === building && status !== 'done' && status !== 'failed' && distance(at, target) < 1,
+            );
+        if (tracked || !this.canAfford(building)) return;
+        buildings.build(building, { at: target });
     },
     async train(unitType, amount = 1, closestTo, trainOnlyIdleBuildings = true) {
         if (this.techRequirementProgress(unitType) < 1) {
@@ -539,7 +391,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
             );
             return 0;
         }
-        if (!this.canAffordUnit(unitType)) return 0;
+        if (!this.canAfford(unitType, null, { supply: true })) return 0;
 
         const { structures, larva, own } = context(this);
         const received = receivedThisFrame(this);
@@ -547,7 +399,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
         const isProtoss = this.race === Race.PROTOSS;
         const isTerran = this.race === Race.TERRAN;
         const requiresTechlab = REQUIRES_TECHLAB.includes(unitType);
-        const canHaveAddons = producerTypes.some((producerType) => ADDON_PRODUCERS.includes(producerType));
+        const canHaveAddons = producerTypes.some((producerType) => addonHostTypes.includes(producerType));
         const reactorTags = new Set(
             structures
                 .filter((structure) => reactorTypes.includes(structure.unitType))
@@ -582,7 +434,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
 
         let trainedAmount = 0;
         for (const structure of producers) {
-            if (!this.canAffordUnit(unitType)) return trainedAmount;
+            if (!this.canAfford(unitType, null, { supply: true })) return trainedAmount;
 
             const eligible =
                 !received.has(structure.tag!) &&
@@ -610,7 +462,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
                 trainFrom(structure, false);
                 if (
                     isTerran &&
-                    this.canAffordUnit(unitType) &&
+                    this.canAfford(unitType, null, { supply: true }) &&
                     (structure.orders ?? []).length === 0 &&
                     trainedAmount + 1 < amount &&
                     !requiresTechlab &&
@@ -642,7 +494,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
 
         const { structures } = context(this);
         const received = receivedThisFrame(this);
-        const researchStructureTypes = RESEARCH_EQUIVALENT_STRUCTURES[researchStructureType] ?? [researchStructureType];
+        const researchStructureTypes = researcherEquivalents[researchStructureType] ?? [researchStructureType];
         const isProtoss = this.race === Race.PROTOSS;
 
         const facility = structures.find(

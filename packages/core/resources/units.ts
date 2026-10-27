@@ -1,41 +1,28 @@
 import filterArr from 'lodash.filter';
 import { distance } from '../utils/geometry/point.ts';
 import {
+    addonHost,
     combatTypes,
     constructionAbilities,
     gatheringAbilities,
     mineralFieldTypes,
     vespeneGeyserTypes,
     gasMineTypes,
+    researcherEquivalents,
 } from '../constants/groups.ts';
 import { UnitType } from '../constants/index.ts';
-import { Alliance, Attribute } from '../constants/enums.ts';
+import { trainedFrom } from '../constants/dicts/trained-from.ts';
+import { researchedFrom } from '../constants/dicts/researched-from.ts';
+import { Alliance } from '../constants/enums.ts';
 import { WorkerRace } from '../constants/race-map.ts';
 import { NodeSC2Error } from '../engine/errors.ts';
 import { Units } from './units-collection.ts';
 import type { Point2D, Unit, UnitResource, World } from '../types.ts';
 
-function getClosest(pos: Point2D, units: Unit[], n?: number): Units;
-function getClosest(pos: Point2D, units: SC2APIProtocol.PowerSource[], n?: number): SC2APIProtocol.PowerSource[];
-function getClosest(
-    pos: Point2D,
-    units: Unit[] | SC2APIProtocol.PowerSource[],
-    n = 1,
-): Units | SC2APIProtocol.PowerSource[] {
-    const closest = Array.from(units, (unit: Unit | SC2APIProtocol.PowerSource) => ({
-        unit,
-        distance: distance(pos, { x: unit.pos!.x!, y: unit.pos!.y! }),
-    }))
-        .sort((a, b) => a.distance - b.distance)
-        .map((entry) => entry.unit)
-        .slice(0, n);
-    return Units.from(closest as Unit[]);
-}
-
 const createdTypeByAbilityCache = new WeakMap<object, Map<number, number>>();
 
 // data-storage's findUnitTypesWithAbility maps to producers; an order needs the unit type it creates
-function createdTypeByAbility(world: World): Map<number, number> {
+export function createdTypeByAbility(world: World): Map<number, number> {
     const unitData: SC2APIProtocol.UnitTypeData[] = world.data.get('units');
     let createdTypes = createdTypeByAbilityCache.get(unitData);
     if (!createdTypes) {
@@ -79,7 +66,6 @@ function createUnits(world: World): UnitResource {
         withCurrentOrders(abilityId) {
             return this.getAlive(Alliance.SELF).filter((u) => u.orders!.some((o) => o.abilityId! === abilityId));
         },
-        getClosest,
         getMineralFields(filter) {
             return this.getAlive(filter).filter((unit) => mineralFieldTypes.includes(unit.unitType!));
         },
@@ -110,9 +96,7 @@ function createUnits(world: World): UnitResource {
             return this.getAlive(Alliance.SELF).filter((unit) => unit.unitType === UnitType.LARVA);
         },
         getStructures(filter = { alliance: Alliance.SELF }) {
-            return this.getAlive(filter).filter((unit) => {
-                return world.data.getUnitTypeData(unit.unitType!).attributes!.includes(Attribute.STRUCTURE);
-            });
+            return this.getAlive(filter).filter((unit) => unit.isStructure());
         },
         inProgress(unitTypeId) {
             return this.getAlive(Alliance.SELF)
@@ -234,26 +218,11 @@ function createUnits(world: World): UnitResource {
             });
         },
         getProductionUnits(unitTypeId) {
-            const abilityId = world.data.getUnitTypeData(unitTypeId).abilityId!;
-            let producerUnitTypeIds = world.data.findUnitTypesWithAbility(abilityId);
-
-            if (producerUnitTypeIds.length <= 0) {
-                const alias = world.data.getAbilityData(abilityId).remapsToAbilityId!;
-                producerUnitTypeIds = world.data.findUnitTypesWithAbility(alias);
-            }
-
-            return this.getById(producerUnitTypeIds);
+            return this.getById(addonHost[unitTypeId] ?? trainedFrom[unitTypeId] ?? []);
         },
         getUpgradeFacilities(upgradeId) {
-            const abilityId = world.data.getUpgradeData(upgradeId).abilityId!;
-            const remapsToAbilityId = world.data.getAbilityData(abilityId).remapsToAbilityId!;
-
-            const upgraderUnitTypeIds = [
-                ...world.data.findUnitTypesWithAbility(abilityId),
-                ...world.data.findUnitTypesWithAbility(remapsToAbilityId),
-            ];
-
-            return this.getById(upgraderUnitTypeIds);
+            const researcher = researchedFrom[upgradeId];
+            return this.getById(researcherEquivalents[researcher] ?? researcher ?? []);
         },
         getArmyValue(alliance = Alliance.SELF, { includePending = false, includeGhosts = true } = {}) {
             if (alliance !== Alliance.SELF && alliance !== Alliance.ENEMY)

@@ -140,6 +140,8 @@ const gasMineTypes: UnitTypeGroup = [
     UnitType.REFINERYRICH,
 ];
 
+const creepTumorTypes: UnitTypeGroup = [UnitType.CREEPTUMOR, UnitType.CREEPTUMORBURROWED, UnitType.CREEPTUMORQUEEN];
+
 const techLabTypes: UnitTypeGroup = [
     UnitType.TECHLAB,
     UnitType.BARRACKSTECHLAB,
@@ -451,13 +453,42 @@ const halfSupplyTypes: UnitTypeGroup = [
     UnitType.BANELINGCOCOON,
 ];
 
+const researcherEquivalents: Record<number, number[]> = {
+    [UnitType.SPIRE]: [UnitType.SPIRE, UnitType.GREATERSPIRE],
+    [UnitType.GREATERSPIRE]: [UnitType.SPIRE, UnitType.GREATERSPIRE],
+    [UnitType.HATCHERY]: [UnitType.HATCHERY, UnitType.LAIR, UnitType.HIVE],
+    [UnitType.LAIR]: [UnitType.HATCHERY, UnitType.LAIR, UnitType.HIVE],
+    [UnitType.HIVE]: [UnitType.HATCHERY, UnitType.LAIR, UnitType.HIVE],
+};
+
+// The API reports LURKERASPECTMPFROMHYDRALISKBURROWED instead of MORPH_LURKER, as python-sc2 patches
+const creationAbilityOverrides: Record<number, number> = {
+    [UnitType.LURKERMP]: Ability.MORPH_LURKER,
+};
+
+// trainedFrom has no add-ons, and the API remaps every add-on build to one generic ability all three hosts share
+const addonHost: Record<number, number> = {
+    [UnitType.BARRACKSTECHLAB]: UnitType.BARRACKS,
+    [UnitType.BARRACKSREACTOR]: UnitType.BARRACKS,
+    [UnitType.FACTORYTECHLAB]: UnitType.FACTORY,
+    [UnitType.FACTORYREACTOR]: UnitType.FACTORY,
+    [UnitType.STARPORTTECHLAB]: UnitType.STARPORT,
+    [UnitType.STARPORTREACTOR]: UnitType.STARPORT,
+};
+
+const addonHostTypes: UnitTypeGroup = [...new Set(Object.values(addonHost))];
+
 export {
+    addonHost,
+    addonHostTypes,
     addonTypes,
     attackingAbilities,
     carryingMineralsBuffs,
     carryingVespeneBuffs,
     combatTypes,
     constructionAbilities,
+    creationAbilityOverrides,
+    creepTumorTypes,
     flyingStructureTypes,
     gasMineTypes,
     gatheringAbilities,
@@ -465,6 +496,7 @@ export {
     mineralFieldTypes,
     reactorTypes,
     repairingAbilities,
+    researcherEquivalents,
     returningAbilities,
     scvConstructionAbilities,
     structureTypes,

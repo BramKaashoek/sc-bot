@@ -2,7 +2,6 @@ import { describe, expect, it, spyOn } from 'bun:test';
 import createAgent from './create-agent.ts';
 import { Ability, UnitType, Upgrade } from '../constants/index.ts';
 import { Alliance, Attribute, Race } from '../constants/enums.ts';
-import { GATHERING } from '../constants/unit-role.ts';
 import { createTestWorld, loadFixture, stepTo } from '../test/create-test-world.ts';
 import { observation, rawUnit, toyFixture, unitTypeData } from '../test/factories.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
@@ -48,70 +47,6 @@ const straightLinePathing = (query: SC2APIProtocol.RequestQuery): SC2APIProtocol
               })),
           }
         : undefined;
-
-async function distributeOnToy(
-    playerCommon: SC2APIProtocol.PlayerCommon,
-    {
-        assignedToBase = 15,
-        assignedToRefinery = 2,
-        extraUnits = [],
-        workersPerGas,
-    }: {
-        assignedToBase?: number;
-        assignedToRefinery?: number;
-        extraUnits?: SC2APIProtocol.Unit[];
-        workersPerGas?: number;
-    } = {},
-) {
-    const fixture = toyFixture();
-    fixture.data.units![UnitType.REFINERY] = unitTypeData(UnitType.REFINERY, {
-        attributes: [Attribute.ARMORED, Attribute.MECHANICAL, Attribute.STRUCTURE],
-    });
-    fixture.observations[0] = observation({
-        playerCommon,
-        units: [
-            rawUnit({
-                tag: 'mineral',
-                alliance: Alliance.NEUTRAL,
-                owner: 16,
-                unitType: UnitType.MINERALFIELD,
-                pos: { x: 2, y: 16.5, z: 10 },
-                mineralContents: 1800,
-            }),
-            rawUnit({
-                tag: 'farMineral',
-                alliance: Alliance.NEUTRAL,
-                owner: 16,
-                unitType: UnitType.MINERALFIELD,
-                pos: { x: 3, y: 12.5, z: 10 },
-                mineralContents: 1800,
-            }),
-            rawUnit({
-                tag: 'refinery',
-                unitType: UnitType.REFINERY,
-                pos: { x: 8.5, y: 24.5, z: 10 },
-                vespeneContents: 2250,
-                assignedHarvesters: assignedToRefinery,
-                idealHarvesters: 3,
-            }),
-            rawUnit({
-                tag: 'commandCenter',
-                unitType: UnitType.COMMANDCENTER,
-                pos: { x: 8.5, y: 16.5, z: 10 },
-                assignedHarvesters: assignedToBase,
-                idealHarvesters: 16,
-            }),
-            rawUnit({ tag: 'worker', pos: { x: 6, y: 16.5, z: 10 } }),
-            ...extraUnits,
-        ],
-    });
-    const world = await createTestWorld(fixture);
-    return (
-        await commandsAfterStep(world, fixture.observations[0], () =>
-            world.agent.distributeWorkers(2, { workersPerGas }),
-        )
-    ).commands;
-}
 
 describe('agent macro helpers', () => {
     it('reports the recorded build state: pending orders, upgrade progress, structure progress and tech requirement progress', async () => {
@@ -181,11 +116,33 @@ describe('agent macro helpers', () => {
         });
     });
 
-    it('counts a worker as en route to build only until its structure exists', async () => {
+    it('treats a finished tech-equivalent structure as the required tech', async () => {
+        const fixture = loadFixture('blueshift');
+        const { agent: unfinished } = await createTestWorld(fixture, { loop: 224 });
+        fixture.observations[224]
+            .observation!.rawData!.units!.filter((unit) => unit.unitType === UnitType.SUPPLYDEPOT)
+            .forEach((depot) => {
+                depot.unitType = UnitType.SUPPLYDEPOTLOWERED;
+                depot.buildProgress = 1;
+            });
+        const { agent: lowered } = await createTestWorld(fixture, { loop: 224 });
+
+        expect([unfinished.hasTechFor(UnitType.BARRACKS), lowered.hasTechFor(UnitType.BARRACKS)]).toEqual([
+            false,
+            true,
+        ]);
+    });
+
+    it('counts a worker as en route to build only until its structure exists, and an abandoned structure or add-on as pending once', async () => {
         const fixture = toyFixture();
         const buildDepot = (target: { x: number; y: number }) => [
             { abilityId: Ability.BUILD_SUPPLYDEPOT, targetWorldSpacePos: target, progress: 0 },
         ];
+        fixture.data.units![UnitType.BARRACKSREACTOR] = unitTypeData(UnitType.BARRACKSREACTOR, {
+            abilityId: Ability.BUILD_REACTOR_BARRACKS,
+            race: Race.TERRAN,
+            attributes: [Attribute.STRUCTURE],
+        });
         fixture.observations[0] = observation({
             units: [
                 ...fixture.observations[0].observation!.rawData!.units!,
@@ -198,15 +155,18 @@ describe('agent macro helpers', () => {
                     health: 200,
                     healthMax: 400,
                 }),
+                rawUnit({ unitType: UnitType.SUPPLYDEPOT, pos: { x: 20, y: 26, z: 10 }, buildProgress: 0.25 }),
+                rawUnit({ unitType: UnitType.BARRACKS, orders: [{ abilityId: Ability.BUILD_REACTOR_BARRACKS }] }),
+                rawUnit({ unitType: UnitType.BARRACKSREACTOR, buildProgress: 0.5 }),
             ],
         });
         const { agent } = await createTestWorld(fixture);
 
         expect({
             workerEnRouteToBuild: agent.workerEnRouteToBuild(UnitType.SUPPLYDEPOT),
-            alreadyPending: agent.alreadyPending(UnitType.SUPPLYDEPOT),
+            alreadyPending: [UnitType.SUPPLYDEPOT, UnitType.BARRACKSREACTOR].map((type) => agent.alreadyPending(type)),
             structureTypeBuildProgress: agent.structureTypeBuildProgress(UnitType.SUPPLYDEPOT),
-        }).toEqual({ workerEnRouteToBuild: 1, alreadyPending: 2, structureTypeBuildProgress: 0.5 });
+        }).toEqual({ workerEnRouteToBuild: 1, alreadyPending: [3, 1], structureTypeBuildProgress: 0.5 });
     });
 
     it('picks the closest reachable untaken expansion by pathing distance from the start location and expands there', async () => {
@@ -229,98 +189,43 @@ describe('agent macro helpers', () => {
         expect(await agent.getNextExpansion()).toEqual({ x: 69.5, y: 14.5 });
         pathingOverrides.clear();
         expect(await agent.getNextExpansion()).toEqual({ x: 14.5, y: 43.5 });
+        pathingOverrides.set('15.5,15.5', 1);
+        pathingOverrides.set('14.5,43.5', 2);
+        expect(await agent.getNextExpansion()).toEqual({ x: 14.5, y: 43.5 });
+        pathingOverrides.clear();
         expect(
             agent
                 .ownedExpansions()
                 .map(({ location, townhall }: { location: Point2D; townhall: Unit }) => [location, townhall.tag]),
         ).toEqual([[{ x: 15.5, y: 15.5 }, '4342677505']]);
 
-        const { commands } = await commandsAfterStep(world, world.client.fixture.observations[224], () =>
-            agent.expandNow(),
-        );
-        expect(commands).toEqual([
-            {
-                tag: '4343463937',
-                abilityId: Ability.BUILD_COMMANDCENTER,
-                targetWorldSpacePos: { x: 14.5, y: 43.5 },
-                queueCommand: false,
-            },
-        ]);
-    });
-
-    it('sends idle and surplus gas workers to the richest mineral patch of an undersaturated base', async () => {
-        const world = await createTestWorld('blueshift', { loop: 896 });
-
-        const { commands } = await commandsAfterStep(world, world.client.fixture.observations[896], () =>
-            world.agent.distributeWorkers(),
-        );
-
-        expect(commands).toEqual(
-            ['4345823233', '4343726081'].map((tag) => ({
-                tag,
-                abilityId: Ability.HARVEST_GATHER,
-                targetUnitTag: '4324851713',
-                queueCommand: false,
-            })),
-        );
-    });
-
-    it('sends an idle worker to the undersaturated resource the mineral-to-gas ratio favours over a closer one, then idle workers to the nearest base mineral, capping gas at workersPerGas', async () => {
-        expect(await distributeOnToy({ minerals: 100, vespene: 100 })).toEqual([
-            { tag: 'worker', abilityId: Ability.HARVEST_GATHER, targetUnitTag: 'mineral', queueCommand: false },
-        ]);
-        expect(await distributeOnToy({ minerals: 1000, vespene: 100 })).toEqual([
-            { tag: 'worker', abilityId: Ability.HARVEST_GATHER, targetUnitTag: 'refinery', queueCommand: false },
-        ]);
+        await agent.expandNow();
+        await agent.expandNow();
+        await agent.expandNow();
         expect(
-            await distributeOnToy(
-                { minerals: 100, vespene: 100 },
-                {
-                    assignedToBase: 17,
-                    extraUnits: [
-                        rawUnit({ tag: 'idleSecond', pos: { x: 4, y: 11, z: 10 } }),
-                        rawUnit({
-                            tag: 'surplusMiner',
-                            pos: { x: 3, y: 16.5, z: 10 },
-                            orders: [{ abilityId: Ability.HARVEST_GATHER, targetUnitTag: 'mineral' }],
-                        }),
-                    ],
-                },
-            ),
-        ).toEqual([
-            { tag: 'worker', abilityId: Ability.HARVEST_GATHER, targetUnitTag: 'refinery', queueCommand: false },
-            { tag: 'idleSecond', abilityId: Ability.HARVEST_GATHER, targetUnitTag: 'farMineral', queueCommand: false },
-        ]);
+            world.resources
+                .get()
+                .buildings.getTracked()
+                .map(({ unitType, target, status }) => ({ unitType, target, status })),
+        ).toEqual([{ unitType: UnitType.COMMANDCENTER, target: { x: 14.5, y: 43.5 }, status: 'moving' }]);
+    });
 
-        const gasWorkers = ['gasA', 'gasB', 'gasC'].map((tag) =>
-            rawUnit({
-                tag,
-                pos: { x: 8.5, y: 22, z: 10 },
-                orders: [{ abilityId: Ability.HARVEST_GATHER, targetUnitTag: 'refinery' }],
-            }),
-        );
-        const capped = await distributeOnToy(
-            { minerals: 100, vespene: 100 },
-            { assignedToBase: 12, assignedToRefinery: 3, extraUnits: gasWorkers, workersPerGas: 1 },
-        );
-        expect(capped.filter(({ tag }) => tag.startsWith('gas')).map(({ targetUnitTag }) => targetUnitTag)).toEqual([
-            'mineral',
-            'mineral',
-        ]);
+    it('does not expand below the townhall cost', async () => {
+        const world = await createTestWorld('blueshift', { loop: 0, onQuery: straightLinePathing });
 
-        expect(await distributeOnToy({ minerals: 1000, vespene: 100 }, { workersPerGas: 0 })).toEqual([
-            { tag: 'worker', abilityId: Ability.HARVEST_GATHER, targetUnitTag: 'mineral', queueCommand: false },
-        ]);
+        await world.agent.expandNow(undefined, { x: 14.5, y: 43.5 });
 
-        await expect(distributeOnToy({ minerals: 100, vespene: 100 }, { workersPerGas: 4 })).rejects.toThrow(
-            RangeError,
-        );
+        expect(world.resources.get().buildings.getTracked()).toEqual([]);
     });
 
     it('trains up to the amount from idle finished producers not ordered this step and researches only from an idle facility', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
         const { agent } = world;
         const { actions } = world.resources.get();
+
+        world.data.addEarmark({ name: 'saving', minerals: agent.minerals!, vespene: 0 });
+        expect(await agent.train(UnitType.MARINE)).toBe(0);
+        world.data.settleEarmark('saving');
 
         const { results, commands } = await commandsAfterStep(
             world,
@@ -489,59 +394,41 @@ describe('agent macro helpers', () => {
         expect(world.client.sent.actions.length).toBe(sentBefore + 1);
         expect(commands).toEqual([
             {
+                tag: '4342677505',
+                abilityId: Ability.TRAIN_SCV,
+                targetUnitTag: undefined,
+                targetWorldSpacePos: undefined,
+                queueCommand: false,
+            },
+            {
                 tag: '4343463937',
-                abilityId: Ability.BUILD_COMMANDCENTER,
+                abilityId: Ability.MOVE,
+                targetUnitTag: undefined,
                 targetWorldSpacePos: { x: 14.5, y: 43.5 },
                 queueCommand: false,
             },
-            { tag: '4342677505', abilityId: Ability.TRAIN_SCV, queueCommand: false },
         ]);
         expect(
             events
                 .read(reader)
                 .filter(({ name }) => name === 'commandResults')
                 .flatMap(({ data }) => (data as CommandResult[]).map(({ owner }) => owner)),
-        ).toEqual(['Macro', 'Macro']);
-    });
-
-    it('picks a builder that only has a move order when no worker is idle or gathering', async () => {
-        const fixture = loadFixture('blueshift');
-        const start = fixture.observations[224];
-        start
-            .observation!.rawData!.units!.filter((unit) => unit.unitType === UnitType.SCV)
-            .forEach((scv) => {
-                scv.orders = [{ abilityId: Ability.MOVE, targetWorldSpacePos: { x: 20, y: 20 } }];
-            });
-        const world = await createTestWorld(fixture, { loop: 224, onQuery: straightLinePathing });
-
-        const { commands } = await commandsAfterStep(world, start, () => world.agent.expandNow());
-
-        expect(commands.map(({ abilityId, targetWorldSpacePos }) => ({ abilityId, targetWorldSpacePos }))).toEqual([
-            { abilityId: Ability.BUILD_COMMANDCENTER, targetWorldSpacePos: { x: 14.5, y: 43.5 } },
-        ]);
+        ).toEqual(['Macro', 'role:BUILDING']);
     });
 
     it('builds with the worker mining selects when mining is enabled', async () => {
         const world = await createTestWorld('blueshift', { loop: 224, onQuery: straightLinePathing });
-        const { mining, units } = world.resources.get();
+        const { buildings, mining, units } = world.resources.get();
         mining.configure({ enabled: true });
         const worker = units.getWorkers().find((scv) => scv.tag !== '4343463937')!;
         const select = spyOn(mining, 'selectWorker').mockReturnValue(worker);
         const target = { x: 14.5, y: 43.5 };
 
-        const { commands } = await commandsAfterStep(world, world.client.fixture.observations[224], () =>
-            world.agent.expandNow(undefined, 10, target),
-        );
+        await world.agent.expandNow(undefined, target);
 
-        expect(select.mock.calls[0]).toEqual([target, { forceClose: true, role: GATHERING }]);
-        expect(commands.filter(({ abilityId }) => abilityId === Ability.BUILD_COMMANDCENTER)).toEqual([
-            {
-                tag: worker.tag!,
-                abilityId: Ability.BUILD_COMMANDCENTER,
-                targetWorldSpacePos: target,
-                targetUnitTag: undefined,
-                queueCommand: false,
-            },
+        expect(select.mock.calls[0]).toEqual([target, expect.objectContaining({ forceClose: true })]);
+        expect(buildings.getTracked().map(({ unitType, workerTag }) => ({ unitType, workerTag }))).toEqual([
+            { unitType: UnitType.COMMANDCENTER, workerTag: worker.tag },
         ]);
     });
 

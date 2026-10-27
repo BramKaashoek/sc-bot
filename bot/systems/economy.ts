@@ -13,7 +13,7 @@ export default createSystem({
     async onUnitFinished({ resources }, building) {
         if (building.isGasMine()) {
             const { units, actions } = resources.get();
-            const workers = units.getClosest(building.pos, units.getMineralWorkers(), 3);
+            const workers = units.getMineralWorkers().closestNUnits(building.pos, 3);
             return actions.mine(workers, building);
         }
     },

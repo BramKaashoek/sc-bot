@@ -8,6 +8,7 @@ import { findMap, launcher } from '../engine/launcher.ts';
 import { Alliance, Difficulty, PlayerType, Race } from '../constants/enums.ts';
 import * as Ability from '../constants/ability.ts';
 import * as UnitType from '../constants/unit-type.ts';
+import { addonHostTypes } from '../constants/groups.ts';
 import { spawnUnits } from '../test/spawn-units.ts';
 import type { Point2D, World } from '../types.ts';
 
@@ -79,7 +80,6 @@ const MIN_SETTLE_STEPS = 4;
 const TECH_TREE = 10 as SC2APIProtocol.DebugGameState;
 const MAX_SETTLE_STEPS = 40;
 const STRUCTURE_ATTRIBUTE = 8 as SC2APIProtocol.Attribute;
-const ADDON_PRODUCERS = [UnitType.BARRACKS, UnitType.FACTORY, UnitType.STARPORT];
 const SIZE_WARNING_BYTES = 2 * 1024 * 1024;
 const PATHING_PAIRS = 300;
 const UNIT_PATHING = 30;
@@ -578,7 +578,7 @@ function createCapture(target: MapTarget, dir: string, { observeDirect, frameRes
 
         if (typePhase === 'settle') {
             await recordTypeAbilities(spawned);
-            const producers = spawned.filter((unit) => ADDON_PRODUCERS.includes(unit.unitType!));
+            const producers = spawned.filter((unit) => addonHostTypes.includes(unit.unitType!));
             if (producers.length > 0)
                 await unitCommand(
                     Ability.BUILD_TECHLAB,

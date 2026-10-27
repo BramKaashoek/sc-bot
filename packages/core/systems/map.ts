@@ -10,6 +10,7 @@ import floodFill from '../utils/map/flood.ts';
 import { distanceAAShapeAndPoint } from '../utils/geometry/plane.ts';
 import { distance, avgPoints, areEqual, closestPoint, createPoint2D, getNeighbors } from '../utils/geometry/point.ts';
 import { frontOfGrid } from '../utils/map/region.ts';
+import { claimableCells, livePathing, releasableCells } from '../utils/map/blockers.ts';
 import { gridsInCircle } from '../utils/geometry/angle.ts';
 import {
     MineralField,
@@ -43,16 +44,22 @@ type PointCluster = Point2D[] & { centroid?: Point2D };
 type BlockedStructure = { unitType: number; pos: Point2D };
 
 // mapSystem is a shared module object, so per-game state is keyed by world
-const blockedEnemyStructures = new WeakMap<World, Map<string, BlockedStructure>>();
+const blockedStructures = new WeakMap<
+    World,
+    { own: Map<string, BlockedStructure>; enemy: Map<string, BlockedStructure> }
+>();
 
-function enemyBlocks(world: World) {
-    let blocked = blockedEnemyStructures.get(world);
+function structureBlocks(world: World) {
+    let blocked = blockedStructures.get(world);
     if (!blocked) {
-        blocked = new Map();
-        blockedEnemyStructures.set(world, blocked);
+        blocked = { own: new Map(), enemy: new Map() };
+        blockedStructures.set(world, blocked);
     }
     return blocked;
 }
+
+// uprooted crawlers count as ground structures but walk, so they hold no cells
+const mobileStructureTypes = [...flyingStructureTypes, UnitType.SPINECRAWLERUPROOTED, UnitType.SPORECRAWLERUPROOTED];
 
 const cellKey = ({ x, y }: Point2D) => `${x},${y}`;
 
@@ -62,28 +69,33 @@ function blockStructure(world: World, unitType: number, pos: Point2D) {
     pathingCells(world, unitType, pos).forEach((cell) => map.setPathable(cell, false));
 }
 
+function blockOwnStructure(world: World, unit: Unit) {
+    blockStructure(world, unit.unitType!, unit.pos);
+    if (unit.isGasMine()) return;
+
+    structureBlocks(world).own.set(unit.tag!, { unitType: unit.unitType!, pos: { x: unit.pos.x, y: unit.pos.y } });
+}
+
 // own and enemy footprints can overlap through a stale enemy record, so a cell another structure still covers stays blocked
-function releaseStructure(world: World, tag: string, unitType: number, pos: Point2D, { placement = true } = {}) {
-    const { map, units } = world.resources.get();
+function heldCells(world: World, tag: string, pos: Point2D, reach = 5) {
     const heldPlacement = new Set<string>();
     const heldPathing = new Set<string>();
     const hold = (heldType: number, heldPos: Point2D) => {
-        // footprints are at most 5x5, so farther centres can't share a cell
-        if (Math.abs(heldPos.x - pos.x) >= 5 || Math.abs(heldPos.y - pos.y) >= 5) return;
+        // structure footprints are at most 5x5, so farther centres can't share a cell
+        if (Math.abs(heldPos.x - pos.x) >= reach || Math.abs(heldPos.y - pos.y) >= reach) return;
         footprintCells(world, heldType, heldPos).forEach((cell) => heldPlacement.add(cellKey(cell)));
         pathingCells(world, heldType, heldPos).forEach((cell) => heldPathing.add(cellKey(cell)));
     };
-    enemyBlocks(world).forEach((other, otherTag) => otherTag !== tag && hold(other.unitType, other.pos));
-    units
-        .getAlive(Alliance.SELF)
-        .filter(
-            (own) =>
-                own.tag !== tag &&
-                own.isStructure() &&
-                !own.isGasMine() &&
-                !flyingStructureTypes.includes(own.unitType!),
-        )
-        .forEach((own) => hold(own.unitType!, own.pos));
+    const { own, enemy } = structureBlocks(world);
+    for (const [otherTag, other] of [...own, ...enemy]) {
+        if (otherTag !== tag) hold(other.unitType, other.pos);
+    }
+    return { heldPlacement, heldPathing };
+}
+
+function releaseStructure(world: World, tag: string, unitType: number, pos: Point2D, { placement = true } = {}) {
+    const { map } = world.resources.get();
+    const { heldPlacement, heldPathing } = heldCells(world, tag, pos);
 
     if (placement) {
         footprintCells(world, unitType, pos)
@@ -98,7 +110,7 @@ function releaseStructure(world: World, tag: string, unitType: number, pos: Poin
 // unitCreated and unitTypeChanged are own-only, so enemy structures are diffed against what was blocked for them
 function reconcileEnemyStructures(world: World) {
     const { units, map } = world.resources.get();
-    const blocked = enemyBlocks(world);
+    const blocked = structureBlocks(world).enemy;
     const inSight = new Set<string>();
 
     // getStructures throws on unknown types; isStructure doesn't
@@ -115,7 +127,7 @@ function reconcileEnemyStructures(world: World) {
             releaseStructure(world, tag!, record.unitType, record.pos);
         }
 
-        if (flyingStructureTypes.includes(unitType!) || !getFootprint(unitType!, footprintData(world))) continue;
+        if (mobileStructureTypes.includes(unitType!) || !getFootprint(unitType!, footprintData(world))) continue;
 
         blocked.set(tag!, { unitType: unitType!, pos: { x: pos.x, y: pos.y } });
         blockStructure(world, unitType!, pos);
@@ -141,6 +153,86 @@ function assignBase(map: MapResource, townhall: Unit) {
 
 // live SC2 lets ground units cross unbuildable rocks, bricks and plates, but not rocks, debris or Xel'Naga towers
 const walkableBlockerTypes = [...unbuildablePlateTypes, UnitType.UNBUILDABLEROCKSDESTRUCTIBLE];
+
+const blockerCells = new WeakMap<World, Map<string, Point2D[]>>();
+
+function blockerClaims(world: World) {
+    let claims = blockerCells.get(world);
+    if (!claims) {
+        claims = new Map();
+        blockerCells.set(world, claims);
+    }
+    return claims;
+}
+
+const isRockOrTower = (unit: Unit) =>
+    unit.alliance === Alliance.NEUTRAL &&
+    unit.isStructure() &&
+    !mineralFieldTypes.includes(unit.unitType!) &&
+    !vespeneGeyserTypes.includes(unit.unitType!);
+
+// footprints can't shape huge, diagonal or ramp rocks, so their cells come from SC2's live pathing grid
+async function claimNewBlockers(world: World) {
+    const { units, map } = world.resources.get();
+    const claims = blockerClaims(world);
+    const fresh = [...units.getDestructables(), ...units.getWatchtowers()].filter(
+        (blocker) => blocker.isStructure() && !claims.has(blocker.tag!),
+    );
+    if (fresh.length === 0) return;
+
+    const firstClaim = claims.size === 0;
+    fresh.forEach((blocker) => claims.set(blocker.tag!, []));
+    const live = await livePathing(world);
+    if (!live) return;
+
+    const changed: Point2D[] = [];
+    for (const blocker of fresh) {
+        const cells = claimableCells(world, blocker, live);
+        claims.set(blocker.tag!, cells);
+        cells.forEach((cell) => {
+            if (map.isPlaceable(cell) || map.isPathable(cell)) changed.push(cell);
+            map.setPlaceable(cell, false);
+            map.setPathable(cell, false);
+        });
+    }
+
+    if (firstClaim) recalculateNaturalWall(world, changed);
+}
+
+// the natural wall is found at game start, before the live grid shows flat rocks
+function recalculateNaturalWall(world: World, rockCells: Point2D[]) {
+    const natural = world.resources.get().map.getNatural();
+    if (!natural?.areas) return;
+
+    const { areaFill, hull } = natural.areas;
+    const searched = new Set(
+        [...areaFill, ...hull].flatMap((cell) => [cell, ...getNeighbors(cell)]).map((cell) => cellKey(cell)),
+    );
+    if (!rockCells.some((cell) => searched.has(cellKey(cell)))) return;
+
+    natural.areas = updateAreas(world, natural).areas;
+    calculateWall(world, natural);
+}
+
+async function releaseBlocker(world: World, blocker: Unit) {
+    const { map } = world.resources.get();
+    const { tag, unitType, pos, radius = 0 } = blocker;
+    const claims = blockerClaims(world);
+    const claimed = claims.get(tag!) ?? [];
+    claims.delete(tag!);
+    const footprint = getFootprint(unitType!, footprintData(world)) ? footprintCells(world, unitType!, pos) : [];
+
+    const live = await livePathing(world);
+    if (!live) {
+        if (footprint.length > 0) releaseStructure(world, tag!, unitType!, pos);
+        return;
+    }
+
+    const { heldPlacement, heldPathing } = heldCells(world, tag!, pos, radius + 3);
+    const { pathing, placement } = releasableCells(world, blocker, [...claimed, ...footprint], live);
+    pathing.filter((cell) => !heldPathing.has(cellKey(cell))).forEach((cell) => map.setPathable(cell, true));
+    placement.filter((cell) => !heldPlacement.has(cellKey(cell))).forEach((cell) => map.setPlaceable(cell, true));
+}
 
 const placementBlockers = (world: World) => {
     const { units } = world.resources.get();
@@ -426,6 +518,8 @@ const mapSystem: MapSystem = {
     },
     async onGameStart(world: World) {
         const { units, frame, map, debug } = world.resources.get();
+        blockedStructures.delete(world);
+        blockerCells.delete(world);
         const startRaw = frame.getGameInfo().startRaw!;
 
         const ownStartingTh = units.getAlive(Alliance.SELF).find((u) => u.isTownhall());
@@ -498,6 +592,7 @@ const mapSystem: MapSystem = {
         };
 
         map.setMapState(mapState);
+        await claimNewBlockers(world);
         reconcileEnemyStructures(world);
 
         const currEffectData = map.getEffects();
@@ -580,7 +675,7 @@ const mapSystem: MapSystem = {
     async onUnitCreated(world, newUnit) {
         const { map, frame } = world.resources.get();
 
-        if (newUnit.isStructure()) blockStructure(world, newUnit.unitType!, newUnit.pos);
+        if (newUnit.isStructure()) blockOwnStructure(world, newUnit);
 
         if (newUnit.isTownhall()) {
             debugDebug(`new townhall detected: ${UnitTypeId[newUnit.unitType!]}`);
@@ -592,36 +687,48 @@ const mapSystem: MapSystem = {
         }
     },
     async onUnitDestroyed(world, deadUnit) {
-        if (deadUnit.alliance === Alliance.ENEMY) {
-            const record = enemyBlocks(world).get(deadUnit.tag!);
-            if (!record) return;
-
-            enemyBlocks(world).delete(deadUnit.tag!);
-            releaseStructure(world, deadUnit.tag!, record.unitType, record.pos);
+        if (deadUnit.alliance === Alliance.NEUTRAL) {
+            if (isRockOrTower(deadUnit)) await releaseBlocker(world, deadUnit);
+            else if (deadUnit.isStructure()) releaseStructure(world, deadUnit.tag!, deadUnit.unitType!, deadUnit.pos);
             return;
         }
 
-        if (deadUnit.isStructure() && !deadUnit.isGasMine()) {
-            releaseStructure(world, deadUnit.tag!, deadUnit.unitType!, deadUnit.pos);
-        }
+        const { own, enemy } = structureBlocks(world);
+        const blocked = deadUnit.alliance === Alliance.ENEMY ? enemy : own;
+        const record = blocked.get(deadUnit.tag!);
+        if (!record) return;
+
+        blocked.delete(deadUnit.tag!);
+        releaseStructure(world, deadUnit.tag!, record.unitType, record.pos);
     },
     async onUnitTypeChanged(world, { unit, previousType }) {
-        const wasFlying = flyingStructureTypes.includes(previousType);
-        const isFlying = flyingStructureTypes.includes(unit.unitType!);
+        const wasFlying = mobileStructureTypes.includes(previousType);
+        const isFlying = mobileStructureTypes.includes(unit.unitType!);
         const { map } = world.resources.get();
+        const { own } = structureBlocks(world);
+        const record = own.get(unit.tag!);
 
         if (wasFlying === isFlying) {
-            if (isFlying || !unit.isStructure()) return;
+            if (!record) return;
 
-            releaseStructure(world, unit.tag!, previousType, unit.pos, { placement: false });
-            pathingCells(world, unit.unitType!, unit.pos).forEach((cell) => map.setPathable(cell, false));
+            releaseStructure(world, unit.tag!, record.unitType, record.pos, { placement: false });
+            pathingCells(world, unit.unitType!, record.pos).forEach((cell) => map.setPathable(cell, false));
+            record.unitType = unit.unitType!;
             return;
         }
 
         if (isFlying) {
-            releaseStructure(world, unit.tag!, previousType, unit.pos);
+            map.getExpansions()
+                .filter((expansion) => expansion.base === unit.tag)
+                .forEach((expansion) => delete expansion.base);
+            if (!record) return;
+
+            // the unit may already have walked or flown off its site by the time the new type is observed
+            own.delete(unit.tag!);
+            releaseStructure(world, unit.tag!, record.unitType, record.pos);
         } else {
-            blockStructure(world, unit.unitType!, unit.pos);
+            blockOwnStructure(world, unit);
+            if (unit.isTownhall()) assignBase(map, unit);
         }
     },
     async onEnemyFirstSeen({ resources }, scoutedUnit) {

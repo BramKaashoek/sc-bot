@@ -175,7 +175,7 @@ describe('mining', () => {
         expect(counts(world, PATCHES)).toEqual(Array(8).fill(0));
     });
 
-    it('selects builders out of the bookkeeping, preferring unassigned gatherers unless forceClose', async () => {
+    it('selects builders out of the bookkeeping, preferring unassigned gatherers unless forceClose, skipping excluded tags', async () => {
         const { world, step } = await miningWorld();
         const { mining, roles } = world.resources.get();
         await step();
@@ -190,6 +190,9 @@ describe('mining', () => {
         expect(roles.roleOf(builder)).toBe(GATHERING);
         expect(mining.selectWorker(near, { minHealth: 1.1 })).toBeUndefined();
         expect(mining.selectWorker({ x: 9, y: 16 }, { role: GATHERING })!.tag).toBe(builder.tag);
+        expect(
+            mining.selectWorker({ x: 9, y: 16 }, { role: GATHERING, exclude: new Set([builder.tag]) })!.tag,
+        ).not.toBe(builder.tag);
         expect(mining.selectWorker(near, { forceClose: true, role: GATHERING })!.tag).not.toBe(builder.tag);
 
         await step();

@@ -1,5 +1,6 @@
-import { Alliance } from '../constants/enums.ts';
-import { gasMineTypes, townhallTypes, workerTypes } from '../constants/groups.ts';
+import { Alliance, Race } from '../constants/enums.ts';
+import { creepTumorTypes, gasMineTypes, townhallTypes, workerTypes } from '../constants/groups.ts';
+import { TownhallRace } from '../constants/race-map.ts';
 import * as UnitType from '../constants/unit-type.ts';
 import { distance } from '../utils/geometry/point.ts';
 import { Units } from './units-collection.ts';
@@ -13,6 +14,7 @@ import type {
     Unit,
     World,
 } from '../types.ts';
+import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
 
 const DEFAULT_SETTINGS: IntelSettings = {
     groundNearBase: 15,
@@ -22,10 +24,6 @@ const DEFAULT_SETTINGS: IntelSettings = {
     greedyTwoBaseBefore: 65,
     greedyThreeHatchBefore: 90,
 };
-
-const LOOPS_PER_SECOND = 22.4;
-const CREEP_TUMORS = [UnitType.CREEPTUMOR, UnitType.CREEPTUMORBURROWED, UnitType.CREEPTUMORQUEEN];
-const HATCHERIES = [UnitType.HATCHERY, UnitType.LAIR, UnitType.HIVE];
 
 type Kind = 'ground' | 'air';
 
@@ -59,7 +57,7 @@ function proxiesOf(enemies: Unit[], { ownStart, enemyStart }: Places): Unit[] {
     return enemies.filter(
         (unit) =>
             unit.isStructure() &&
-            !CREEP_TUMORS.includes(unit.unitType) &&
+            !creepTumorTypes.includes(unit.unitType) &&
             !gasMineTypes.includes(unit.unitType) &&
             within(unit, ownStart, 100) &&
             beyond(unit, enemyStart, 60),
@@ -84,7 +82,7 @@ function evaluateFlags(world: World, state: IntelState): IntelFlag[] {
 
     townhalls.forEach((townhall) => {
         if (state.townhallStarts.has(townhall.tag!)) return;
-        const buildSeconds = (world.data.getUnitTypeData(townhall.unitType)?.buildTime ?? 0) / LOOPS_PER_SECOND;
+        const buildSeconds = (world.data.getUnitTypeData(townhall.unitType)?.buildTime ?? 0) / GAME_LOOPS_PER_SECOND;
         state.townhallStarts.set(townhall.tag!, t - (townhall.buildProgress ?? 1) * buildSeconds);
     });
     const startedBefore = (group: Unit[], seconds: number) =>
@@ -131,11 +129,11 @@ function evaluateFlags(world: World, state: IntelState): IntelFlag[] {
     flags.proxy = t < 240 && proxiesOf(enemies, at).length > 0;
     flags.greedy =
         startedBefore(
-            townhalls.filter((townhall) => !HATCHERIES.includes(townhall.unitType)),
+            townhalls.filter((townhall) => !TownhallRace[Race.ZERG].includes(townhall.unitType)),
             state.settings.greedyTwoBaseBefore,
         ) >= 2 ||
         startedBefore(
-            townhalls.filter((townhall) => HATCHERIES.includes(townhall.unitType)),
+            townhalls.filter((townhall) => TownhallRace[Race.ZERG].includes(townhall.unitType)),
             state.settings.greedyThreeHatchBefore,
         ) >= 3;
     flags.rushed =

@@ -57,7 +57,7 @@ describe('UnitResource', () => {
         );
         let workers = units.getWorkers(true);
         workers = workers.filter((worker) => worker.isGathering());
-        workers = units.getClosest({ x: 15.5, y: 15.5 }, workers, 3);
+        workers = workers.closestNUnits({ x: 15.5, y: 15.5 }, 3);
         workers = workers.concat(units.getByTag([OVERLORD])).slice(1);
         expect([workers instanceof Units, workers.length]).toEqual([true, 3]);
         expect(tagsOf(units.getBases())).toEqual(['4342677505']);
@@ -80,10 +80,6 @@ describe('UnitResource', () => {
         expect(units.getWatchtowers()).toHaveLength(2);
         expect(units.getLarva()).toHaveLength(0);
         expect(tagsOf(units.getProductionUnits(UnitType.SCV))).toEqual(['4342677505']);
-        expect([
-            units.getProductionUnits(UnitType.QUEEN).length,
-            units.getUpgradeFacilities(Upgrade.BURROW).length,
-        ]).toEqual([0, 0]);
         expect(units.getByTag('404')).toBeUndefined();
         expect(tagsOf(units.getByTag([OVERLORD, '404', ZERGLINGS[0]]))).toEqual([OVERLORD, ZERGLINGS[0]]);
 
@@ -94,12 +90,54 @@ describe('UnitResource', () => {
         expect([...clonedLabels]).toEqual([['scouted', 896]]);
 
         const larva = rawUnit({ unitType: UnitType.LARVA, pos: { x: 17, y: 12, z: 12 }, health: 25, healthMax: 25 });
+        const [gateway, warpGate, hydralisk, hydraliskDen, lurkerDen, lair, greaterSpire, cyberneticsCore, factory] = [
+            UnitType.GATEWAY,
+            UnitType.WARPGATE,
+            UnitType.HYDRALISK,
+            UnitType.HYDRALISKDEN,
+            UnitType.LURKERDENMP,
+            UnitType.LAIR,
+            UnitType.GREATERSPIRE,
+            UnitType.CYBERNETICSCORE,
+            UnitType.FACTORY,
+        ].map((unitType) => rawUnit({ unitType }));
         await stepTo(
             world,
-            editedObservation(world, 896, 900, (raws) => [...raws, larva]),
+            editedObservation(world, 896, 900, (raws) => [
+                ...raws,
+                larva,
+                gateway,
+                warpGate,
+                hydralisk,
+                hydraliskDen,
+                lurkerDen,
+                lair,
+                greaterSpire,
+                cyberneticsCore,
+                factory,
+            ]),
         );
 
         expect(tagsOf(units.getLarva())).toEqual([larva.tag]);
+        expect({
+            zealot: sortedTags(units.getProductionUnits(UnitType.ZEALOT)),
+            lurker: tagsOf(units.getProductionUnits(UnitType.LURKERMP)),
+            barracksTechlab: sortedTags(units.getProductionUnits(UnitType.BARRACKSTECHLAB)),
+            groovedSpines: tagsOf(units.getUpgradeFacilities(Upgrade.EVOLVEGROOVEDSPINES)),
+            seismicSpines: tagsOf(units.getUpgradeFacilities(Upgrade.LURKERRANGE)),
+            overlordSpeed: tagsOf(units.getUpgradeFacilities(Upgrade.OVERLORDSPEED)),
+            flyerWeapons: tagsOf(units.getUpgradeFacilities(Upgrade.ZERGFLYERWEAPONSLEVEL1)),
+            hallucination: tagsOf(units.getUpgradeFacilities(Upgrade.HALTECH)),
+        }).toEqual({
+            zealot: [gateway.tag, warpGate.tag].sort(),
+            lurker: [hydralisk.tag],
+            barracksTechlab: sortedTags(units.getById(UnitType.BARRACKS)),
+            groovedSpines: [hydraliskDen.tag],
+            seismicSpines: [lurkerDen.tag],
+            overlordSpeed: [lair.tag],
+            flyerWeapons: [greaterSpire.tag],
+            hallucination: [cyberneticsCore.tag],
+        });
     });
 
     it('finds unfinished structures of a type near a spot plus workers ordered to build one there', async () => {

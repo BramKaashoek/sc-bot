@@ -6,8 +6,8 @@ Please note, this project adheres to [Semantic Versioning](https://semver.org/sp
 - [v0.8.2 - 2019-01-11](#v082---2019-01-11)
 - [v0.8.1 - 2019-01-08](#v081---2019-01-08)
 - [v0.8.0 - 2019-01-01](#v080---2019-01-01)
-- [v0.7.1 - 2018-12-17](#v071---2018-12-17)
-- [v0.7.0 - 2018-12-14](#v070---2018-12-14)
+- [v0.7.1 - 2018-12-17](#071---2018-12-17)
+- [v0.7.0 - 2018-12-14](#070---2018-12-14)
 
 ## Unreleased
 
@@ -110,7 +110,7 @@ Please note, this project adheres to [Semantic Versioning](https://semver.org/sp
 - Build-system Terran and Protoss structure tasks now use precomputed spots and the tracker. Spots differ from the ring search; a `placer.place` hook still wins.
 - The map placement grid now frees cells when a structure lifts off.
 - Optional: replace `findPlacement` for depots and production with `placement.request` or `buildings.build`; `wall.ts` can use the spots flagged `wall`; supply hand-tuned spots through `placer.placements`.
-- Optional: enable mining with `mining.configure({ enabled: true })` instead of relying on SC2's auto-mining, and then stop calling `distributeWorkers`, which competes with it. Worker pulls from the bot's systems keep working: they run at priority 0 against mining's -10.
+- Optional: enable mining with `mining.configure({ enabled: true })` instead of relying on SC2's auto-mining, and then stop calling `distributeWorkers`, which competes with it (`distributeWorkers` was removed in Consolidation). Worker pulls from the bot's systems keep working: they run at priority 0 against mining's -10.
 - Optional: use `flying.addonSwap` instead of hand-rolled add-on swaps. Note that flying commands run at priority 10, so commands from the bot to a structure in transit are dropped as outranked until its plan ends or you call `flying.cancel`; a plan whose destination never accepts a landing is re-proposed every step until then.
 
 ### parity-6a: map analysis, config file, chat debug, enemy race, workers per gas
@@ -134,7 +134,7 @@ Please note, this project adheres to [Semantic Versioning](https://semver.org/sp
 - Code that cached `agent.opponent.race` at game start should read it again later or handle `onEnemyRaceDetected`.
 - Optional: use `mapAnalysis.getDefensivePosition(map.getNatural())` instead of hand-coded natural defence spots, and `getDefensiveThird()` for the safer third.
 - Optional: set `features.chatDebug` to spawn and kill units from chat while testing.
-- Optional: pass `{ workersPerGas }` to `distributeWorkers` for a mineral-heavy split.
+- Optional: pass `{ workersPerGas }` to `distributeWorkers` for a mineral-heavy split. Superseded: `distributeWorkers` was removed in Consolidation; `workersPerGas` is a `mining` setting.
 - A `configure()` call made once after `createEngine` is overridden by the config file's section from the second game on; call it from `setup` or `onGameStart`.
 
 ### Phase 5: behaviors and macro controllers
@@ -186,6 +186,87 @@ Please note, this project adheres to [Semantic Versioning](https://semver.org/sp
 - Optional: move builds into `openings` on the build system, or into `sc-bot.config.json` under `resources.openings` with `openings: 'config'`; set `dataDir` to choose per opponent from history; call `switchOpening` on scouting results.
 - Don't call `openings.record`.
 - Ares openings that use `tempestgroundattackupgrade` don't parse: that upgrade isn't in the game data.
+
+### Consolidation: one way to do each thing
+
+#### Added
+- `distance`, `distanceSquared`, `towards`, `avgPoints` and `closestPoint` exported from the package root.
+- `GAME_LOOPS_PER_SECOND` (22.4) in `@sc-bot/core/constants/time`.
+- `mining.selectWorker(near, { exclude })`: tags that are never picked.
+- Shared unit-type tables in `@sc-bot/core/constants/groups`: `addonHost`, `addonHostTypes`, `creepTumorTypes`, `researcherEquivalents`, `creationAbilityOverrides`.
+- `FlyingTownhallRace` (Terran: flying command center and orbital) and `TownhallWithFlyingRace` (each race's townhalls plus its flying ones) in `@sc-bot/core/constants/race-map`.
+- `bun run check:data`: fails and names each committed generated file in `constants/` that differs from a fresh `generate:data` run; the test suite runs it too. `generate:data` now formats its output with the repo's biome, so a regeneration on a clean tree leaves no diff, and `CONSTANTS_DIR` changes its target folder.
+
+#### Fixed
+- Rich gas buildings (`EXTRACTORRICH`, `ASSIMILATORRICH`, `REFINERYRICH`) are in `gasMineTypes` and the `MINERALFIELD450`, opaque and purifier variants in `mineralFieldTypes`, so `Unit.isGasMine`, `units.getGasMines` and mineral-field consumers cover them.
+- `drawDebug` output shows without the `sc2:debug:DebugSystem` env: the debug system flushes whenever `debug.touched` is set.
+- A stuck-worker check removes only the worker's `command` label and adds `stuck`; it used to wipe every label, including the bot's own.
+- `Units#furthestNUnits(pos, 0)` returns no units (it returned all of them).
+- Two build systems no longer share earmarks. Each build system names its earmarks with its own prefix (`build<n>:task<i>`, it was `task<i>` in every system), so a second system's earmark for the same task index is added instead of ignored, and one system spending or switching openings no longer settles the other's earmark.
+- `placement.add` on Zerg, which has no placement grids, is a no-op with a debug log; it threw a `TypeError` once the solver had run.
+- `unit.isStructure()` returns `false` for a unit type missing from the game data. It threw, which stopped the unit system's step, so every unit after it in the observation got no create, update or events that step.
+- A lowered supply depot is pathable (still not placeable) and blocks pathing again when raised; any type change of a ground structure re-marks its pathing cells. A nydus canal leaves its four corner cells pathable, like a townhall, and a burrowed creep tumor its cell.
+- Uprooted spine and spore crawlers hold no grid cells: uprooting frees the crawler's footprint and rooting blocks it where it roots.
+- A townhall that lifts off stops being its expansion's base, and one that lands on an expansion becomes it, so `ownedExpansions` and `getNextExpansion` follow lift and land.
+- `data.findUnitTypesWithAbility(abilityId)` takes a specific or generic id and reads the generated unit abilities (an ability that remaps to `abilityId` counts too), plus the hand-captured `AbilitiesByUnit` map only while the game data marks the ability available. It read only the hand-captured pre-4.10 map, so it returned `[]` for e.g. `BUILD_TECHLAB_BARRACKS`, `BUILD_LURKERDEN` and the armory's plating research, and `[HYDRALISKDEN]` for the unavailable `MORPH_LURKERDEN`. Build-system ability tasks find their casters through it and cast when the unit offers the task's id or one that remaps to it, so generic tasks such as `BUILD_REACTOR` are sent (SC2 only offers the specific ids).
+
+#### Changed
+- One cost model: `canAfford`, `actions.train`, `actions.build`, the building tracker and build-runner earmarks use the net cost of `calculateCost`, as `agent.train` already did. Morphs used to be checked and charged at the API's total: an orbital command is now 150 instead of 550, a lair 150/100 instead of 500/100, a baneling 25/25 instead of 50/25; a zergling pair costs 50 instead of 25; a lowered supply depot 0.
+- `actions.upgrade` rejects with `TrainError` when the upgrade is unaffordable and deducts its cost, so later systems in the step see the reduced bank.
+- `units.getProductionUnits` and `units.getUpgradeFacilities` read `trainedFrom` / `researchedFrom` instead of the API's ability data, so `actions.train`, `actions.upgrade` and the builder find the producer for lurkers (hydralisks), lurker dens (drones), warp-gate units (warp gates) and 24 upgrades that had none (e.g. hallucination, vehicle and ship plating, anabolic synthesis); an add-on is built only by its own host; grooved spines and muscular augments no longer offer the lurker den. `actions.train` warps in from a warp gate, sends `MORPH_LURKER` for lurkers and skips facilities already ordered this step; `actions.upgrade` sends the armory's plating ability.
+- `researchedFrom[LURKERRANGE]` (the lurker range upgrade) is the lurker den (was the hydralisk den, which can't research it).
+- A build-runner train task settles its own earmark when it trains; it used to keep it, so the next task waited for that money too.
+- `agent.alreadyPending` also counts tracked builds whose worker hasn't got its build order yet (still walking, or ordered this step), and counts an unfinished Terran structure once, from the SCV's build order or, with no SCV on it, from the structure. An abandoned unfinished Terran structure (its SCV died) counts as pending until something resumes or cancels it: the building tracker resumes it once the bot has built through it, but bots not using the tracker must resume or cancel it themselves. `ownUnitCount` is finished units plus `alreadyPending` (an unfinished structure used to count twice).
+- `agent.canAfford(unitType, earmarkName?, { count = 1, supply = false })` checks `count` units on net cost, and with `supply: true` the supply too.
+- `agent.train` (including warp-ins and the second reactor unit) and the `behaviors` spawn controller subtract every earmark from the bank before training (they used `canAffordUnit` / `canAffordN`, which ignored earmarks), so they train nothing while earmarks hold the money.
+- `agent.hasTechFor` is `techRequirementProgress >= 1`, so it shares the requirement and equivalent-structure rules with `train`. A plain Hatchery no longer satisfies a Lair requirement (the old alias scan accepted it); a Lair or Hive does.
+- `agent.expandNow(unitType?, location?)` builds through `buildings.build(townhall, { at })`, so the build is tracked and the worker walks there. The `maxDistance` parameter is gone (it searched for a placement near the expansion), so the signature went from `(unitType, maxDistance, location)` to `(unitType, location)` and a positional `location` call breaks. It does nothing when the townhall is unaffordable, or while a tracked build of that townhall is active at the target, so calling it every step sends one worker.
+- One build-worker fallback for `actions.build` and the building tracker (used when mining is off or, for `actions.build`, finds no one): it only takes `GATHERING` or role-less workers without a `command` or `stuck` label that aren't constructing or already ordered this step, the closest idle or gathering one first, else any. With mining off the tracker used to take any free worker, including a persistent builder or a defender. User labels no longer keep a worker out of the pick, and `actions.build` takes a busy worker instead of rejecting when none is idle or gathering. A Protoss build is still queued on a probe already constructing within 20, now only one in `GATHERING` or no role. A worker `actions.build` picks that carries cargo returns it first.
+- A tracked build whose worker stalls (stands still for 10 s away from the target) is re-placed with a new worker, and the stalled worker goes back to `GATHERING`. A build given a `worker`, and a build started with `at` (which fails `'blocked'` instead of being re-placed), get no replacement worker. A second stall fails the build `'blocked'`. Either way, the stalled worker isn't picked by the tracker or `actions.build` for builds of that type for 60 s, with mining on or off. It used to keep the same worker, so a builder outside a sealed main stalled again.
+- A tracked build started with `at` is never re-placed by the solver. Where the tracker used to ask the placement solver for a new spot (the spot became unplaceable, `maxAttempts` build commands were dropped or rejected, or the worker stalled), it fails `'blocked'`; it used to move to a solver spot, or fail `'noPlacement'`. A townhall whose spot is blocked still moves to an available expansion, and a gas build still moves off a geyser an enemy took. The build runner retries the task 250 loops after its command once nothing of that type is pending, which resolves the target again.
+- Enemy structures block the placement and pathing grids from the step they are seen, with the same footprints as your own (townhall and nydus corners, lowered depots). A structure's cells are freed when it dies, lifts off, or its spot is seen empty, and move when it is seen landed elsewhere; out of vision they stay blocked. Before, only your own structures were on the grids, so `placement.canPlace`, `map.isPlaceable`, `map.isPathable` and `map.path` treated cells under enemy buildings as free.
+- `map.setPlaceable` no longer changes `map.path`'s walkability; the path graph follows `setPathable` only, so lowered depots and townhall and nydus corners are walkable for `map.path` too.
+- Build-system ability tasks earmark the net cost of what they create (an orbital command 150, a reactor 50/50) and settle it when the ability is sent; while no caster of that type exists the earmark is dropped. They used to earmark the unit data of the ability's own id (a wrong cost, or none) and never settle it.
+- Rocks and towers are blocked from the live pathing grid, requested from SC2 once the game has stepped (the grid at game start lacks flat rocks and towers), instead of from known footprints, so diagonal and very large rocks block `isPlaceable` and `map.path` too. A rock's cells are released from the live grid when it dies. The natural's wall is recalculated once, when the first rocks are claimed at game start, if they changed cells it searched. When the request fails, rocks keep their known footprints.
+- `map.getExpansionLocations()` returns the townhall center of every expansion in `getExpansions()` order (same coordinates; it came from a separate algorithm that could disagree). `agent.getNextExpansion` and `agent.ownedExpansions` use the same `Expansion` objects: enemy-held expansions are excluded from `getNextExpansion`, a macro hatchery (not assigned as a base) no longer counts as owning its location, and ties between equal pathing distances may resolve in another order.
+- Both pairs stay, each for its own purpose: `map.path` is for static map structure (placement, expansion ordering, regions) and `pathing.findPath` for unit movement; `map.getCombatRally()` is a rally point and `mapAnalysis.getDefensivePosition` a choke hold point.
+
+#### Removed
+- `frame.timeInSeconds()`. Use `Math.round(frame.time())`; it counts 22.4 loops per second where `timeInSeconds` used 0.044 s per loop.
+- `towards` from the combat helpers and from `@sc-bot/core/behaviors`; it comes from the package root.
+- `units.getClosest`: use `Units.from(list).closestNUnits(pos, n)`, or `closestTo` when the list is known non-empty (it throws on empty). A list from `units.*` getters is already a `Units`.
+- `agent.distributeWorkers`: `mining` is the only worker manager; `workersPerGas` is a `mining` setting.
+- `agent.canAffordUnit(type, checkSupply)`: use `canAfford(type, null, { supply: true })` (or without the option when `checkSupply` was `false`), which also subtracts earmarks.
+- `agent.canAffordN(type, max)`, which returned how many were affordable: use `canAfford(type, null, { count })`, which answers for exactly `count` and also subtracts earmarks.
+- `structurePending` from `behaviors`: use `agent.alreadyPending`.
+
+#### Migrating bot/
+- Done: bot/ imports `distance` and `towards` from `@sc-bot/core` instead of its own copies, and `GAME_LOOPS_PER_SECOND` instead of its `22.4` constants. It never called `timeInSeconds`.
+- `alreadyPending` in bot/systems/military/production.ts:27 and training.ts:26 now includes walking tracked builds, so they no longer miss a build whose SCV is on its way.
+- An abandoned unfinished Terran structure (its SCV died) now counts as pending until something resumes or cancels it. bot/ never uses the building tracker (it builds with `actions.build`), so nothing resumes it: production.ts:27 stays one short of its count until the bot resumes or cancels the structure itself.
+- Done: training.ts:26 counts `.ready` units plus `alreadyPending`, as production.ts:27 does, so an unfinished unit no longer counts twice.
+- Don't add `buildings.pending(type)` to `alreadyPending(type)`; it now double-counts.
+- The bot's `actions.build` calls (economy.ts:41, production.ts:64, wall.ts:35, :40 and :49) pass no worker, so they get the new builder pick (see Changed): a busy worker when none is idle or gathering instead of a rejection, user labels no longer exclude a worker, and a worker that carries cargo returns it before walking to the site.
+- `units.getClosest(pos, units, n)` becomes `units.getMineralWorkers().closestNUnits(pos, n)` (done in `bot/systems/economy.ts`).
+- `canAfford`, `canFeed` and `hasTechFor` keep their signatures. `canAfford` checks the net cost (see Changed), and `hasTechFor` no longer accepts a plain Hatchery for a Lair requirement.
+- `agent.train` (training.ts:33) now returns 0 while earmarks hold the money it needs.
+- `isGasMine()` in bot/systems/economy.ts:14 is true on rich geysers now, so its gas-worker logic runs there too.
+- `agent.getNextExpansion` skips enemy-held expansions and `ownedExpansions` ignores macro hatcheries; `map.getExpansionLocations()` keeps its coordinates but follows `getExpansions()` order.
+- `map.isPathable` is now false under enemy ground structures, so the flying-enemy filters in bot/systems/combat/utils.ts:17 and offense.ts:35 drop a flier hovering over one.
+- bot/systems/build.ts:19 sets `earmarkDelay(0)` because train tasks kept their earmarks; they now settle them (see Changed), so earmarks can be turned back on. The bot runs one build system, so the per-system earmark names don't affect it.
+
+### Examples
+
+#### Added
+- `examples/ares/`: TypeScript ports of the ares-sc2 tutorials (assigning unit roles, combat maneuver, unit squads, custom behaviors, influence and pathing, managing production, build runner, custom building placements, chat debug). Gaps are listed in the readme.
+- `examples/ares/openings/{terran,protoss,zerg}.config.json`: ares' build-runner openings as core config files, loaded by `examples/ares/build-runner.ts` through `createEngine({ configFile })` (`RACE` picks the file). OneBaseTempests omits the `tempestgroundattackupgrade` step.
+- Fixture tests for the ports with their own logic, a parse test for every opening, and `examples/examples.live.test.ts` (ramp-wall, managing-production and build-runner against the built-in AI; skipped without `SC2PATH`).
+
+#### Changed
+- `ramp-wall.ts` builds its depots and barracks on `wall` placements through `buildings`, enables `mining` and trains SCVs with `buildWorkers`, and raises and lowers depots with `spatial.anyInRange`; it no longer computes the ramp corners or calls `distributeWorkers`. It exports `createBot()` and runs only when started directly.
+- `cannon-rush.ts` builds its own-base pylon and forge with `buildings.build` placement options, trains probes with `buildWorkers` and enables mining; the proxy structures still use `actions.findPlacement`.
+- `worker-rush.ts`, `bot-vs-bot.ts` and `ladder.ts` give their workers the role `ATTACKING` and attack-move inside `roles.as(ATTACKING, …)`.
+- `docs/tutorial.md` links `examples/tutorial.ts` instead of the old `.js` path.
 
 ## v0.8.2 - 2019-01-11
 ## Highlights:

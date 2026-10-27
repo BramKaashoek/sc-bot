@@ -2,17 +2,8 @@ import { ATTACK, HARVEST_GATHER, MOVE } from '../../constants/ability.ts';
 import { CloakState } from '../../constants/enums.ts';
 import * as UnitType from '../../constants/unit-type.ts';
 import { isFlying } from '../../resources/units-collection.ts';
-import { distance, distanceSquared } from '../../utils/geometry/point.ts';
-import {
-    attackReady,
-    center,
-    inAttackRange,
-    layerFor,
-    pickEnemyTarget,
-    positionOf,
-    towards,
-    type Target,
-} from './helpers.ts';
+import { distance, distanceSquared, towards } from '../../utils/geometry/point.ts';
+import { attackReady, center, inAttackRange, layerFor, pickEnemyTarget, positionOf, type Target } from './helpers.ts';
 import type { Behavior, InfluenceLayer, Point2D, Unit } from '../../types.ts';
 
 type PathOptions = {

@@ -44,13 +44,13 @@ import {
 import { distanceSquared } from '../utils/geometry/point.ts';
 import { isFlying, toPoint } from '../resources/units-collection.ts';
 import type { DamageVsTarget, Point2D, Point3D, Unit, World } from '../types.ts';
+import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
 
 type UnitBlueprint = Omit<Unit, keyof SC2APIProtocol.Unit> & Pick<Unit, 'tag'> & ThisType<Required<Unit>>;
 
 const groundTargets: number[] = [WeaponTargetType.GROUND, WeaponTargetType.ANY];
 const airTargets: number[] = [WeaponTargetType.AIR, WeaponTargetType.ANY];
 const noDamage: DamageVsTarget = [0, 0, 0];
-const GAME_LOOPS_PER_SECOND = 22.4;
 // unit data speeds are per normal-speed second, which is 16 game loops
 const LOOPS_PER_NORMAL_SECOND = 16;
 
@@ -97,7 +97,8 @@ function createUnit(unitData: SC2APIProtocol.Unit, world: World): Unit {
                     target = t;
                 } else {
                     const [closestIdleHatch] = units
-                        .getClosest(this.pos as Point2D, units.getById(TownhallRace[Race.ZERG]), 3)
+                        .getById(TownhallRace[Race.ZERG])
+                        .closestNUnits(this.pos as Point2D, 3)
                         .filter((u) => u.isIdle());
 
                     if (closestIdleHatch) {

@@ -46,6 +46,9 @@ This readme walks through everything the library offers. For exhaustive signatur
 - [Testing](#testing)
 - [Known limitations](#known-limitations)
 - [Examples](#examples)
+    - [Standalone examples](#standalone-examples)
+    - [Translated from ares-sc2 tutorials](#translated-from-ares-sc2-tutorials)
+    - [Live smoke test](#live-smoke-test)
 - [More documentation](#more-documentation)
 
 <!-- /TOC -->
@@ -337,11 +340,9 @@ The agent is updated every step with the player fields from the observation: `pl
 | `calculateUpgradeCost(upgradeId)` | `{ minerals, vespene }` |
 | `calculateSupplyCost(unitType)` | Supply it adds (net for morphs) |
 | `canFeed(unitType)` | Enough supply left |
-| `canAffordUnit(unitType, checkSupplyCost = true)` | Minerals, gas and (optionally) supply. Ignores earmarks. |
-| `canAfford(unitType, earmarkName?)` | Minerals and gas, respecting earmarks (see [events and data](#events-and-data)) |
-| `canAffordN(unitType, max = 1)` | How many of `unitType`, up to `max`, you can afford |
+| `canAfford(unitType, earmarkName?, { count = 1, supply = false }?)` | Net-cost minerals and gas for `count` of `unitType`, respecting earmarks (see [events and data](#events-and-data)). With `supply: true` it also needs `count` times `calculateSupplyCost` supply left. |
 | `canAffordUpgrade(upgradeId, earmarkName?)` | Like `canAfford`, for upgrades |
-| `hasTechFor(unitType)` | Whether the required tech structure exists and is finished |
+| `hasTechFor(unitType)` | Whether the required tech structure (or an equivalent) is finished: `techRequirementProgress(unitType) >= 1` |
 
 ### Macro helpers
 
@@ -349,15 +350,14 @@ These follow python-sc2's `BotAI` helpers of the same names:
 
 | Member | What it does |
 |---|---|
-| `alreadyPending(unitType)` | Count of that unit or structure in production: from orders and from unfinished units |
+| `alreadyPending(unitType)` | Count of that unit or structure in production: from orders, unfinished units (an unfinished Terran structure once, whether or not an SCV is on it) and tracked builds whose worker has no build order yet. An abandoned unfinished Terran structure (its SCV died) counts as pending until something resumes or cancels it; the building tracker resumes it once the bot has built through it, but bots not using the tracker must resume or cancel it themselves |
 | `alreadyPendingUpgrade(upgradeId)` | `1` if owned, otherwise the research progress from 0 to 1 |
 | `structureTypeBuildProgress(unitType)` | Best build progress among your structures of that type and its equivalents |
 | `techRequirementProgress(unitType)` | Progress (0 to 1) of the structure `unitType` requires |
 | `workerEnRouteToBuild(unitType)` | Workers on their way to build it |
-| `getNextExpansion()` | `Promise<Point2D \| null>`: the expansion location without a townhall of yours that is closest by SC2 ground distance from your start |
+| `getNextExpansion()` | `Promise<Point2D \| null>`: the location of an expansion with no living townhall (yours or the enemy's) that is closest by SC2 ground distance from your start |
 | `ownedExpansions()` | `{ location, townhall }[]` |
-| `expandNow(unitType?, maxDistance = 10, location?)` | Builds a townhall at the next (or given) expansion |
-| `distributeWorkers(resourceRatio = 2, { workersPerGas = 3 })` | Sends idle workers, and workers above saturation, to bases and gas buildings below saturation. `workersPerGas` caps the target per gas building (an integer from 0 to 3, otherwise it throws a `RangeError`); workers above the cap join the pool and go to whichever below-saturation place `resourceRatio` favours, and `0` keeps gas empty. Use it or [`mining`](#mining), not both. |
+| `expandNow(unitType?, location?)` | Builds a townhall at the next (or given) expansion through [`buildings.build`](#buildings), so it is tracked. Does nothing when the townhall is unaffordable. |
 | `train(unitType, amount = 1, closestTo?, trainOnlyIdleBuildings = true)` | Starts up to `amount` units across your production structures, larva and warp gates, using reactors for two at a time and tech labs where required. Resolves with how many were started. |
 | `research(upgradeId)` | Starts the upgrade if it is affordable, the required building exists, the previous level is done, and an idle (and, for Protoss, powered) research structure is free. Resolves `false` otherwise. Throws for an upgrade that isn't in the researched-from dictionary. |
 
@@ -372,9 +372,7 @@ const bot = createAgent({
     async onStep({ agent, resources }) {
         const { actions, map } = resources.get();
 
-        await agent.distributeWorkers();
-
-        if (agent.supplyLeft < 3 && agent.alreadyPending(SUPPLYDEPOT) === 0 && agent.canAffordUnit(SUPPLYDEPOT)) {
+        if (agent.supplyLeft < 3 && agent.alreadyPending(SUPPLYDEPOT) === 0 && agent.canAfford(SUPPLYDEPOT, null, { supply: true })) {
             const spot = await actions.findPlacement(SUPPLYDEPOT, map.getMain().townhallPosition, { maxDistance: 15 });
             if (spot) await actions.build(SUPPLYDEPOT, spot);
         }
@@ -390,9 +388,9 @@ const bot = createAgent({
 
 The helpers deduct what they spend from the agent's minerals and gas right away, and `train` also adds the supply it uses to `foodUsed`, so a second call in the same step doesn't spend the same money or supply twice. `train` and `research` also skip structures that already received a command for the current observation (`actions.unitTagsReceivedAction()`), and the worker picked for a build is only taken from idle workers when it hasn't received one. Their commands are proposed like every other command and go out at the end of the step (see [Command arbitration](#command-arbitration)); the money is deducted when they are proposed, even if the command later loses or SC2 rejects it, until the next observation corrects it.
 
-**Builder handoff.** When [`mining`](#mining) is enabled, the worker a helper (`expandNow`) or `actions.build` picks comes from `mining.selectWorker(position, { forceClose: true, role: GATHERING })`: a mining worker near the build site, which stays in `GATHERING`. With mining disabled the pick is unchanged. For Terran and Protoss structures, [`buildings.build`](#buildings) does the picking, walking and retrying for you.
+**Builder handoff.** When [`mining`](#mining) is enabled, the worker a helper (`expandNow`) or `actions.build` picks comes from `mining.selectWorker(position, { forceClose: true })`: a mining worker near the build site, which stays in `GATHERING`. With mining disabled the pick is unchanged. For Terran and Protoss structures, [`buildings.build`](#buildings) does the picking, walking and retrying for you.
 
-**`distributeWorkers` vs `mining`: pick one.** `distributeWorkers` sends gather commands at your commander's priority, `mining` assigns and commands the same `GATHERING` workers every step. Running both makes them fight over workers, so call `distributeWorkers` only while `mining.isEnabled()` is `false`.
+**Workers.** [`mining`](#mining) is the only worker manager; enable it with `mining.configure({ enabled: true })` for gathering.
 
 The [controllers](#controllers) (`spawnController`, `buildStructure`, `autoSupply`, `techUp`, `productionController` and the rest) wrap these helpers and the building tracker into ready-made plan steps; see [Behaviors and controllers](#behaviors-and-controllers).
 
@@ -445,7 +443,7 @@ const bot = createAgent({
     async onStructureConstructionComplete({ resources }: World, structure: Unit) {
         if (structure.isGasMine()) {
             const { units, actions } = resources.get();
-            const nearby = units.getClosest(structure.pos, units.getMineralWorkers(), 3);
+            const nearby = units.getMineralWorkers().closestNUnits(structure.pos, 3);
             return actions.mine(nearby, structure);
         }
     },
@@ -801,8 +799,8 @@ Plain functions, exported next to the behaviors.
 | `pickEnemyTarget(targets)` | The target with the lowest health plus shield |
 | `duplicateOrSimilarOrder(world, unit, target, abilityId, distanceSquaredCheck = 2)` | `true` when the unit is within `distanceSquaredCheck` (a squared distance) of the target, or its current order has the same ability (a specific ability counts as its general one) and the same unit target or the same target position rounded to whole cells |
 | `groupWeaponsOnCooldown(group, stutterForward)` | `true` when the group's average weapon cooldown is above 2.5 (`stutterForward`) or above 5 |
-| `center(units)`, `towards(from, to, step)` | The average position of the units; the point `step` from `from` towards `to` |
-| `ownUnitCount(world, unitType)`, `structurePending(world, unitType)` | Your units of a type plus those in production; structures of a type that are being built, from tracked builds plus unfinished structures the tracker doesn't know, never counting one twice |
+| `center(units)` | The average position of the units |
+| `ownUnitCount(world, unitType)` | Your finished units of a type plus `agent.alreadyPending` |
 
 ### Individual combat behaviors
 
@@ -957,7 +955,6 @@ All getters return a [`Units`](#the-units-collection) collection. Most accept an
 | `getById(unitType \| unitType[], filter = { alliance: SELF })` | Units of those types |
 | `getByType(unitType \| unitType[])` | Live units of those types, any alliance |
 | `getByTag(tag)` / `getByTag(tags)` | A `Unit` or `undefined`; for an array, the known units as `Units` |
-| `getClosest(position, units, n = 1)` | The `n` closest of `units` (also works for power sources). It sorts the whole list; for range queries use [`spatial`](#spatial). |
 | `getArmyValue(alliance = SELF, { includePending = false, includeGhosts = true })` | Minerals plus gas of the combat units (`isCombatUnit()`), each at its type's full cost. For `ENEMY` it reads [memory](#memory), ghosts included unless `includeGhosts: false`; for `SELF` with `includePending` it also counts units in production (structure orders, two for a reactor, and eggs). Throws `NodeSC2Error` for any other alliance. |
 | `getBases(filter = { alliance: SELF })` | Townhalls |
 | `getWorkers(includeBusy = false)` | Own workers of your race. By default skips workers that `actions.build` sent off until SC2 reports their order back (or 250 game loops pass). |
@@ -1238,13 +1235,13 @@ The `map` resource covers the map layout: start locations, expansions, ramps, gr
 
 **Expansions.** `getExpansions(alliance?)` returns every expansion, ordered by distance from your start location (or from the enemy's with `Alliance.ENEMY`). Shortcuts: `getMain()`, `getNatural()`, `getThirds()`, `getEnemyMain()`, `getEnemyNatural()`, `getEnemyThirds()`, `getClosestExpansion(point)`, `getAvailableExpansions()`, `getOccupiedExpansions(alliance?)`. `getThirds()` returns up to two expansions (fewer on small maps). An `Expansion` has `townhallPosition`, `zPosition`, `centroid`, `cluster` (`mineralFields`, `vespeneGeysers`), `areas` (`areaFill`, `placementGrid`, `mineralLine`, `behindMineralLine`, `wall`), `pathFromMain`, `pathFromEnemy`, `getBase()`, `getAlliance()` and `getWall()`.
 
-`getExpansionLocations()` returns every possible townhall position, computed with python-sc2's algorithm.
+`getExpansionLocations()` returns the townhall center of every expansion, in `getExpansions()` order.
 
 For regions, chokes and defensive positions, see [`mapAnalysis`](#mapanalysis).
 
 **The grid follows lift and land.** When a structure lifts off (or a flying one lands), the map system frees (or blocks) its footprint cells in the placement and pathing grids in the same step, so `isPlaceable`, `isPlaceableAt`, `path` and [`placement`](#placement) see the building's real position.
 
-**Locations.** `getLocations()` returns `{ self, enemy }`, where `enemy` is an array of possible enemy start points. `getCombatRally()` is a gathering point on the path from your natural towards the map center, 5% further along per base you own (the map center on a map without expansions). `getCenter(pathable?)`, `getSize()`.
+**Locations.** `getLocations()` returns `{ self, enemy }`, where `enemy` is an array of possible enemy start points. `getCombatRally()` is a gathering point on the path from your natural towards the map center, 5% further along per base you own (the map center on a map without expansions). Use it as a rally point for units that have nowhere to be yet; use [`mapAnalysis.getDefensivePosition`](#mapanalysis) to hold a choke against an attack. `getCenter(pathable?)`, `getSize()`.
 
 **Ramps and walls.** `getRamps()` returns every ramp; `getMainBaseRamp()` the one leading out of your main, or `undefined` on maps where none is found (some custom maps). A `Ramp` has `points`, `upper`, `lower`, `topCenter`, `bottomCenter` and `size`, plus wall positions that are `null` (or `[]`) when a ramp doesn't fit the standard shape. As in python-sc2, `barracksCanFitAddon` throws on such a ramp (read `barracksCorrectPlacement` instead), and `cornerDepots` throws on a ramp with a single upper cell. On a standard-sized ramp whose upper cells are too far apart for the wall math, `barracksInMiddle` and what is built on it (`barracksCorrectPlacement`, the Protoss wall positions) throw where python-sc2 asserts, while `depotInMiddle` is `null` and `cornerDepots` `[]`:
 
@@ -1268,7 +1265,7 @@ protossWallBuildings: Point2D[]
 | `inPathingGrid(point)`, `inPlacementGrid(point)` | The static grids from the game info |
 | `getTerrainHeight(point)`, `getTerrainZHeight(point)`, `getHeight(point)` | The raw height-map value (0 to 255); that value as world z; node-sc2's height (the processed height grid divided by 10) |
 | `isVisible(point)`, `hasCreep(point)`, `getCreep()`, `isRamp(point)` | Visibility and creep this step |
-| `path(start, end)` | A local A* path as `[x, y][]`, synchronous and fast; empty when no path exists. The path graph also blocks the cells the map system marks unplaceable (structures, minerals, geysers, rocks, xel'naga towers), so `end` on such a cell, or `start` surrounded by them (e.g. a townhall's `townhallPosition`), gives an empty path; start from a unit's `pos` or `closestPathable(point)`. For paths that avoid enemy threats and change every step, use [`pathing`](#pathing). |
+| `path(start, end)` | A local A* path as `[x, y][]`, synchronous and fast; empty when no path exists. The path graph also blocks the cells the map system marks unplaceable (structures, minerals, geysers, rocks, xel'naga towers), so `end` on such a cell, or `start` surrounded by them (e.g. a townhall's `townhallPosition`), gives an empty path; start from a unit's `pos` or `closestPathable(point)`. For unit movement that avoids enemy threats and changes every step, use [`pathing`](#pathing); use `map.path` for static map structure. |
 | `queryPathing(start, end)` | `Promise<number \| null>`: SC2's own path length from a point or unit, `null` if unreachable |
 | `closestPathable(point, radius = 3)` | The closest pathable cell; throws if there is none within `radius` |
 | `freeGasGeysers()`, `getEffects()`, `getGrids()`, `isCustom()` | Geysers without a gas building near your bases; active effects; the raw grids; whether the map has no expansions (a custom map) |
@@ -1304,7 +1301,7 @@ export async function onGameStart({ resources }: World) {
 | Method | Returns |
 |---|---|
 | `getGameLoop()` | The current game loop |
-| `time()`, `timeFormatted()`, `timeInSeconds()` | Game seconds; `'MM:SS'`; rounded seconds (old node-sc2 formula) |
+| `time()`, `timeFormatted()` | Game seconds; `'MM:SS'` |
 | `getObservation()`, `getGameInfo()`, `getMapState()`, `getPrevious()` | Raw data |
 | `getScore()` | `SC2APIProtocol.Score`; needs `score: true` in the agent's `interface` (the default has it) |
 | `getAlerts()`, `hasAlert(alert)` | Alerts such as a detected nuke |
@@ -1370,7 +1367,7 @@ export async function onStep({ agent, resources }: World) {
 
 `events` is the event channel: `write(event)` publishes a [custom event](#custom-events); `createReader`, `read` and `removeReader` are what the engine uses to deliver events.
 
-`world.data` holds the game data from SC2 (`getUnitTypeData(id)`, `getAbilityData(id)`, `getUpgradeData(id)`, `getEffectData(id)`, `findUnitTypesWithAbility(abilityId)`) and earmarks. An earmark reserves money for later: `data.addEarmark({ name, minerals, vespene })`. While it exists, `agent.canAfford` and `agent.canAffordUpgrade` subtract it, except when called with that earmark's name; if that check passes, the earmark is settled (removed). `getEarmarkTotals(name?)` and `settleEarmark(name)` are available directly.
+`world.data` holds the game data from SC2 (`getUnitTypeData(id)`, `getAbilityData(id)`, `getUpgradeData(id)`, `getEffectData(id)`, `findUnitTypesWithAbility(abilityId)`) and earmarks. `findUnitTypesWithAbility` takes a specific or generic id (`BUILD_TECHLAB_BARRACKS` or `BUILD_TECHLAB`) and returns the sorted unit types whose generated abilities hold it or an ability that remaps to it, plus the types the hand-captured `AbilitiesByUnit` map lists for it while the game data marks it available. An earmark reserves money for later: `data.addEarmark({ name, minerals, vespene })`. While it exists, `agent.canAfford` and `agent.canAffordUpgrade` subtract it, except when called with that earmark's name; if that check passes, the earmark is settled (removed). `getEarmarkTotals(name?)` and `settleEarmark(name)` are available directly.
 
 ### memory
 
@@ -1450,7 +1447,7 @@ export async function onStep({ resources }: World) {
 
 ### pathing
 
-Paths over an influence layer (`'ground'` by default, or any `InfluenceGrid`), with an 8-connected A* that doesn't cut corners. Entering a cell costs its value, so paths go around danger when that is cheaper. Use it for movement that should react to the current threats; `map.path` stays for static map analysis.
+Paths over an influence layer (`'ground'` by default, or any `InfluenceGrid`), with an 8-connected A* that doesn't cut corners. Entering a cell costs its value, so paths go around danger when that is cheaper. Use `pathing.*` for unit movement that should react to the current threats; use `map.path` for static map structure (placement, expansion ordering, regions), where enemy units don't matter.
 
 | Member | What it does |
 |---|---|
@@ -1662,9 +1659,9 @@ status: 'moving' -> 'ordered' -> 'constructing' -> 'done'      or 'failed' (fail
 
 `failure` is `'timeout'`, `'cancelled'`, `'noWorker'`, `'noPlacement'` or `'blocked'`. There are no tracker events; poll `getTracked()`.
 
-**Workers.** With [`mining`](#mining) enabled the builder comes from `mining.selectWorker(target, { forceClose: true })`, and `build` returns `undefined` when it returns nothing (`'noWorker'` is only set when a dead builder can't be replaced mid-build). Otherwise it is the closest mineral worker without a `command` label that isn't on another build, else any such worker. The worker gets the `BUILDING` role and goes back to `GATHERING` (and to `mining`) when the build ends. A dead builder is replaced.
+**Workers.** With [`mining`](#mining) enabled the builder comes from `mining.selectWorker(target, { forceClose: true })`, and `build` returns `undefined` when it returns nothing (`'noWorker'` is only set when a dead builder can't be replaced mid-build). Otherwise it is the closest idle or gathering worker in the `GATHERING` role (or no role) without a `command` or `stuck` label that isn't on another build or constructing, else any such worker. The worker gets the `BUILDING` role and goes back to `GATHERING` (and to `mining`) when the build ends. A dead builder is replaced. A moving worker that stands still for 10 s away from the target has stalled: the build is re-placed and gets a new worker (the stalled one goes back to `GATHERING`; a `worker` you passed is kept); a second stall fails it `'blocked'` (a build started with `at` fails on the first). For 60 s a stalled worker isn't picked for builds of that type, by the tracker or `actions.build`, with mining on or off.
 
-**Each step.** The worker moves to the target (within 1, or 3.2 for gas; a worker carrying resources returns them first), then the tracker waits for tech and money (minus other earmarks) and sends the build command. If that command is dropped or rejected the build goes back to `'moving'` and `attempts` goes up; after `maxAttempts` the building is re-placed by the placement solver (`'noPlacement'` when there is no spot; a build started with `placement` repeats that request, one started with `at` gets a default one), or, for gas, it keeps trying the same geyser. A spot that has become unplaceable before the command is re-placed too. An enemy gas building within 4.5 of the geyser moves the build to the next free geyser (`'blocked'` when none is left), and a townhall whose spot is blocked moves to an available expansion. Terran builds are done at `buildProgress` 1 and an SCV that isn't building is sent back to the structure; Protoss and Zerg builds are done once the structure exists, and fail with `'timeout'` after `timeout` seconds if it never does (gas builds of every race have the timeout too). A reservation the build owns is refreshed every step, so a long wait doesn't lose the spot.
+**Each step.** The worker moves to the target (within 1, or 3.2 for gas; a worker carrying resources returns them first), then the tracker waits for tech and money (minus other earmarks) and sends the build command. If that command is dropped or rejected the build goes back to `'moving'` and `attempts` goes up; after `maxAttempts` the building is re-placed by the placement solver (`'noPlacement'` when there is no spot; a build started with `placement` repeats that request), or, for gas, it keeps trying the same geyser. A spot that has become unplaceable before the command is re-placed too. A build started with `at` is never re-placed by the solver: where it would be, it fails `'blocked'` (the gas and townhall moves below still apply). An enemy gas building within 4.5 of the geyser moves the build to the next free geyser (`'blocked'` when none is left), and a townhall whose spot is blocked moves to an available expansion. Terran builds are done at `buildProgress` 1 and an SCV that isn't building is sent back to the structure; Protoss and Zerg builds are done once the structure exists, and fail with `'timeout'` after `timeout` seconds if it never does (gas builds of every race have the timeout too). A reservation the build owns is refreshed every step, so a long wait doesn't lose the spot.
 
 Commands go out as the `BUILDING` role at `priority` (10), so they beat your agent's default priority 0 and `mining`'s -10.
 
@@ -1679,10 +1676,10 @@ import { BARRACKS, SUPPLYDEPOT } from '@sc-bot/core/constants/unit-type';
 export async function onStep({ agent, resources }: World) {
     const { buildings, units } = resources.get();
 
-    if (agent.supplyLeft < 4 && agent.alreadyPending(SUPPLYDEPOT) + buildings.pending(SUPPLYDEPOT) === 0) {
+    if (agent.supplyLeft < 4 && agent.alreadyPending(SUPPLYDEPOT) === 0) {
         buildings.build(SUPPLYDEPOT, { placement: { flags: ['wall'] } });
     }
-    if (units.getById(BARRACKS).length + buildings.pending(BARRACKS) < 3) {
+    if (units.getById(BARRACKS).filter((barracks) => barracks.isFinished()).length + agent.alreadyPending(BARRACKS) < 3) {
         buildings.build(BARRACKS, { placement: { flags: ['production'] } });
     }
     buildings.buildGas();
@@ -1697,7 +1694,7 @@ Each step it drops assignments to dead, mined-out or orphaned resources (no own 
 
 | Member | What it does |
 |---|---|
-| `selectWorker(near, { forceClose = false, minHealth = 0, role = BUILDING }?)` | Takes a worker for your own use, or `undefined`. It is unassigned and given `role`. Without `forceClose` the closest unassigned worker is preferred; otherwise (and when none is unassigned) a mining worker not carrying resources, preferring ones at the base closest to `near`. `minHealth` is a fraction of max health. Nothing is assigned while mining is disabled, so `forceClose` then finds no one. |
+| `selectWorker(near, { forceClose = false, minHealth = 0, role = BUILDING, exclude }?)` | Takes a worker for your own use, or `undefined`. It is unassigned and given `role`. Tags in `exclude` are never picked. Without `forceClose` the closest unassigned worker is preferred; otherwise (and when none is unassigned) a mining worker not carrying resources, preferring ones at the base closest to `near`. `minHealth` is a fraction of max health. Nothing is assigned while mining is disabled, so `forceClose` then finds no one. |
 | `release(worker)` | Unassigns the worker and puts it back in `GATHERING` |
 | `getAssignment(worker)` | `{ kind: 'mineral' \| 'gas', resourceTag, townhallTag }` or `undefined` |
 | `getWorkersOn(resource)` | Tags of the workers assigned to a mineral field or gas building |
@@ -1712,7 +1709,7 @@ Settings and defaults: `enabled = false`, `priority = -10`, `workersPerGas = 3`,
 - **Self-defence** (`selfDefence`): while an enemy ground unit threatens one of your bases (`intel.getMainThreat('ground')`) and the worker's cell is not safe, a worker with its weapon ready attacks the weakest enemy in its range instead of fleeing, unless it is collecting and within 1 of its resource.
 - **Long-distance mining** (`longDistanceMine`): a worker without an assigned resource (its base is gone, or all fields are full) mines at an unassigned field that is safe, close to the natural early on, or at the fields of a townhall under construction, and returns its cargo to the closest ready townhall. With no ready townhall it does nothing.
 
-Use `mining` or `agent.distributeWorkers()`, not both: they send competing gather commands for the same workers.
+`mining` is the only worker manager.
 
 ```ts
 import { createAgent } from '@sc-bot/core';
@@ -1772,7 +1769,7 @@ By default the analysis runs in the first step, before your game-start handler. 
 | `getRegion(point)` | The region of a point, `undefined` on an unwalkable cell or off the map |
 | `isInChoke(point)` | Whether the point is on a choke cell |
 | `getBaseChokes(base)` | The chokes of the region holding `base` (an `Expansion` or a point), as `{ choke, pathDistance }`, ordered by ground distance from the base. Unreachable chokes are left out. |
-| `getDefensivePosition(base, { towards?, offset? })` | `{ choke, pathDistance, position }`, or `undefined` when the base's region has no reachable choke. The choke is the one on the shortest ground route between the base and `towards` (default: the first possible enemy start, else the map centre); `position` is that choke's centre moved up to `offset` cells back towards the base (default: `defenseOffset`). |
+| `getDefensivePosition(base, { towards?, offset? })` | `{ choke, pathDistance, position }`, or `undefined` when the base's region has no reachable choke. The choke is the one on the shortest ground route between the base and `towards` (default: the first possible enemy start, else the map centre); `position` is that choke's centre moved up to `offset` cells back towards the base (default: `defenseOffset`). Use it to hold a choke; for a rally point that moves with your expansions, use `map.getCombatRally()`. |
 | `getDefensiveThird()` | The one of `map.getThirds()` with the longest path from the enemy, `undefined` when there are no thirds |
 | `getPerimeter(region)` | The region's cells next to an unwalkable or off-map cell, as cell centres ordered by angle around `region.center` |
 | `getEnemyMainRamp()` | The ramp of the choke guarding the enemy main on the way to your start. `undefined` without an enemy main expansion, or when that choke isn't a ramp. |
@@ -1945,6 +1942,15 @@ const opening = parseBuildOrder(
 );
 ```
 
+### Points
+
+| Function | Returns |
+|---|---|
+| `distance(a, b)`, `distanceSquared(a, b)` | The straight-line distance between two points; its square |
+| `towards(from, to, step)` | The point `step` from `from` in the direction of `to`; `from` itself when the two are equal |
+| `avgPoints(points)` | The mean of the points |
+| `closestPoint(pos, points)` | The point nearest `pos`; `undefined` for an empty list |
+
 ## Constants
 
 Import constants by module path:
@@ -1957,12 +1963,13 @@ Import constants by module path:
 | `@sc-bot/core/constants/buff` | Buff ids |
 | `@sc-bot/core/constants/effect` | Effect ids |
 | `@sc-bot/core/constants/enums` | Proto enums (`Race`, `Difficulty`, `AIBuild`, `Alliance`, `GameResult`, `Attribute`, `Alert`, ...) with `*Id` reverse maps |
-| `@sc-bot/core/constants/groups` | Unit and ability groups (`workerTypes`, `townhallTypes`, `combatTypes`, `addonTypes`, ...) |
+| `@sc-bot/core/constants/groups` | Unit and ability groups (`workerTypes`, `townhallTypes`, `combatTypes`, `addonTypes`, ...), plus the shared tables `addonHost` (add-on to its Barracks, Factory or Starport), `addonHostTypes`, `creepTumorTypes`, `researcherEquivalents` (structures that research for each other: Spire and Greater Spire, Hatchery, Lair and Hive) and `creationAbilityOverrides` (`LURKERMP` to `MORPH_LURKER`) |
 | `@sc-bot/core/constants/unit-role` | ares' unit roles for [roles](#roles) (`ATTACKING`, `GATHERING`, ...); their type is `UnitRole` |
 | `@sc-bot/core/constants/engagement-result` | The [fight](#fights) result scale, `LOSS_EMPHATIC` (0) to `VICTORY_EMPHATIC` (10); their type is `EngagementResult` |
 | `@sc-bot/core/constants/index` | Namespaces of the above (`UnitType`, `Ability`, `Upgrade`, `Buff`, `Effect`, `enums`, `groups`, `UnitRole`, `EngagementResult`), `Color`, `WarpUnitAbility`, `AbilitiesByUnit`, plus reverse lookups `UnitTypeId`, `AbilityId`, `UpgradeId`, `BuffId`, `EffectId` |
-| `@sc-bot/core/constants/race-map` | Per-race lookups: `WorkerRace`, `TownhallRace`, `GasMineRace`, `SupplyUnitRace`, `HarvestGatheringRace` |
+| `@sc-bot/core/constants/race-map` | Per-race lookups: `WorkerRace`, `TownhallRace`, `FlyingTownhallRace` (Terran's flying command center and orbital), `TownhallWithFlyingRace` (townhalls plus flying ones), `GasMineRace`, `SupplyUnitRace`, `HarvestGatheringRace` |
 | `@sc-bot/core/constants/color` | Named RGB colors for debug drawing |
+| `@sc-bot/core/constants/time` | `GAME_LOOPS_PER_SECOND` (22.4, game loops per real second at Faster speed) |
 | `@sc-bot/core/constants/dicts/trained-from` | `trainedFrom[unitType]`: producer types |
 | `@sc-bot/core/constants/dicts/researched-from` | `researchedFrom[upgradeId]`: researching structure |
 | `@sc-bot/core/constants/dicts/research-requirements` | `researchRequirements[upgradeId]`: `{ requiredBuilding?, requiredUpgrade?, ability? }` |
@@ -1985,7 +1992,7 @@ console.log(workerTypes.length, townhallTypes.length);
 
 `researchRequirements` is ported from python-sc2's `RESEARCH_INFO`, because the API data has no research requirements. `techRequirement` also lists the requirements 4.10's data leaves out (ghost: ghost academy, thor: armory, battlecruiser: fusion core, mothership: fleet beacon, as in python-sc2's `TRAIN_INFO`); `agent.hasTechFor`, `techRequirementProgress`, `train`, `actions.build` and `actions.train` all respect them.
 
-Terran vehicle and ship plating is one upgrade line on 4.10 (`TERRANVEHICLEANDSHIPARMORSLEVEL1` to `3`), researched at the armory. 4.10's data points those upgrades at abilities the armory doesn't have, so `researchRequirements` carries the armory's `RESEARCH_TERRANVEHICLEANDSHIPPLATINGLEVEL1` to `3` as their `ability`, which `research` and `alreadyPendingUpgrade` use. The old separate `TERRANVEHICLEARMORSLEVEL*` and `TERRANSHIPARMORSLEVEL*` constants still exist but are not in `researchedFrom`, since nothing researches them. `actions.upgrade` and `units.getUpgradeFacilities` still read the data's ability, so `actions.upgrade` can't start plating (upgrade ids 116 to 118); use `agent.research` for those.
+Terran vehicle and ship plating is one upgrade line on 4.10 (`TERRANVEHICLEANDSHIPARMORSLEVEL1` to `3`), researched at the armory. 4.10's data points those upgrades at abilities the armory doesn't have, so `researchRequirements` carries the armory's `RESEARCH_TERRANVEHICLEANDSHIPPLATINGLEVEL1` to `3` as their `ability`, which `research` and `alreadyPendingUpgrade` use. The old separate `TERRANVEHICLEARMORSLEVEL*` and `TERRANSHIPARMORSLEVEL*` constants still exist but are not in `researchedFrom`, since nothing researches them. `actions.upgrade` sends that ability too.
 
 ## Where this library differs from python-sc2
 
@@ -1994,9 +2001,8 @@ Where python-sc2 has a bug or its data doesn't match SC2 4.10, this library deli
 - **`realSpeed()` off creep.** The off-creep speed bonus (hydralisk, ultralisk) needs that unit's own upgrade. python-sc2 applies it when the player owns any upgrade at all.
 - **Blue flame.** `calculateDamageVsTarget()` adds a flat +5 against light targets for your own hellions once the upgrade is done. python-sc2 multiplies the bonus by the attack upgrade level, so it is 0 at level 0. Enemy hellions never get it, since enemy upgrades aren't observable.
 - **`nClosestToDistance` / `nFurthestToDistance`.** They sort ascending by how far each unit's plain distance is from the given distance, for points and units alike. python-sc2 sorts in reverse and, for unit positions, compares squared against linear distance.
-- **`distributeWorkers(resourceRatio)`.** It honours the ratio: it fills gas first when your minerals-to-gas ratio is at least `resourceRatio` (or you have no gas), otherwise minerals. python-sc2 ignores the parameter.
 - **`research()`.** Besides the required building (e.g. an armory for level 2 weapons) it also checks that the previous level is done.
-- **Research structures on 4.10.** The dictionaries reflect 4.10 data: `LIBERATORAGRANGEUPGRADE` and `MEDIVACCADUCEUSREACTOR` are researched at the starport tech lab and `LURKERRANGE` at the hydralisk den. Newer SC2 versions, which python-sc2's tables follow, moved them (to the fusion core and the lurker den).
+- **Research structures on 4.10.** The dictionaries reflect 4.10 data: `LIBERATORAGRANGEUPGRADE` and `MEDIVACCADUCEUSREACTOR` are researched at the starport tech lab. Newer SC2 versions, which python-sc2's tables follow, moved them to the fusion core. `LURKERRANGE` maps to the lurker den: 4.10 offers it at no structure (its data points at the hydralisk den, which doesn't have it), and newer versions research it there.
 - **Build worker selection.** The macro helpers' builder pick (python-sc2's `select_build_worker`) skips an idle worker that already received a command this step. python-sc2 means to, but compares the worker object against a set of tags, so the check never matches.
 - **Snapshots on old builds.** On SC2 before 5.0.4 (including 4.10) `isSnapshot()` and the `visible` filter use the visibility grid, because the API misreports `displayType` there. python-sc2 does the same, but reads the grid at the rounded position; this library floors it, like every other grid lookup here, so a unit near a cell edge can be judged by the neighbouring cell.
 - **`distanceToWeaponReady()`.** It uses 16 game loops per second, the time base of the movement speeds it multiplies, so it is the distance the unit really covers before its weapon is ready. python-sc2 divides by 22.4 and comes out 1.4 times too short.
@@ -2028,7 +2034,6 @@ Where ares-sc2 does something this library deliberately doesn't:
 - **Chokes.** Regions and chokes come from a distance-to-wall watershed on the start pathing grid, not from map_analyzer. Regions are not split by height; a ramp is linked from the choke it touches (`choke.ramp`). The analysis doesn't react to buildings or pathing changes, and the per-map special cases in ares' defensive third (Oxide, Glittering) aren't ported.
 - **JSON config.** The config file is JSON (`sc-bot.config.json`) with a fixed set of keys, where ares reads YAML.
 - **Chat debug.** It only handles your own chat and is off unless `features.chatDebug` is set.
-- **Workers per gas.** It is an option of each `distributeWorkers` call, not a persistent setting as with ares' mediator. [`mining`](#mining) takes the same name in its own settings.
 - **Immediate execution.** `behaviors.run` executes the behavior at once, in the caller's commander context; ares collects behaviors and runs them after the step.
 - **Per-owner dedupe.** A unit is ordered once per game loop per owner by `ctx.order`, and the arbiter keeps one owner per unit. ares allows one action per unit across all owners, which would let a low-priority system block a high-priority one here.
 - **Factories, one `plan`.** Behaviors are factory functions returning plain objects, with ares' option names in camelCase, not dataclasses. One `plan` replaces `CombatManeuver` and `MacroPlan`, which behave the same.
@@ -2045,13 +2050,14 @@ Where ares-sc2 does something this library deliberately doesn't:
 - **`NAT_WALL` with enemies at the main ramp.** It keeps its wall flag, where ares drops it.
 - **Unknown upgrades.** A step naming an upgrade that isn't in the game data fails at game start; ares' `tempestgroundattackupgrade` is one.
 - **Roles aren't labels.** Roles live in the `roles` resource. Unit systems give labelled units special handling, so storing roles as labels would change how every unit with a default role is dispatched.
+- **Example-level gaps.** The ares tutorial ports leave out what core has no API for: `find_low_priority_path`, a blank influence grid, the climber, air-vs-ground and ground-to-air grids, `GateKeeper` positions and the `FirstPylon` key, `to_count_per_base` (`toCount` instead) and a YAML loader for placements. Each port's list is in [Translated from ares-sc2 tutorials](#translated-from-ares-sc2-tutorials).
 
 ## Changes compared to node-sc2
 
 Bug fixes that changed a signature or a failure mode:
 
 - `units.getByTag(tag)` returns `undefined` for an unknown tag (it used to return the tag string). The array form leaves unknown tags out and returns `Units`.
-- Every `units.*` getter, including `getClosest` and `getByTag(tags)`, returns `Units` instead of a plain array. See the [testing note](#the-units-collection).
+- Every `units.*` getter, including `getByTag(tags)`, returns `Units` instead of a plain array. See the [testing note](#the-units-collection).
 - The unit command methods of `actions` (`attack`, `move`, `build`, `train`, `do` and the rest, and the `Unit` shortcuts such as `useAbility`, `burrow` and `inject`) resolve with no value once the command is proposed, instead of with SC2's `ResponseAction`, and no longer reject when SC2 refuses the command; that arrives the next step through `onCommandResults` (see [Command arbitration](#command-arbitration)). Commands go out after all systems have run instead of during the step, conflicting commands for one unit resolve by priority and `use()` order instead of last-write-wins, and repeating a unit's current order is a no-op. Precondition errors still reject.
 - `actions.swapBuildings` delegates to `flying.swap` and resolves with no value once both plans are made; it rejects with `ActionManagerError` when either building can't lift or isn't finished. It used to send the lift, move and land commands itself, step by step, and swallow errors.
 - `actions.attack` rejects with `ActionManagerError` when the target is missing, and `actions.attackMove` when no position is given and no enemy start location is known, instead of throwing a `TypeError`. Missing units are not an error: the command methods resolve without proposing anything for an empty unit list (`do` used to reject with a `TypeError`). Only the raw `actions.queueAction` throws `ActionManagerError` for a command without units.
@@ -2080,12 +2086,20 @@ Bug fixes that changed a signature or a failure mode:
 - `units.getProductionUnits` and `units.getUpgradeFacilities` return only your own units, so `actions.train`, `actions.upgrade` and the builder never pick a visible enemy building.
 - The agent's own `onGameStart` and `onStep` now also receive `(data, event)` after `world`, and `onGameStart` keeps an `agent.opponent.id` set before the game (it used to wipe the ladder's `--OpponentId`). Under a ladder manager the engine sets the id from `--OpponentId` at setup only when it is passed, so a preset id survives otherwise.
 - Units whose death SC2 reports are labelled `dead` as before, and dead enemies are now also removed from the unit store, since enemies are otherwise kept as memory.
-- The map system marks the cells of destructible rocks and xel'naga towers unplaceable (node-sc2 only marked unbuildable plates), so `isPlaceable`, `isPlaceableAt`, the placement grid and `map.path` treat them as blocked. Rocks whose shape isn't known (diagonal and very large ones) stay placeable.
+- The map system marks the cells of destructible rocks and xel'naga towers unplaceable (node-sc2 only marked unbuildable plates), so `isPlaceable`, `isPlaceableAt`, the placement grid and `map.path` treat them as blocked. The blocked cells come from the live pathing grid (requested from SC2 once the game has stepped, since the grid at game start lacks flat rocks and towers), so diagonal and very large rocks are covered too; when the request fails, rocks keep their known footprints. A rock's cells are released from the live grid when it dies, and the natural's wall is recalculated if a rock changed cells it searched.
 - Enemy memory expires: a ghost is forgotten after 30 seconds (configurable with `memory.configure`) or when its last position is visible again. node-sc2 kept every enemy that left vision for the rest of the game.
 - Running another game on the same engine resets every registered resource in place (unit store, map caches, events, debug drawings, step times, proposed commands, and custom resources through their own `reset`), earmarks and systems' step timing (see [Several games on one engine](#enginerungamemap-players-options)). Enemy memory and the cached combat rally used to carry over, and agent systems skipped their `onStep` until the game loop passed where the previous game ended. The first game no longer resets anything, and the build and unit plugins are no longer re-applied per game (which ran a build order once more per step for every extra game).
 - A game SC2 can't create rejects `runGame` and `runBotVsBot` with SC2's error (e.g. `Could not create a game on "<map>" (InvalidMapName): ...`). It used to hang or fail later with a misleading error.
 - A realtime game whose SC2 connection closes rejects with `ConnectionClosedError` instead of resolving `[world, undefined]`.
 - `onNewEffect` and `onExpiredEffect` fire only when an effect appears or ends. The checks were inverted, so both fired for effects that were still active.
+
+Removed, so each thing has one way to do it:
+
+- `frame.timeInSeconds()`: use `Math.round(frame.time())`, which counts 22.4 game loops per second (`timeInSeconds` used 0.044 s per loop).
+- `agent.distributeWorkers`: enable [`mining`](#mining), the only worker manager; `workersPerGas` is a `mining` setting.
+- `units.getClosest(pos, units, n)`: use `Units.from(units).closestNUnits(pos, n)`, or `closestTo` on a non-empty list.
+- `agent.canAffordUnit(type)`: use `agent.canAfford(type, null, { supply: true })`. `agent.canAffordN(type, max)`, which returned how many were affordable: use `agent.canAfford(type, null, { count })`. Both old methods ignored earmarks; `canAfford` subtracts them.
+- `structurePending` from `@sc-bot/core/behaviors` (added in this fork, not in node-sc2): use `agent.alreadyPending`.
 
 ## Testing
 
@@ -2093,7 +2107,7 @@ Run `bun test` in `packages/core` (or `bun run test` at the repo root, through t
 
 - **Pure**: plain inputs, no world.
 - **Fixture**: a real engine and world built from captured game data, with a fake SC2 client. No SC2 needed.
-- **Live**: real SC2 games, in `engine/create-engine.live.test.ts`. They only run when `SC2PATH` is set.
+- **Live**: real SC2 games, in the `*.live.test.ts` files (`engine/create-engine`, `engine/behaviors` and `examples/examples`). They only run when `SC2PATH` is set.
 
 The fixture tier uses `createTestWorld(fixtureOrMapName, { loop?, agent?, onQuery? })` from `test/create-test-world.ts`. It loads `fixtures/<map>/`, runs the engine's setup and first step on the observation at `loop`, and returns the world plus `client` and `engine`. `stepTo(world, loopOrObservation)` feeds the next observation through a full dispatch, so events fire. The fake client (`test/fake-client.ts`) records every request in `client.sent` (`actions`, `step`, `debug`, `queries`, `createGame`, `leaveGame`, `saveReplay`, ...). It tracks `client.status` through `createGame`, `joinGame` and `leaveGame`, and like SC2, `saveReplay` throws once the game has been left. It answers placement and pathing queries with the answers recorded from the real engine when it has them, and otherwise computes them from the fixture's grids. `test/factories.ts` has `rawUnit`, `observation`, `unitTypeData` and `toyFixture` for hand-built frames.
 
@@ -2129,7 +2143,7 @@ The test helpers live inside the package and aren't part of its exports, so they
 **Scripts** (run in `packages/core`):
 
 - `bun run capture:fixtures [fixture...]` plays scripted games against the built-in AI and re-captures all fixtures, or only the named ones. It needs SC2 and the maps (`Ladder2018Season4/BlueshiftLE`, `Ladder2019Season3/AcropolisLE`, `Melee/Simple64`). It uses port 5077 and refuses to start if that port is taken. Each fixture is written to `<fixture>.capturing` and only replaces the old one when the capture completes. A saved observation is the exact response the frame system consumed, so the actions, action errors, chat and dead units SC2 reports only once are kept. The `type-abilities` passes run when no fixture is named, or when `type-abilities` is named along with `blueshift`. `CAPTURE_DIR` changes the output folder.
-- `bun run generate:data` regenerates the id modules in `constants/` and the dictionaries in `constants/dicts/` from the captured data. Existing names are kept.
+- `bun run generate:data` regenerates the id modules in `constants/` and the dictionaries in `constants/dicts/` from the captured data and formats them with the repo's biome. Existing names are kept. `bun run check:data` (also run by the test suite) fails when a committed generated file differs from a fresh run. `CONSTANTS_DIR` changes the target folder.
 
 ## Known limitations
 
@@ -2144,16 +2158,69 @@ The test helpers live inside the package and aren't part of its exports, so they
 
 ## Examples
 
-Small runnable bots live in [`examples/`](examples). Each needs SC2 installed. The game-playing ones read `MAP` (default `Melee/Simple64`) and `GAME_TIME_LIMIT` (game seconds) to end the game early; all but `ladder.ts` also read `SAVE_REPLAY=<path>` to save a replay, and the ones against the built-in AI (worker rush, cannon rush, ramp wall) read `DIFFICULTY` (a `Difficulty` name such as `HARD`, default `MEDIUM`).
+Small runnable bots live in [`examples/`](examples). Each needs SC2 installed. The game-playing ones read `MAP` (default `Melee/Simple64`) and `GAME_TIME_LIMIT` (game seconds) to end the game early; all game-playing examples except `ladder.ts` also read `SAVE_REPLAY=<path>` to save a replay, and the ones against the built-in AI read `DIFFICULTY` (a `Difficulty` name such as `HARD`, default `MEDIUM`, `EASY` for `behaviors-bot.ts`). `bot-vs-bot.ts`, `ladder.ts` and `ares/chat-debug.ts` have no `DIFFICULTY`.
 
-- `bun run examples/worker-rush.ts`
-- `bun run examples/cannon-rush.ts` (`findPlacement`, `Units` filters, chat)
-- `bun run examples/ramp-wall.ts` (Terran main ramp wall, `distributeWorkers`, depot raise/lower)
-- `bun run examples/bot-vs-bot.ts` (`runBotVsBot`)
-- `bun run examples/watch-replay.ts <replay> [observedPlayerId]` (`runReplay`)
-- `bun run examples/ladder.ts` (started by a ladder manager with `--LadderServer`, `--GamePort`, `--StartPort`)
-- `bun run examples/behaviors-bot.ts` (a Terran bio bot of only [controllers and behaviors](#behaviors-and-controllers): macro plan, squads, `canWinFight`, medivac heal; against the built-in AI, as `worker-rush.ts`)
-- [`examples/tutorial.ts`](examples/tutorial.ts) is a build system (an eight-gate all-in) to mount on an agent. It builds no pylons and has no supply handling, so as is its gateways can't be placed; add pylons to the order before using it.
+### Standalone examples
+
+- `bun run examples/worker-rush.ts`: Zerg sends every worker at the enemy. The workers get the role `ATTACKING` and the attack-move runs inside `roles.as(ATTACKING, …)`, so mining never takes them back.
+- `bun run examples/cannon-rush.ts`: Protoss cannon rush. Mining is on, probes come from `buildWorkers`, and the own-base pylon and forge go through `buildings.build(type, { placement: { closestTo } })`. Proxy pylons and cannons use `actions.findPlacement` and `buildings.build(type, { at })`, because the placement solver only covers your own bases.
+- `bun run examples/ramp-wall.ts`: Terran main ramp wall. Depots and the barracks are built on `wall` placements (`buildings.build(type, { placement: { flags: ['wall'] } })`), SCVs come from `buildWorkers` with mining on, and depots lower and raise on `spatial.anyInRange(depot, d, 'enemyGround')` (raise under 10, lower from 15).
+- `bun run examples/bot-vs-bot.ts`: `runBotVsBot`, a Terran and a Zerg worker rusher against each other.
+- `bun run examples/watch-replay.ts <replay> [observedPlayerId]`: `runReplay` with an observer agent that logs the time and created units.
+- `bun run examples/ladder.ts`: a Terran worker rush, started by a ladder manager with `--LadderServer`, `--GamePort`, `--StartPort`.
+- `bun run examples/behaviors-bot.ts`: a Terran bio bot of only [controllers and behaviors](#behaviors-and-controllers): macro plan, squads, `canWinFight`, medivac heal; against the built-in AI, as `worker-rush.ts`.
+- [`examples/tutorial.ts`](examples/tutorial.ts) is the companion of [docs/tutorial.md](docs/tutorial.md): a build system (an eight-gate all-in) to mount on an agent. It builds no pylons and has no supply handling, so as is its gateways can't be placed; add pylons to the order before using it.
+
+### Translated from ares-sc2 tutorials
+
+[`examples/ares/`](examples/ares) holds TypeScript ports of the ares-sc2 tutorials, each the tutorial's final bot with the same race, units and flow, run as `bun run examples/ares/<file>`. They read the same environment variables as above. The ports with their own logic have a fixture test next to them; `influence-and-pathing.ts` and `chat-debug.ts` are only type-checked. The ares `config_file` tutorial has no content upstream ("Coming soon"), so it has no port: config files are shown by the openings below and by the inline `features` in `chat-debug.ts`.
+
+| File | ares tutorial | Race | Gaps and deviations from ares |
+|---|---|---|---|
+| `assigning-unit-roles.ts` | assigning_unit_roles | Zerg | No `get_unit_role_dict` (use `roles.roleOf` / `roles.getTags`). `get_enemy_third` is `map.getEnemyThirds()[0].townhallPosition`; `on_unit_created` is `onUnitCreated` calling `roles.assign`. The ling and roach lists are re-read after the harass split (ares keeps them stale for that step). |
+| `combat-maneuver.ts` | combat_maneuver_example | Terran | `CombatManeuver` is `plan()`; the air grid is the `air` influence layer. `pathUnitToTarget` uses `successAtDistance: 3` so the drop can run; ares' default of 0 never reaches it. `has_cargo` is `cargoSpaceTaken > 0`. Mines are widow mines (the tutorial leaves the selection out). |
+| `unit-squads.ts` | unit_squads_group_behaviors | Zerg | `get_units_in_range(EnemyGround)` is `spatial.unitsInRange(squad.position, 11.5, 'enemyGround')`; `squad_radius` is `squads.getSquads(role, { radius: 9 })`. `StutterGroupForward` and `AMoveGroup` are `stutterGroupForward` and `aMoveGroup` run with `behaviors.run(plan(…))`; `groupPosition` is passed but core ignores it. Structures and workers are excluded with `isStructure()` / `isWorker()`. |
+| `custom-behaviors.ts` | custom_behaviors | Terran | A custom behavior is a `Behavior` object `{ name, execute(ctx) }`. `get_total_supply` is the summed `foodRequired`. Named `customSiegeTankDecision`, because core ships `siegeTankDecision`. `ctx.order(unit, MORPH_SIEGEMODE)` replaces `SIEGEMODE_SIEGEMODE`. |
+| `influence-and-pathing.ts` | influence_and_pathing | Protoss | Partial. No air-vs-ground, climber or ground-to-air grids (the layers are `ground`, `air`, `groundAvoidance`, `airAvoidance`). No blank-grid API: custom cost goes onto the built-in layers with `influence.addCost` and lasts one game loop. No `find_low_priority_path`: `lowPriorityPath` keeps every 4th point of `findPath` and picks 8 of them, assuming map_analyzer's thinning. No `cy_*` helpers beyond `pathing.isPositionSafe` (`cy_point_below_value`). Air cost uses `airDps` at each enemy unit; the tutorial uses ground DPS at the enemy spawn. |
+| `managing-production.ts` | managing_production | Terran | `MacroPlan` is `plan()`. Mining is enabled explicitly (core's is opt-in, ares mines by default). The viking_tank composition is exported as `vikingTank`. |
+| `build-runner.ts` | build_runner and build_runner_examples/*.yml | Terran, Protoss or Zerg | Partial, see [Build-runner openings](#build-runner-openings). `build_completed` is the `buildComplete` hook, `chosen_opening` is `getOpening()`, `switch_opening` is `switchOpening()`. Zerg structures take the `findPlacement` fallback (the solver has no Zerg spots). |
+| `custom-building-placements.ts` | custom_building_placements | Protoss and Terran | Partial. No YAML loader: the tables are TS literals (`TERRAN_PLACEMENTS`, `PROTOSS_PLACEMENTS`) fed to `createPlacer(table)` and keyed by map name (matched by prefix, since ladder names carry a suffix like " LE"), spawn (upper or lower, from own start y against the enemy's) and opponent race. A race entry wins per key and `VsAll` spots are appended, deduped, as in ares. `VsRandom` applies only if the opponent race is `Race.RANDOM`; the agent reports no race for a random opponent at game start, so only `VsAll` applies there. No `FirstPylon` or `GateKeeper` keys and no gatekeeper position API (`nextFirstPylon` is `placement.request(PYLON, { reserve: false })`). `toCount` replaces `to_count_per_base`. Unmapped keys: Bunkers, Pylons, ProductionWall, StaticDefences, ThreeByThrees, UpgradeStructuresWall. No `Debug` / `ShowBuildingFormation` config; `placement.drawDebug` colours custom spots purple. No raw `placements_dict`; `placement.getPlacements({ base, size, flag })` stands in. `ConstantWorkerProductionTill` and `AutoSupplyAtSupply` aren't set. The tutorial's mixed-race snippets are split into `createBot()` (Protoss, the one the runner plays) and `createTerranBot()`. |
+| `chat-debug.ts` | chat_debug | Terran | Enabled by `features: { chatDebug: true }` passed inline to `createEngine`; the game runs `realtime: true` so you can type. The command set is ares', see below. Always against a MEDIUM built-in AI. |
+
+#### chat-debug commands
+
+Type these into the SC2 chat (own messages only, case-insensitive):
+
+- `make|create <count> <UnitTypeName> [playerId]`: spawn at the camera, e.g. `make 4 marine`, `make 1 hive 2`.
+- `kill|destroy <count> <UnitTypeName> [playerId]`: kill anywhere on the map, e.g. `kill 4 marine`, `destroy 4 banshee 2`.
+- `cooldown`, `food|supply`, `god`, `resources|money`, `show|reveal|show-map`, `tech|tech-tree`, `upgrades`.
+
+#### Build-runner openings
+
+`ares/build-runner.ts` mounts one build system with `openings: 'config'` and loads its race's file through `createEngine({ configFile })`. Pick the race with `RACE=terran|protoss|zerg` (default `terran`); the opponent is always a built-in Protoss AI. Each file is a full core config (`{ "resources": { "openings": { builds, choices, method, minGames } } }`):
+
+- `examples/ares/openings/terran.config.json`: FastCC, ThreeRax, OneOneOneStandard, OneOneOneMineDrop, ReaperOpening.
+- `examples/ares/openings/protoss.config.json`: BasicOpener, AdeptOracle, AggressiveStalker, OneBaseTempests, PhoenixEconomic.
+- `examples/ares/openings/zerg.config.json`: OneBaseMuta, BroRush, LingDroneRush, ProxyHatch, RavagerRush, Ultras.
+
+The example logs `getOpening()` at game start and again at `buildComplete`, reads the `BUILD_RUNNER_SCOUT` worker with `roles.get`, and (Protoss only) calls `switchOpening('OneBaseTempests')` once when intel flags the enemy `rushed`. It lowers every ready depot, as ares' build_runner_bot does, because a raised ramp wall seals the main from builders outside it.
+
+Gaps against ares' YAML files:
+
+- YAML becomes JSON. `Cycle` / `WinrateBased` is `method`, `MinGamesWinrateBased` is `minGames`, `BuildChoices` is `choices`, and the options are camelCase (`autoSupplyAtSupply`, `constantWorkerProductionTill`, `persistentWorker`). Every build from the YAML files is present except the step below.
+- Dropped: `ShouldHandleGasSteal`, `BotName`, the `test_123` choice, `UseData` (no `dataDir`, so no history; it is opt-in), `set_build_completed`, the `ENEMY_NAT_HG_SPOT` target and Protoss' supply of -1.
+- OneBaseTempests drops `16 tempestgroundattackupgrade`: that upgrade isn't in the game data, so the step wouldn't parse.
+- The Protoss and Zerg YAMLs don't set `MinGamesWinrateBased`; those files carry core's default (3) explicitly. The YAMLs have race keys only, no opponent ids. Zerg's ProxyHatch is defined but in no choice list, as in the YAML.
+
+### Live smoke test
+
+`examples/examples.live.test.ts` plays three examples against a VeryEasy Zerg on Simple64 with a game time limit, and is skipped unless `SC2PATH` is set:
+
+- `ramp-wall` has a depot and a barracks on `wall` placements by 4:00.
+- `managing-production` has a factory (standing or pending) and at least 8 marines by 6:00.
+- `build-runner` (Terran, opening forced to `ThreeRax` by overriding the Zerg choices) completes the build before 7:00.
+
+Run it with `SC2PATH=<sc2 dir> bun test examples/examples.live.test.ts`. Run live suites one at a time; each test launches SC2 on a fixed port (5410 to 5412).
 
 ## More documentation
 

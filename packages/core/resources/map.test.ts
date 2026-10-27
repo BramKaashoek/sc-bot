@@ -277,6 +277,17 @@ describe('MapResource', () => {
         expect([ramp.depotInMiddle, ramp.cornerDepots, ramp.barracksCorrectPlacement]).toEqual([null, [], null]);
     });
 
+    it.each(['blueshift', 'acropolis', 'simple64'] as const)(
+        'lists the townhall centers of getExpansions in the same order as the expansion locations on %s',
+        async (mapName) => {
+            const { map } = (await createTestWorld(mapName)).resources.get();
+
+            expect(map.getExpansionLocations()).toEqual(
+                map.getExpansions().map(({ townhallPosition: { x, y } }) => ({ x: x + 0.5, y: y + 0.5 })),
+            );
+        },
+    );
+
     it('computes expansion locations and vision blockers from the start grids like python-sc2', async () => {
         const world = await createTestWorld('blueshift');
         const { map } = world.resources.get();
@@ -299,13 +310,6 @@ describe('MapResource', () => {
         ];
 
         expect(byPosition(map.getExpansionLocations())).toEqual(pythonLocations);
-        expect(
-            byPosition(
-                map
-                    .getExpansions()
-                    .map(({ townhallPosition }) => ({ x: townhallPosition.x + 0.5, y: townhallPosition.y + 0.5 })),
-            ),
-        ).toEqual(pythonLocations);
         expect(byPosition(map.getVisionBlockers())).toEqual(VISION_BLOCKERS.map(([x, y]) => ({ x, y })));
     });
 

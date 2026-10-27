@@ -6,7 +6,7 @@ import { gridsInCircle } from '../utils/geometry/angle.ts';
 import { gasMineTypes } from '../constants/groups.ts';
 import { footprintCells } from '../utils/geometry/units.ts';
 import { createStartGrids, findRampsAndVisionBlockers } from '../utils/map/ramp.ts';
-import { findExpansionLocations } from '../utils/map/expansion-locations.ts';
+import { townhallCenter } from '../utils/map/townhall.ts';
 import type { Ramp, StartGrids } from '../utils/map/ramp.ts';
 import type { Grid2D, MapPathOptions, MapResource, Point2D, Unit, WPoint, World } from '../types.ts';
 
@@ -37,7 +37,6 @@ function createMapManager(world: World): MapManager {
     let startGrids: StartGrids | undefined;
     let ramps: Ramp[] = [];
     let visionBlockers: Point2D[] = [];
-    let expansionLocations: Point2D[] = [];
     let mainBaseRamp: Ramp | undefined;
 
     const requireStartGrids = () => {
@@ -411,13 +410,6 @@ function createMapManager(world: World): MapManager {
                 return { x, y };
             };
             ({ ramps, visionBlockers } = findRampsAndVisionBlockers(startGrids, startRaw.playableArea!, startLocation));
-
-            const { units } = world.resources.get();
-            expansionLocations = findExpansionLocations(
-                units.getAlive(Alliance.NEUTRAL),
-                startGrids.terrainHeight,
-                startGrids.placement,
-            );
         },
         getRamps() {
             return ramps.slice();
@@ -444,7 +436,7 @@ function createMapManager(world: World): MapManager {
             return visionBlockers.slice();
         },
         getExpansionLocations() {
-            return expansionLocations.slice();
+            return this._expansions.map(townhallCenter);
         },
         getTerrainHeight(point) {
             return requireStartGrids().terrainHeight.get(createPoint2D(point));

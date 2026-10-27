@@ -1,7 +1,7 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 import { Ability, UnitType } from '../constants/index.ts';
 import { Alliance, Race } from '../constants/enums.ts';
-import { GATHERING } from '../constants/unit-role.ts';
+import { BASE_DEFENDER, BUILDING, GATHERING, PERSISTENT_BUILDER } from '../constants/unit-role.ts';
 import { createTestWorld, stepTo } from '../test/create-test-world.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
 import { rawUnit } from '../test/factories.ts';
@@ -55,9 +55,9 @@ const depot = (pos: Point2D, overrides: SC2APIProtocol.Unit = {}) =>
     });
 
 describe('building tracker', () => {
-    it('returns undefined without a placement or a worker, releasing the spot it reserved', async () => {
+    it('returns undefined without a placement or a worker, releasing the spot it reserved; with mining off picks the closest worker no other role owns', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
-        const { buildings, placement, units, mining } = world.resources.get();
+        const { buildings, placement, units, mining, roles } = world.resources.get();
         const spot = { x: 30, y: 30 };
         const request = spyOn(placement, 'request').mockReturnValue(spot);
         const release = spyOn(placement, 'release');
@@ -66,7 +66,13 @@ describe('building tracker', () => {
         expect(buildings.build(UnitType.SUPPLYDEPOT)).toBeUndefined();
         release.mockClear();
         spyOn(mining, 'isEnabled').mockReturnValue(false);
-        expect(buildings.build(UnitType.SUPPLYDEPOT)).toBeDefined();
+        const [persistent, defender, gatherer] = units
+            .getWorkers()
+            .filter((worker) => worker.tag !== BARRACKS_BUILDER)
+            .closestNUnits(spot, 3);
+        roles.assign(persistent, PERSISTENT_BUILDER);
+        roles.assign(defender, BASE_DEFENDER);
+        expect(buildings.build(UnitType.SUPPLYDEPOT)?.workerTag).toBe(gatherer.tag);
         release.mockClear();
         request.mockReturnValueOnce(undefined);
         spyOn(units, 'getMineralWorkers').mockReturnValue(new Units());
@@ -85,10 +91,11 @@ describe('building tracker', () => {
         const build = buildings.build(UnitType.SUPPLYDEPOT)!;
         const { workerTag, target } = build;
         const worker = workerTag!;
+        const pending = () => [build.status, world.agent.alreadyPending(UnitType.SUPPLYDEPOT)];
 
         const moved = await step(world, 900);
         expect(moved).toEqual([expect.objectContaining({ abilityId: Ability.MOVE, tags: [worker] })]);
-        expect([build.status, buildings.pending(UnitType.SUPPLYDEPOT)]).toEqual(['moving', 1]);
+        expect([pending(), buildings.pending(UnitType.SUPPLYDEPOT)]).toEqual([['moving', 1], 1]);
 
         const queueAction = actions.queueAction.bind(actions);
         let mineralsAtBuild: number | undefined;
@@ -99,23 +106,23 @@ describe('building tracker', () => {
         });
         const ordered = await step(world, 904, { edits: { [worker]: { ...at(target), orders: [] } } });
         expect(ordered).toEqual([{ abilityId: Ability.BUILD_SUPPLYDEPOT, tags: [worker], target }]);
-        expect([build.status, units.getByTag(worker)!.labels.has('command'), mineralsAtBuild]).toEqual([
-            'ordered',
+        expect([pending(), units.getByTag(worker)!.labels.has('command'), mineralsAtBuild]).toEqual([
+            ['ordered', 1],
             true,
             4815 - 100,
         ]);
 
         const building = [{ abilityId: Ability.BUILD_SUPPLYDEPOT, targetWorldSpacePos: target }];
         await step(world, 908, { edits: { [worker]: { ...at(target), orders: building } } });
-        expect(build.status).toBe('ordered');
+        expect(pending()).toEqual(['ordered', 1]);
 
         const structure = depot(target);
         await step(world, 912, { edits: { [worker]: { ...at(target), orders: building } }, extra: [structure] });
-        expect(build.status).toBe('constructing');
+        expect(pending()).toEqual(['constructing', 1]);
 
         await step(world, 916, { edits: { [worker]: { orders: [] } }, extra: [{ ...structure, buildProgress: 1 }] });
-        expect([build.status, build.structureTag, roles.roleOf(worker), buildings.pending()]).toEqual([
-            'done',
+        expect([pending(), build.structureTag, roles.roleOf(worker), buildings.pending()]).toEqual([
+            ['done', 0],
             structure.tag,
             GATHERING,
             0,
@@ -180,8 +187,8 @@ describe('building tracker', () => {
         expect([build.status, earmarked()]).toEqual(['ordered', false]);
     });
 
-    it('never moves a build pinned with `at`: a blocked spot or maxAttempts rejected BUILDs fail it blocked', async () => {
-        for (const cause of ['unplaceable', 'rejected'] as const) {
+    it('never moves a build pinned with `at`: a blocked spot, maxAttempts rejected BUILDs or a stalled worker fail it blocked', async () => {
+        for (const cause of ['unplaceable', 'rejected', 'stalled'] as const) {
             const world = await createTestWorld('blueshift', { loop: 896 });
             const { buildings, placement } = world.resources.get();
             buildings.configure({ maxAttempts: 1 });
@@ -190,18 +197,20 @@ describe('building tracker', () => {
             const build = buildings.build(UnitType.SUPPLYDEPOT, { at: spot })!;
             const worker = build.workerTag!;
             const request = spyOn(placement, 'request');
-            const inRange = { edits: { [worker]: { ...at(spot), orders: [] } } };
+            const stand = cause === 'stalled' ? {} : { edits: { [worker]: { ...at(spot), orders: [] } } };
 
             if (cause === 'unplaceable') {
                 spyOn(placement, 'canPlace').mockReturnValue(false);
+            } else if (cause === 'stalled') {
+                await step(world, 900);
             } else {
                 spyOn(world.client, 'action').mockImplementationOnce(async (req) => {
                     world.client.sent.actions.push(req);
                     return { result: (req.actions ?? []).map(() => 2 as SC2APIProtocol.ActionResult) };
                 });
-                await step(world, 900, inRange);
+                await step(world, 900, stand);
             }
-            await step(world, LATER, inRange);
+            await step(world, LATER, stand);
 
             expect([
                 build.status,
@@ -211,6 +220,84 @@ describe('building tracker', () => {
                 placement.getPlacements({ state: 'reserved' }),
             ]).toEqual(['failed', 'blocked', spot, [], []]);
         }
+    });
+
+    it('replans a build whose moving worker stands still for 10 s with a new worker, then fails it blocked, keeping stalled workers off tracked and actions.build builds of that type for 60 s, mining on or off; a walking worker never stalls', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { actions, buildings, placement, units, mining, roles } = world.resources.get();
+        const build = buildings.build(UnitType.SUPPLYDEPOT)!;
+        const worker = build.workerTag!;
+        const first = build.target;
+        const { x, y } = units.getByTag(worker)!.pos;
+        const standAt = (dx: number) => ({ edits: { [worker]: { pos: { x: x + dx, y, z: 12 }, orders: [] } } });
+        const state = () => [build.status, build.failure, build.target === first];
+        const reserved = () => placement.getPlacements({ state: 'reserved' }).map(({ pos }) => pos);
+
+        await step(world, 900, standAt(0));
+        await step(world, 1100, standAt(2));
+        await step(world, 1300, standAt(4));
+        expect(state()).toEqual(['moving', undefined, true]);
+
+        await step(world, 1525, standAt(4));
+        expect([...state(), reserved(), build.workerTag !== worker, roles.roleOf(worker)]).toEqual([
+            'moving',
+            undefined,
+            false,
+            [build.target],
+            true,
+            GATHERING,
+        ]);
+        const replacement = build.workerTag!;
+
+        await step(world, 1530, standAt(4));
+        await step(world, 1755, standAt(4));
+        expect([...state(), reserved()]).toEqual(['failed', 'blocked', false, []]);
+
+        const there = { at: { x: x + 4, y } };
+        const builders = () => [UnitType.SUPPLYDEPOT, UnitType.BARRACKS].map((type) => buildings.build(type, there)!);
+        const [depot, barracks] = builders();
+        expect([depot.workerTag !== worker, barracks.workerTag]).toEqual([true, worker]);
+        [depot, barracks].forEach((pinned) => buildings.cancel(pinned));
+        spyOn(mining, 'isEnabled').mockReturnValue(true);
+        const select = spyOn(mining, 'selectWorker').mockReturnValue(undefined);
+        buildings.build(UnitType.SUPPLYDEPOT, there);
+        const sentBefore = world.client.sent.actions.length;
+        await actions.build(UnitType.SUPPLYDEPOT, there.at);
+        await actions.flushQueuedActions();
+        const built = world.client.sent.actions
+            .slice(sentBefore)
+            .flatMap((request) => request.actions!.map((action) => action.actionRaw!.unitCommand!))
+            .find(({ abilityId }) => abilityId === Ability.BUILD_SUPPLYDEPOT)!.unitTags!;
+        expect([
+            select.mock.calls.map(([, opts]) => [worker, replacement].every((tag) => opts!.exclude!.has(tag))),
+            built.includes(worker),
+        ]).toEqual([[true, true], false]);
+        select.mockRestore();
+        spyOn(mining, 'isEnabled').mockReturnValue(false);
+        await step(world, 1755 + 60 * 22.4, standAt(4));
+        expect(buildings.build(UnitType.SUPPLYDEPOT, there)!.workerTag).toBe(worker);
+    });
+
+    it('keeps a caller-supplied worker through a stall replan and fails the build blocked on the second stall', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { buildings, roles, units } = world.resources.get();
+        const supplied = units
+            .getWorkers()
+            .find((worker) => worker.tag !== BARRACKS_BUILDER && !worker.isCarryingResource())!;
+        const build = buildings.build(UnitType.SUPPLYDEPOT, { worker: supplied })!;
+        const first = build.target;
+        const stand = { edits: { [supplied.tag]: { orders: [] } } };
+
+        await step(world, 900, stand);
+        await step(world, 1125, stand);
+        const replanned = [build.status, build.target !== first, build.workerTag, roles.roleOf(supplied)];
+        await step(world, 1130, stand);
+        await step(world, 1355, stand);
+
+        expect([replanned, [build.status, build.failure, build.workerTag]]).toEqual([
+            ['moving', true, supplied.tag, BUILDING],
+            ['failed', 'blocked', supplied.tag],
+        ]);
     });
 
     it('replaces a dead worker and fails noWorker when nobody is left', async () => {
@@ -250,7 +337,7 @@ describe('building tracker', () => {
                 expect.objectContaining({ abilityId: Ability.SMART, targetUnitTag: '4352638978' }),
             ]),
         );
-        expect(buildings.pending()).toBe(1);
+        expect([buildings.pending(), world.agent.alreadyPending(UnitType.BARRACKS)]).toEqual([1, 1]);
     });
 
     it('retargets a blocked townhall to a free expansion, else fails blocked; counts a tracked refinery once; times out gas builds', async () => {

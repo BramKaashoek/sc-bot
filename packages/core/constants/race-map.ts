@@ -22,6 +22,17 @@ const TownhallRace = {
     [Race.TERRAN]: [UnitType.COMMANDCENTER, UnitType.ORBITALCOMMAND, UnitType.PLANETARYFORTRESS],
 };
 
+const FlyingTownhallRace: Record<number, number[]> = {
+    [Race.TERRAN]: [UnitType.COMMANDCENTERFLYING, UnitType.ORBITALCOMMANDFLYING],
+};
+
+const TownhallWithFlyingRace: Record<number, number[]> = Object.fromEntries(
+    Object.entries(TownhallRace).map(([race, types]) => [
+        race,
+        [...types, ...(FlyingTownhallRace[Number(race)] ?? [])],
+    ]),
+);
+
 const WorkerRace = {
     [Race.ZERG]: UnitType.DRONE,
     [Race.PROTOSS]: UnitType.PROBE,
@@ -34,4 +45,12 @@ const HarvestGatheringRace = {
     [Race.TERRAN]: Ability.HARVEST_GATHER_SCV,
 };
 
-export { GasMineRace, SupplyUnitRace, TownhallRace, WorkerRace, HarvestGatheringRace };
+export {
+    FlyingTownhallRace,
+    GasMineRace,
+    SupplyUnitRace,
+    TownhallRace,
+    TownhallWithFlyingRace,
+    WorkerRace,
+    HarvestGatheringRace,
+};

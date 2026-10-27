@@ -1,6 +1,7 @@
 import createDebug from 'debug';
 import { createAgent, createEngine, createPlayer } from '@sc-bot/core';
 import { Alliance, Difficulty, Race } from '@sc-bot/core/constants/enums';
+import { GAME_LOOPS_PER_SECOND } from '@sc-bot/core/constants/time';
 import buildSystem from './systems/build.ts';
 import combatSystem from './systems/combat/index.ts';
 import economySystem from './systems/economy.ts';
@@ -19,8 +20,7 @@ if (!(raceName in Race)) {
     throw new Error(`Unknown AI_RACE "${raceName}", expected one of ${Object.keys(Race).join(', ')}`);
 }
 
-const LOOPS_PER_GAME_SECOND = 22.4;
-const STATUS_EVERY_LOOPS = Math.round(10 * LOOPS_PER_GAME_SECOND);
+const STATUS_EVERY_LOOPS = Math.round(10 * GAME_LOOPS_PER_SECOND);
 const RESULT_NAMES: Record<number, string> = {
     1: 'Victory',
     2: 'Defeat',

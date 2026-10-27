@@ -90,7 +90,7 @@ In part 1 we got a basic wireframe put together. We built a pylon, a gateway, a 
             const { units, actions } = resources.get();
 
             // get the three closest probes to the assimilator
-            const threeWorkers = units.getClosest(newBuilding.pos, units.getMineralWorkers(), 3);
+            const threeWorkers = units.getMineralWorkers().closestNUnits(newBuilding.pos, 3);
             // add the `gasWorker` label, this makes sure they aren't used in the future for building
             threeWorkers.forEach(worker => worker.labels.set('gasWorker', true));
             // send them to mine at the `newBuilding` (the assimilator)
@@ -226,7 +226,7 @@ Great, now we have a way of checking if our build is complete or not. Just by lo
 Awesome. Now we will continuously attack in waves once our build is done, with each wave slightly larger than the last. Now pump the difficultly up to `HARDER` or `VERYHARD` (which is Elite) and let 'em rip. This simple bot will actually win against Elite AI a large % of the time (around 85%~ in my testing), only really losing to the 7RR and other early cheese it sometimes does at random.
 
 ## Recap
-A nice starting point for a winning bot in under 100 lines :) If you got lost anywhere along the way, here's a link to the full code of the tutorial agent: [tutorial.js](../examples/tutorial.js).
+A nice starting point for a winning bot in under 100 lines :) If you got lost anywhere along the way, here's a link to the full code of the tutorial agent: [tutorial.ts](../examples/tutorial.ts).
 
 ## What's Next?
 Try making some enhancements to this agent:

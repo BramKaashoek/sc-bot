@@ -1,4 +1,4 @@
-import type { Point2D, Unit } from '@sc-bot/core';
+import { distance, type Point2D, type Unit } from '@sc-bot/core';
 import { log, nameOf, posOf } from '../../log.ts';
 import { getMopUpTargets, MOP_UP_RADIUS } from '../utils.ts';
 import type { MicroContext, MicroIntent } from './types.ts';
@@ -6,16 +6,14 @@ import type { MicroContext, MicroIntent } from './types.ts';
 // a blob ordered to one point settles in a spread around it, so idle units this close count as arrived
 const ARRIVED_DISTANCE = 8;
 
-const distance = (a: { x?: number; y?: number }, b: Point2D) => Math.hypot(a.x! - b.x!, a.y! - b.y!);
-
 const isHeadingTo = (unit: Unit, destination: Point2D) => {
     const orderPos = unit.orders?.[0]?.targetWorldSpacePos;
-    return !!orderPos && distance(orderPos, destination) < 1;
+    return !!orderPos && distance(orderPos as Point2D, destination) < 1;
 };
 
 const hasStaleAttackOrder = (unit: Unit, target: Point2D) => {
     const orderPos = unit.orders?.[0]?.targetWorldSpacePos;
-    return unit.isAttacking() && !!orderPos && distance(orderPos, target) > MOP_UP_RADIUS;
+    return unit.isAttacking() && !!orderPos && distance(orderPos as Point2D, target) > MOP_UP_RADIUS;
 };
 
 export class BasicMicro {

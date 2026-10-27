@@ -1,4 +1,4 @@
-import { avgPoints, distance, distanceSquared, towards } from '../../utils/geometry/point.ts';
+import { avgPoints, distance, distanceSquared } from '../../utils/geometry/point.ts';
 import { isFlying } from '../../resources/units-collection.ts';
 import type { InfluenceLayer, Point2D, Unit, World } from '../../types.ts';
 
@@ -59,5 +59,3 @@ export function groupWeaponsOnCooldown(group: Unit[], stutterForward: boolean): 
 export function center(units: Unit[]): Point2D {
     return avgPoints(units.map(({ pos }) => pos));
 }
-
-export { towards };

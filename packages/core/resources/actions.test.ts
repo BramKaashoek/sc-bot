@@ -1,8 +1,9 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 import createAgent from '../agent/create-agent.ts';
-import { Ability, UnitType, WarpUnitAbility } from '../constants/index.ts';
-import { GATHERING } from '../constants/unit-role.ts';
-import { ActionManagerError, GatherError } from '../engine/errors.ts';
+import { Ability, Buff, UnitType, Upgrade, WarpUnitAbility } from '../constants/index.ts';
+import { Race } from '../constants/enums.ts';
+import { GATHERING, PERSISTENT_BUILDER } from '../constants/unit-role.ts';
+import { ActionManagerError, GatherError, TrainError } from '../engine/errors.ts';
 import { createTestWorld, loadFixture, stepTo } from '../test/create-test-world.ts';
 import { rawUnit, toyFixture } from '../test/factories.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
@@ -90,26 +91,99 @@ describe('ActionManager', () => {
         expect(world.client.sent.actions.length).toBe(sentBefore);
     });
 
-    it('builds with the worker mining selects only when mining is enabled', async () => {
+    it('builds with the worker mining selects only when mining is enabled, else the closest worker no other role owns, returning its cargo first', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
-        const { actions, mining, units } = world.resources.get();
+        const { actions, mining, roles, units } = world.resources.get();
         const pos = { x: 30, y: 30 };
-        const [closest] = units.getClosest(pos, units.getMineralWorkers());
+        const [reserved, closest] = units.getWorkers().closestNUnits(pos, 2);
+        roles.assign(reserved, PERSISTENT_BUILDER);
+        closest.buffIds = [Buff.CARRYMINERALFIELDMINERALS];
         const worker = units.getWorkers().find((scv) => scv.tag !== closest.tag)!;
         const select = spyOn(mining, 'selectWorker').mockReturnValue(worker);
-        const builders = async () => {
+        const sent = async () => {
             const before = world.client.sent.actions.length;
             await actions.build(UnitType.SUPPLYDEPOT, pos);
             await actions.flushQueuedActions();
             return world.client.sent.actions
                 .slice(before)
-                .flatMap((request) => request.actions!.map((action) => action.actionRaw!.unitCommand!.unitTags));
+                .flatMap((request) => request.actions!.map((action) => action.actionRaw!.unitCommand!))
+                .map(({ abilityId, unitTags, queueCommand }) => ({ abilityId, unitTags, queueCommand }));
         };
 
-        expect(await builders()).toEqual([[closest.tag]]);
+        expect(await sent()).toEqual([
+            { abilityId: Ability.HARVEST_RETURN, unitTags: [closest.tag], queueCommand: false },
+            { abilityId: Ability.BUILD_SUPPLYDEPOT, unitTags: [closest.tag], queueCommand: true },
+        ]);
         mining.configure({ enabled: true });
-        expect(await builders()).toEqual([[worker.tag]]);
-        expect(select.mock.calls).toEqual([[pos, { forceClose: true, role: GATHERING }]]);
+        expect(await sent()).toEqual([
+            { abilityId: Ability.BUILD_SUPPLYDEPOT, unitTags: [worker.tag], queueCommand: false },
+        ]);
+        expect(select.mock.calls).toEqual([[pos, expect.objectContaining({ forceClose: true, role: GATHERING })]]);
+    });
+
+    it('queues a protoss build on the closest constructing probe within 20 that no other role owns', async () => {
+        const fixture = loadFixture('blueshift-protoss');
+        const raw = fixture.observations[896].observation!.rawData!.units!;
+        const [first, second] = raw
+            .filter((unit) => unit.unitType === UnitType.PROBE)
+            .sort((a, b) => Math.hypot(a.pos!.x! - 30, a.pos!.y! - 30) - Math.hypot(b.pos!.x! - 30, b.pos!.y! - 30));
+        [first, second].forEach((probe) => {
+            probe.orders = [{ abilityId: Ability.BUILD_PYLON, targetWorldSpacePos: { x: 30, y: 30 } }];
+        });
+        const world = await createTestWorld(fixture, {
+            loop: 896,
+            agent: createAgent({ settings: { race: Race.PROTOSS } }),
+        });
+        const { actions, roles } = world.resources.get();
+        const sentBefore = world.client.sent.actions.length;
+
+        await actions.build(UnitType.PYLON, { x: 30, y: 30 });
+        roles.assign(first.tag!, PERSISTENT_BUILDER);
+        await actions.build(UnitType.PYLON, { x: 30, y: 30 });
+        await actions.flushQueuedActions();
+
+        expect(
+            world.client.sent.actions
+                .slice(sentBefore)
+                .flatMap((request) => request.actions!.map((action) => action.actionRaw!.unitCommand!))
+                .map(({ unitTags, queueCommand }) => ({ unitTags, queueCommand })),
+        ).toEqual([{ unitTags: [first.tag!, second.tag!], queueCommand: true }]);
+    });
+
+    it('charges net cost like agent.train: 100 for a depot, 150 (not 550) for an orbital morph, 100/100 for an upgrade, rejecting an upgrade it cannot afford', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const withTech = structuredClone(world.client.fixture.observations[896]);
+        withTech.observation!.gameLoop = 900;
+        withTech.observation!.playerCommon!.minerals = 500;
+        withTech.observation!.playerCommon!.vespene = 100;
+        withTech.observation!.rawData!.units!.push(
+            rawUnit({ tag: 'rax', unitType: UnitType.BARRACKS, pos: { x: 40, y: 40, z: 10 } }),
+            rawUnit({ tag: 'cc1', unitType: UnitType.COMMANDCENTER, pos: { x: 60, y: 40, z: 10 } }),
+            rawUnit({ tag: 'cc2', unitType: UnitType.COMMANDCENTER, pos: { x: 80, y: 40, z: 10 } }),
+            rawUnit({ tag: 'ebay', unitType: UnitType.ENGINEERINGBAY, pos: { x: 40, y: 60, z: 10 } }),
+        );
+        await stepTo(world, withTech);
+        const { actions, units } = world.resources.get();
+        const [cc1, cc2, ebay] = units.getByTag(['cc1', 'cc2', 'ebay']);
+        const charged: number[][] = [];
+        const charge = async (spend: () => Promise<unknown>) => {
+            const { minerals, vespene } = world.agent;
+            await spend();
+            charged.push([minerals! - world.agent.minerals!, vespene! - world.agent.vespene!]);
+        };
+
+        await charge(() => actions.build(UnitType.SUPPLYDEPOT, { x: 0, y: 7 }));
+        await charge(() => actions.train(UnitType.ORBITALCOMMAND, cc1));
+        await charge(() => world.agent.train(UnitType.ORBITALCOMMAND, 1, cc2.pos));
+        await charge(() => actions.upgrade(Upgrade.TERRANINFANTRYWEAPONSLEVEL1, ebay));
+
+        expect(charged).toEqual([
+            [100, 0],
+            [150, 0],
+            [150, 0],
+            [100, 100],
+        ]);
+        await expect(actions.upgrade(Upgrade.TERRANINFANTRYARMORSLEVEL1, ebay)).rejects.toBeInstanceOf(TrainError);
     });
 
     it('rejects gather without a mineral field when no own base is complete', async () => {
@@ -174,6 +248,76 @@ describe('ActionManager', () => {
                 })),
             },
         ]);
+    });
+
+    it('trains and researches on the dict producer with the ability the game accepts: a Lurker from a hydralisk, zealots from an idle gateway first, then one per ready warp gate at distinct spots, charging each, vehicle plating at the armory', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const [hydralisk, lurkerDen, gateway, warpGate, otherWarpGate, coolingWarpGate, armory] = [
+            UnitType.HYDRALISK,
+            UnitType.LURKERDENMP,
+            UnitType.GATEWAY,
+            UnitType.WARPGATE,
+            UnitType.WARPGATE,
+            UnitType.WARPGATE,
+            UnitType.ARMORY,
+        ].map((unitType) => rawUnit({ unitType, pos: { x: 30.5, y: 30.5, z: 12 } }));
+        const withProducers = structuredClone(world.client.fixture.observations[896]);
+        withProducers.observation!.gameLoop = 900;
+        withProducers.observation!.rawData!.units!.push(
+            hydralisk,
+            lurkerDen,
+            gateway,
+            warpGate,
+            otherWarpGate,
+            coolingWarpGate,
+            armory,
+        );
+        withProducers.observation!.rawData!.player!.powerSources = [
+            { pos: { x: 26, y: 26, z: 12 }, radius: 2, tag: '1' },
+        ];
+        await stepTo(world, withProducers);
+        const { actions, units } = world.resources.get();
+        units.getByTag([warpGate.tag, otherWarpGate.tag]).forEach((unit) => {
+            unit._availableAbilities = [WarpUnitAbility[UnitType.ZEALOT]];
+        });
+        const sentBefore = world.client.sent.actions.length;
+
+        await actions.train(UnitType.LURKERMP);
+        await expect(actions.train(UnitType.ZEALOT, units.getByTag(coolingWarpGate.tag))).rejects.toBeInstanceOf(
+            TrainError,
+        );
+        const mineralsBefore = world.agent.minerals!;
+        const random = spyOn(Math, 'random').mockReturnValue(0);
+        try {
+            for (let zealot = 0; zealot < 3; zealot++) await actions.train(UnitType.ZEALOT);
+        } finally {
+            random.mockRestore();
+        }
+        const zealotsCharged = mineralsBefore - world.agent.minerals!;
+        await expect(actions.train(UnitType.ZEALOT)).rejects.toBeInstanceOf(TrainError);
+        await actions.upgrade(Upgrade.TERRANVEHICLEANDSHIPARMORSLEVEL1);
+        await actions.flushQueuedActions();
+
+        const commands = world.client.sent.actions
+            .slice(sentBefore)
+            .flatMap((request) => request.actions!.map((action) => action.actionRaw!.unitCommand!));
+        const warpTargets = commands.flatMap((command) =>
+            command.targetWorldSpacePos ? [`${command.targetWorldSpacePos.x},${command.targetWorldSpacePos.y}`] : [],
+        );
+        expect({ commands, zealotsCharged, distinctWarpTargets: new Set(warpTargets).size }).toEqual({
+            commands: [
+                { abilityId: Ability.MORPH_LURKER, unitTags: [hydralisk.tag] },
+                { abilityId: Ability.TRAIN_ZEALOT, unitTags: [gateway.tag] },
+                ...[warpGate, otherWarpGate].map((gate) => ({
+                    abilityId: Ability.TRAINWARP_ZEALOT,
+                    unitTags: [gate.tag],
+                    targetWorldSpacePos: expect.any(Object),
+                })),
+                { abilityId: Ability.RESEARCH_TERRANVEHICLEANDSHIPPLATINGLEVEL1, unitTags: [armory.tag] },
+            ],
+            zealotsCharged: 300,
+            distinctWarpTargets: 2,
+        });
     });
 
     it('swapBuildings sends nothing itself and leaves the lifts to the flying resource on the next dispatch', async () => {

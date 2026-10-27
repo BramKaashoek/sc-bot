@@ -3,6 +3,7 @@
 import createDebug from 'debug';
 import { Race, Attribute } from '../constants/enums.ts';
 import { AbilitiesByUnit } from '../constants/index.ts';
+import { unitAbilities } from '../constants/dicts/unit-abilities.ts';
 import type { Cost, DataStorage, Earmark, StorageBlueprint } from '../types.ts';
 
 const debugEarmark = createDebug('sc2:debug:earmark');
@@ -22,11 +23,20 @@ function createDataManager(): DataStorage {
             (this as unknown as Record<string, unknown>)[name] = fn;
         },
         findUnitTypesWithAbility(abilityId) {
-            return Object.entries(AbilitiesByUnit)
-                .filter(([ignored, abilities]) => {
-                    return abilities.some((ability) => ability === abilityId);
-                })
-                .map((unitAbility) => parseInt(unitAbility[0], 10));
+            const abilityData: Record<number, SC2APIProtocol.AbilityData> | null = this.get('abilities');
+            const generated = Object.entries(unitAbilities).filter(([, abilities]) =>
+                abilities.some(
+                    (ability) => ability === abilityId || abilityData?.[ability]?.remapsToAbilityId === abilityId,
+                ),
+            );
+            // the hand-captured map covers abilities the fixtures never recorded; only trust it where the game data says available, or before that data loads
+            const stale =
+                !abilityData || abilityData[abilityId]?.available
+                    ? Object.entries(AbilitiesByUnit).filter(([, abilities]) => abilities.includes(abilityId))
+                    : [];
+            return [...new Set([...generated, ...stale].map(([unitType]) => parseInt(unitType, 10)))].sort(
+                (a, b) => a - b,
+            );
         },
         getUnitTypeData(unitTypeId) {
             const unitData: SC2APIProtocol.UnitTypeData = this.get('units')[unitTypeId];
@@ -44,7 +54,7 @@ function createDataManager(): DataStorage {
             return this.get('upgrades')[upgradeId];
         },
         getAbilityData(abilityId) {
-            return this.get('abilities')[abilityId];
+            return this.get('abilities')?.[abilityId];
         },
         getEffectData(effectId) {
             return this.get('effects')[effectId];

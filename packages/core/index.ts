@@ -26,6 +26,7 @@ export { Units } from './resources/units-collection.ts';
 export { Ramp } from './utils/map/ramp.ts';
 export { PixelMap } from './utils/pixel-map.ts';
 export { canWinFight, simulateFight } from './utils/combat/combat-sim.ts';
+export { avgPoints, closestPoint, distance, distanceSquared, towards } from './utils/geometry/point.ts';
 export { parseBuildOrder } from './utils/build-order/parse.ts';
 export {
     DEFAULT_EFFECT_COSTS,

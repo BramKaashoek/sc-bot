@@ -1,6 +1,6 @@
 import type { FrameResource } from '../types.ts';
 
-const GAME_LOOPS_PER_SECOND = 22.4;
+import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
 
 function createFrame(): FrameResource {
     const stepTimes = { min: 0, max: 0, total: 0, count: 0, last: 0 };
@@ -40,9 +40,6 @@ function createFrame(): FrameResource {
         },
         getPrevious() {
             return this._previous!;
-        },
-        timeInSeconds() {
-            return Math.round((this.getGameLoop() * 44) / 1000);
         },
         time() {
             return this.getGameLoop() / GAME_LOOPS_PER_SECOND;

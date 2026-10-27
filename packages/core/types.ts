@@ -170,8 +170,7 @@ export interface Agent extends PlayerData {
     onGameStart: (world: World, data?: null, event?: SystemEvent) => Promise<any>;
     onStep?: (resources: World, gameLoop?: number, event?: SystemEvent) => void;
     interface: SC2APIProtocol.InterfaceOptions;
-    canAfford(unitTypeId: number, earmarkName?: string | null): boolean;
-    canAffordN(unitTypeId: number, nQtyMax?: number): number;
+    canAfford(unitTypeId: number, earmarkName?: string | null, opts?: { count?: number; supply?: boolean }): boolean;
     canAffordUpgrade: (upgradeId: number, earmarkName?: string | null) => boolean;
     hasTechFor: (unitTypeId: number) => boolean;
     supplyCap: number;
@@ -183,7 +182,6 @@ export interface Agent extends PlayerData {
     calculateUpgradeCost(upgradeId: number): Cost;
     calculateSupplyCost(unitTypeId: number): number;
     canFeed(unitTypeId: number): boolean;
-    canAffordUnit(unitTypeId: number, checkSupplyCost?: boolean): boolean;
     alreadyPending(unitTypeId: number): number;
     alreadyPendingUpgrade(upgradeId: number): number;
     structureTypeBuildProgress(unitTypeId: number): number;
@@ -191,8 +189,7 @@ export interface Agent extends PlayerData {
     workerEnRouteToBuild(unitTypeId: number): number;
     getNextExpansion(): Promise<Point2D | null>;
     ownedExpansions(): OwnedExpansion[];
-    expandNow(unitTypeId?: number, maxDistance?: number, location?: Point2D): Promise<void>;
-    distributeWorkers(resourceRatio?: number, opts?: { workersPerGas?: number }): Promise<void>;
+    expandNow(unitTypeId?: number, location?: Point2D): Promise<void>;
     train(unitTypeId: number, amount?: number, closestTo?: Point2D, trainOnlyIdleBuildings?: boolean): Promise<number>;
     research(upgradeId: number): Promise<boolean>;
     race?: SC2APIProtocol.Race;
@@ -327,8 +324,6 @@ export interface UnitResource {
     getById: (unitTypeId: number | number[], filter?: UnitFilter) => Units;
     getByTag(unitTags: string): Unit | undefined;
     getByTag(unitTags: string[]): Units;
-    getClosest(pos: Point2D, units: Unit[], n?: number): Units;
-    getClosest(pos: Point2D, units: SC2APIProtocol.PowerSource[], n?: number): SC2APIProtocol.PowerSource[];
     getByType: (unitTypeIds: number | UnitTypeGroup) => Units;
     getProductionUnits: (unitTypeId: number) => Units;
     getUpgradeFacilities: (upgradeId: number) => Units;
@@ -681,7 +676,6 @@ export interface FrameResource {
     getRender: () => SC2APIProtocol.ObservationRender;
     getScore: () => SC2APIProtocol.Score | undefined;
     getFeatureLayer: () => SC2APIProtocol.ObservationFeatureLayer;
-    timeInSeconds: () => number;
     _actionErrors: Array<SC2APIProtocol.ActionError>;
     time: () => number;
     timeFormatted: () => string;
@@ -1070,7 +1064,10 @@ export type MiningSettings = {
 export type MiningAssignment = { kind: 'mineral' | 'gas'; resourceTag: string; townhallTag: string };
 
 export interface MiningResource {
-    selectWorker(near: Point2D, opts?: { forceClose?: boolean; minHealth?: number; role?: UnitRole }): Unit | undefined;
+    selectWorker(
+        near: Point2D,
+        opts?: { forceClose?: boolean; minHealth?: number; role?: UnitRole; exclude?: ReadonlySet<string> },
+    ): Unit | undefined;
     release(worker: Unit | string): void;
     getAssignment(worker: Unit | string): MiningAssignment | undefined;
     getWorkersOn(resource: Unit | string): string[];

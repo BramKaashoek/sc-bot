@@ -1,4 +1,4 @@
-import type { Point2D, Unit, World } from '../../types.ts';
+import type { Expansion, Point2D, Unit, World } from '../../types.ts';
 import { gridsInCircle } from '../geometry/angle.ts';
 import {
     add,
@@ -16,6 +16,9 @@ import { getFootprint } from '../geometry/units.ts';
 import * as UnitType from '../../constants/unit-type.ts';
 
 const { COMMANDCENTER } = UnitType;
+
+// townhallPosition is the floored cell; the townhall center is +0.5
+export const townhallCenter = ({ townhallPosition: { x, y } }: Expansion): Point2D => ({ x: x + 0.5, y: y + 0.5 });
 
 function calculateTownhallPlacement(world: World, center: Point2D, mineralFields: Unit[], geysers: Unit[]): Point2D {
     const { map, debug } = world.resources.get();

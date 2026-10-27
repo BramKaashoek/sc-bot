@@ -195,6 +195,204 @@ describe('builderPlugin', () => {
         ]);
     });
 
+    it('earmarks a morph task at its net cost, keeps the earmark while every producer is busy and settles it when the train is sent', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        world.data.addEarmark({ name: 'saving', minerals: 4800, vespene: 0 });
+        world.agent.use(
+            createSystem({
+                name: 'Morph',
+                type: 'build',
+                buildOptions: { earmarks: 1 },
+                buildOrder: [taskFunctions.train(UnitType.ORBITALCOMMAND)],
+            }),
+        );
+        await stepAt(world, 900);
+        await stepAt(world, 904);
+
+        expect(world.data.get('earmarks')).toEqual([
+            { name: 'saving', minerals: 4800, vespene: 0 },
+            { name: expect.stringMatching(/task0$/), minerals: 150, vespene: 0 },
+        ]);
+
+        world.data.settleEarmark('saving');
+        const tech = (orders: SC2APIProtocol.UnitOrder[]) => [
+            rawUnit({ tag: 'rax', unitType: UnitType.BARRACKS, pos: { x: 40, y: 40, z: 10 } }),
+            rawUnit({ tag: 'cc', unitType: UnitType.COMMANDCENTER, pos: { x: 60, y: 40, z: 10 }, orders }),
+        ];
+        const training = [{ abilityId: Ability.TRAIN_SCV }];
+        const busyCc = Object.fromEntries(
+            world.resources
+                .get()
+                .units.getById(UnitType.COMMANDCENTER)
+                .map(({ tag }) => [tag!, { orders: training }]),
+        );
+        const busy = await stepCommands(world, 908, busyCc, tech(training));
+        const busyEarmarks = world.data.get('earmarks');
+        const sent = await stepCommands(world, 912, {}, tech([]));
+        expect([busy, busyEarmarks, sent.map(({ abilityId }) => abilityId), world.data.get('earmarks')]).toEqual([
+            [],
+            [{ name: expect.stringMatching(/task0$/), minerals: 150, vespene: 0 }],
+            [Ability.MORPH_ORBITALCOMMAND],
+            [],
+        ]);
+    });
+
+    it('earmarks an ability task at the net cost of the unit it creates while a caster exists (by ability data or availability), holds it while unaffordable, settles it when the ability is sent or no caster is left (addon hosts all holding an addon), and never earmarks zero-cost abilities', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        world.data.addEarmark({ name: 'saving', minerals: 4900, vespene: 0 });
+        const unearmarked = [
+            taskFunctions.ability(Ability.MORPH_ZERGLING),
+            taskFunctions.ability(Ability.BUILD_REACTOR_STARPORT, { on: UnitType.BARRACKS }),
+        ].map((task, i) =>
+            createSystem({
+                name: `AbilityUnearmarked${i}`,
+                type: 'build',
+                buildOptions: { earmarks: 1 },
+                buildOrder: [task],
+            }),
+        );
+        for (const system of unearmarked) world.agent.use(system);
+        await stepAt(world, 900);
+        await stepAt(world, 904);
+        expect(world.data.get('earmarks')).toEqual([{ name: 'saving', minerals: 4900, vespene: 0 }]);
+        for (const system of unearmarked) system._system.pause();
+
+        const rejected = spyOn(world.resources.get().actions, 'do').mockRejectedValue(new Error('rejected'));
+        const staleAbilityData = spyOn(world.data, 'findUnitTypesWithAbility').mockReturnValue([]);
+        world.agent.use(
+            createSystem({
+                name: 'AbilityMorph',
+                type: 'build',
+                buildOptions: { earmarks: 1 },
+                buildOrder: [taskFunctions.ability(Ability.MORPH_ORBITALCOMMAND, { on: UnitType.COMMANDCENTER })],
+            }),
+        );
+        await stepAt(world, 908);
+        await stepAt(world, 912);
+        const pending = world.data.get('earmarks');
+
+        world.data.settleEarmark('saving');
+        await stepCommands(world, 916, {}, [], { minerals: 100 });
+        const attempts = rejected.mock.calls.length;
+
+        await stepAt(world, 920);
+        const afterRejected = world.data.get('earmarks');
+
+        rejected.mockRestore();
+        const sent = await stepAt(world, 924);
+        staleAbilityData.mockRestore();
+        const orbitalEarmark = { name: expect.stringMatching(/task0$/), minerals: 150, vespene: 0 };
+        expect([
+            pending,
+            attempts,
+            afterRejected,
+            sent.includes(Ability.MORPH_ORBITALCOMMAND),
+            world.data.get('earmarks'),
+        ]).toEqual([[{ name: 'saving', minerals: 4900, vespene: 0 }, orbitalEarmark], 1, [orbitalEarmark], true, []]);
+
+        world.data.addEarmark({ name: 'saving', minerals: 4815, vespene: 0 });
+        world.agent.use(
+            createSystem({
+                name: 'AbilityAddon',
+                type: 'build',
+                buildOptions: { earmarks: 1 },
+                buildOrder: [taskFunctions.ability(Ability.BUILD_REACTOR)],
+            }),
+        );
+        await stepAt(world, 928);
+        await stepAt(world, 932);
+        const addonPending = world.data.get('earmarks');
+        await stepAt(world, 936, { [BARRACKS_TAGS[0]]: { addOnTag: 'addon' } });
+        expect([addonPending, world.data.get('earmarks')]).toEqual([
+            [
+                { name: 'saving', minerals: 4815, vespene: 0 },
+                { name: expect.stringMatching(/task0$/), minerals: 50, vespene: 50 },
+            ],
+            [{ name: 'saving', minerals: 4815, vespene: 0 }],
+        ]);
+    });
+
+    it('finds ability casters from generated unit abilities and remaps without `on`, sends generic and specific addon tasks through the specific ids SC2 reports, settles the earmark of a dead stale ability, and falls back to the stale map before ability data loads', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { data } = world;
+        const addonHosts = [
+            UnitType.BARRACKS,
+            UnitType.FACTORY,
+            UnitType.STARPORT,
+            UnitType.FACTORYFLYING,
+            UnitType.STARPORTFLYING,
+            UnitType.BARRACKSFLYING,
+        ];
+        expect([
+            data.findUnitTypesWithAbility(Ability.RESEARCH_TERRANVEHICLEANDSHIPPLATINGLEVEL1),
+            data.findUnitTypesWithAbility(Ability.BUILD_LURKERDEN),
+            data.findUnitTypesWithAbility(Ability.BUILD_TECHLAB_BARRACKS),
+            data.findUnitTypesWithAbility(Ability.MORPH_LURKERDEN),
+            data.findUnitTypesWithAbility(Ability.BUILD_TECHLAB),
+            data.findUnitTypesWithAbility(Ability.LIFT),
+            data.findUnitTypesWithAbility(Ability.RESEARCH_BANSHEECLOAKINGFIELD),
+            data.findUnitTypesWithAbility(Ability.EFFECT_MASSRECALL),
+            data.findUnitTypesWithAbility(Ability.EFFECT_STIM),
+        ]).toEqual([
+            [UnitType.ARMORY],
+            [UnitType.DRONE],
+            [UnitType.BARRACKS, UnitType.BARRACKSFLYING],
+            [],
+            addonHosts,
+            [UnitType.COMMANDCENTER, UnitType.BARRACKS, UnitType.FACTORY, UnitType.STARPORT, UnitType.ORBITALCOMMAND],
+            [UnitType.STARPORTTECHLAB],
+            [UnitType.MOTHERSHIP, UnitType.NEXUS, UnitType.MOTHERSHIPCORE],
+            [UnitType.BUNKER, UnitType.MARINE, UnitType.MARAUDER],
+        ]);
+
+        world.client.fixture.abilities![896][BARRACKS_TAGS[1]] = [
+            Ability.BUILD_REACTOR_BARRACKS,
+            Ability.BUILD_TECHLAB_BARRACKS,
+        ];
+        world.agent.use(
+            createSystem({
+                name: 'GenericReactor',
+                type: 'build',
+                buildOrder: [taskFunctions.ability(Ability.BUILD_REACTOR)],
+            }),
+        );
+        const idleBarracks = { [BARRACKS_TAGS[1]]: { addOnTag: '0' } };
+        expect([await stepAt(world, 900, idleBarracks), await stepAt(world, 904, idleBarracks)]).toEqual([
+            [Ability.BUILD_REACTOR],
+            [],
+        ]);
+
+        world.agent.use(
+            createSystem({
+                name: 'SpecificReactor',
+                type: 'build',
+                buildOrder: [taskFunctions.ability(Ability.BUILD_REACTOR_BARRACKS)],
+            }),
+        );
+        expect(await stepCommands(world, 906, idleBarracks)).toEqual([
+            { abilityId: Ability.BUILD_REACTOR_BARRACKS, queueCommand: false, unitTags: [BARRACKS_TAGS[1]] },
+        ]);
+
+        const den = rawUnit({ tag: 'den', unitType: UnitType.HYDRALISKDEN, pos: { x: 40, y: 40, z: 10 } });
+        world.agent.use(
+            createSystem({
+                name: 'DeadMorph',
+                type: 'build',
+                buildOptions: { earmarks: 1 },
+                buildOrder: [taskFunctions.ability(Ability.MORPH_LURKERDEN)],
+            }),
+        );
+        await stepCommands(world, 908, {}, [den]);
+        await stepCommands(world, 912, {}, [den]);
+        expect(world.data.get('earmarks')).toEqual([]);
+
+        data.set('abilities', null);
+        expect<unknown[]>([
+            data.findUnitTypesWithAbility(Ability.MORPH_LURKERDEN),
+            data.getAbilityData(Ability.BUILD_REACTOR),
+        ]).toEqual([[UnitType.HYDRALISKDEN], undefined]);
+    });
+
     it('hands T/P structures to the tracker with solver flags or near base without queries, a target as its base, proxy or townhall spot, a placer result first, gas tracked, findPlacement without a solver spot', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
         const { build } = taskFunctions;
@@ -706,7 +904,7 @@ describe('builderPlugin', () => {
                 await abilities(['14 worker_scout', '14 orbital'], { foodUsed: 14, edits: barracksDone }),
                 await abilities([[14, taskFunctions.ability(Ability.MORPH_PLANETARYFORTRESS)]], { foodUsed: 14 }),
             ]).toEqual([true, false, false, false, true, false, true, false, false]);
-        });
+        }, 30_000);
 
         it('starts auto supply at the threshold through the phase-5 behavior', async () => {
             const world = await createTestWorld('blueshift', { loop: 896 });

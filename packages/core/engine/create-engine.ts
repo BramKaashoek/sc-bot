@@ -28,6 +28,7 @@ import type {
     GameResult as GameOutcome,
     ReplayOptions,
 } from '../types.ts';
+import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
 
 type LoopOptions = {
     realtime?: boolean;
@@ -56,7 +57,6 @@ type EngineInstance = Engine & {
 
 const debugEngine = createDebug('sc2:debug:engine');
 const debugSilly = createDebug('sc2:silly:engine');
-const LOOPS_PER_SECOND = 22.4;
 const CreateGameErrorId: Record<number, string> = root.lookupEnum('ResponseCreateGame.Error').valuesById;
 
 const NOOP = () => {};
@@ -543,7 +543,7 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
 
             if (
                 loopOptions.gameTimeLimit !== undefined &&
-                frame.getGameLoop() / LOOPS_PER_SECOND > loopOptions.gameTimeLimit
+                frame.getGameLoop() / GAME_LOOPS_PER_SECOND > loopOptions.gameTimeLimit
             ) {
                 return this.onGameEnd(timeLimitResults());
             }

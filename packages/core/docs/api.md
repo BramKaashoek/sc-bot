@@ -23,6 +23,11 @@ import {
     canWinFight,
     simulateFight,
     parseBuildOrder,
+    distance,
+    distanceSquared,
+    towards,
+    avgPoints,
+    closestPoint,
 } from '@sc-bot/core';
 ```
 Types are exported from the same entry (`import type { World, Unit } from '@sc-bot/core'`), constants from `@sc-bot/core/constants/<module>`, and the behavior and controller factories from `@sc-bot/core/behaviors` (see [Behaviors](#behaviors-1) and [Controllers](#controllers)).
@@ -223,18 +228,15 @@ An agent implements the following properties from multiple interfaces:
 As well as the above data directly related to the player itself, the following helper methods are exposed:
 
 ### *`agent.hasTechFor(unitType) => boolean`*
-This is a synchronous function that, given a `unitType`, will return `true` or `false` whether you have a finished structure of the required tech type (or one of its aliases). The requirement comes from the game data; where SC2 4.10 data has none (ghost, thor, battlecruiser, mothership) it falls back to the `tech-requirement` dictionary.
+This is a synchronous function that, given a `unitType`, is `techRequirementProgress(unitType) >= 1`: `true` when you have a finished structure of the required tech type (or one of its equivalents, eg a lowered supply depot for a barracks). The requirement comes from the game data; where SC2 4.10 data has none (ghost, thor, battlecruiser, mothership) it falls back to the `tech-requirement` dictionary.
 
-### *`agent.canAfford(unitType, earmarkName?) => boolean`*
-This is a synchronous function that, given a `unitType`, will return `true` or `false` whether you have the resources available to build/train the given unit.
+### *`agent.canAfford(unitType, earmarkName?, opts?: { count?: number, supply?: boolean }) => boolean`*
+This is a synchronous function that, given a `unitType`, will return `true` or `false` whether you have the resources available to build/train the given unit, on its net cost. `count` (default 1) checks that many at once. `supply: true` also requires `count` times `calculateSupplyCost(unitType)` supply left.
 
 This function also takes into account all `Earmark`'s currently in place (if any), and as such will tell you that you cannot afford something *even if you can*, if it encroaches on an earmark. If you want to check if something can be afforded *while consuming an earmark*, pass the earmark name along as the second parameter. If the function returns true - that earmark will be consumed, so either you must then choose to build/train the unit or issue a new earmark. For more information about earmarks see [events and data](../readme.md#events-and-data) in the readme.
 
 ### *`agent.canAffordUpgrade(upgradeId, earmarkName?) => boolean`*
 Same as above but for upgrades, including the earmark handling.
-
-### *`agent.canAffordN(unitType, max = 1) => number`*
-How many of `unitType`, up to `max`, you can afford with your current minerals and gas. Ignores earmarks and supply.
 
 ### Supply and cost
 ```ts
@@ -243,29 +245,28 @@ agent.calculateCost(unitType) => { minerals, vespene } // morphs are net of the 
 agent.calculateUpgradeCost(upgradeId) => { minerals, vespene }
 agent.calculateSupplyCost(unitType) => number
 agent.canFeed(unitType) => boolean // enough supply left
-agent.canAffordUnit(unitType, checkSupplyCost = true) => boolean // minerals, gas and supply, ignoring earmarks
 ```
-`canAfford`, `canAffordN` and `canAffordUpgrade` keep their existing behavior.
+`canAfford` and `canAffordUpgrade` check this same net cost, and `agent.train`, `agent.research`, `actions.train`, `actions.build`, `actions.upgrade`, the building tracker and the build runner all charge it: a zergling pair costs 50, an orbital command 150, a planetary fortress 150/150, a lair 150/100, a lowered supply depot 0.
 
 ### Pending and tech progress
 ```ts
-agent.alreadyPending(unitType) => number // units/structures in production, counted from orders and unfinished units
+agent.alreadyPending(unitType) => number // units/structures in production: orders, unfinished units (each once) and tracked builds whose worker has no build order yet
 agent.alreadyPendingUpgrade(upgradeId) => number // 1 if owned, else 0..1 research progress
 agent.structureTypeBuildProgress(unitType) => number // best build progress among own structures of that type (and equivalents)
 agent.techRequirementProgress(unitType) => number // 0..1 progress of the structure the unit requires
 agent.workerEnRouteToBuild(unitType) => number
 ```
+An abandoned unfinished Terran structure (its SCV died) counts in `alreadyPending` until something resumes or cancels it. The building tracker resumes it once the bot has built through it; bots not using the tracker must resume or cancel it themselves.
 
 ### Expansion and production helpers
 ```ts
 agent.getNextExpansion() => Promise<Point2D | null> // free expansion location closest to your start by SC2 ground distance
 agent.ownedExpansions() => Array<{ location: Point2D, townhall: Unit }>
-agent.expandNow(unitType?, maxDistance = 10, location?) => Promise<void> // builds a townhall at the next (or given) expansion
-agent.distributeWorkers(resourceRatio = 2, opts?: { workersPerGas?: number }) => Promise<void> // moves idle and surplus workers to undersaturated bases and gas
+agent.expandNow(unitType?, location?) => Promise<void> // tracked buildings.build of a townhall at the next (or given) expansion; no-op when unaffordable
 agent.train(unitType, amount = 1, closestTo?, trainOnlyIdleBuildings = true) => Promise<number> // returns how many were started
 agent.research(upgradeId) => Promise<boolean>
 ```
-These follow python-sc2's `BotAI` helpers of the same names. `distributeWorkers` fills gas first when minerals/vespene is at least `resourceRatio` (or there is no vespene), otherwise minerals. `workersPerGas = 3` caps the target per gas building at `min(ideal, workersPerGas)`; it must be an integer from 0 to 3 or the call rejects with a `RangeError`. Workers above the cap join the pool like any surplus and go to the deficit places the ratio favours, and `0` leaves gas empty. `research` also checks the required building (eg. an armory for level 2 upgrades) and the previous level, and throws for an upgrade missing from the researched-from dictionary. They propose their commands through `actions.queueAction` under the calling commander, so they go out with the rest at the end of the step. They deduct what they spend from the agent's minerals and gas right away, and `train` adds the supply it uses to `foodUsed`, so later calls in the same step see what is left.
+These follow python-sc2's `BotAI` helpers of the same names. `research` also checks the required building (eg. an armory for level 2 upgrades) and the previous level, and throws for an upgrade missing from the researched-from dictionary. They propose their commands through `actions.queueAction` under the calling commander, so they go out with the rest at the end of the step. They deduct what they spend from the agent's minerals and gas right away, and `train` adds the supply it uses to `foodUsed`, so later calls in the same step see what is left.
 
 ### *`agent.use(system) => void`*
 `System`'s (explained below) are mounted to your agent before the game starts, via `agent.use()`. It accepts either a single system, or an array of systems.
@@ -607,7 +608,6 @@ frame.getActionErrors() => SC2APIProtocol.ActionError[] // commands SC2 rejected
 frame.getEffects() => SC2APIProtocol.Effect[]
 frame.time() => number // game seconds
 frame.timeFormatted() => string // 'MM:SS'
-frame.timeInSeconds() => number // rounded seconds (node-sc2's formula)
 frame.getPrevious() => GameFrame // the previous frame's game loop
 frame.getRender(), frame.getFeatureLayer() // raw render / feature-layer data, when enabled in the agent's `interface`
 frame.getStepTime() => { min, avg, max, last } // ms spent in the agent's `onStep` handler
@@ -657,14 +657,11 @@ Similar to `getById`, but without a filter. Returns all live units of any allian
 #### *`units.getCombatUnits(filter = Alliance.SELF) => Units`*
 Returns all living combat units, your own by default. Basically a shortcut to get your whole army. Think F2.
 
-#### *`units.getClosest(pos: Point2D, units: Unit[], n?: number) => Units`*
-Given a `Point2D` (`{ x, y }`), an array of units, and an optional number `n`, returns the closest `n` units to the point. Default of `n` is 1. Always returns a `Units` collection (empty when `units` is). It also accepts an array of power sources (`agent.powerSources`).
-
 #### *`units.getProductionUnits(unitTypeId: number) => Units`*
-Given a `unitType`, returns all of your living units that can produce that `unitType` (eg: give it `MARINE` to get your barracks). Enemy buildings are never included.
+Given a `unitType`, returns all of your living units that can produce that `unitType` (eg: give it `MARINE` to get your barracks), from `trainedFrom`: gateway units include warp gates, an add-on only its own host (`BARRACKSTECHLAB`: barracks). Enemy buildings are never included.
 
 #### *`units.getUpgradeFacilities(upgradeId: number) => Units`*
-Given an `upgrade`, returns all of your living units that can research that `upgrade` (eg: given `CHARGE`, your twilight councils).
+Given an `upgrade`, returns all of your living units that can research that `upgrade` (eg: given `CHARGE`, your twilight councils), from `researchedFrom`, with lairs and hives for hatchery research and greater spires for spire research.
 
 #### *`units.getMineralFields(filter?: UnitFilter) => Units`*
 Returns all mineral fields across the entire map.
@@ -770,7 +767,7 @@ grids.height: Grid2D;
 Placement, pathing and height grids are the same as provided by the API. `miniMap` is an experimental grid containing minimap-like data.
 
 #### map.path(start: Point2D, end: Point2D) => Path;
-Given a start and end point as coordinates, does an A* search and returns the resulting path as a 2D array of sets of coordinates. Returns an empty array if pathing is impossible. The path graph also blocks the cells the map system marks unplaceable (structures, minerals, geysers, rocks, xel'naga towers), so an `end` on such a cell, or a `start` surrounded by them (such as `townhallPosition` of an occupied base), gives an empty path; start from a unit's `pos` or `map.closestPathable(point)`. NOTE: this is *not* the same as querying the API, this is significantly faster (exponentially) and done synchronously. It cannot, however, take into account any information about the map or paths not known to the system. For cost-aware paths around enemy threats, use `pathing` instead.
+Given a start and end point as coordinates, does an A* search and returns the resulting path as a 2D array of sets of coordinates. Returns an empty array if pathing is impossible. The path graph also blocks the cells the map system marks unplaceable (structures, minerals, geysers, rocks, xel'naga towers), so an `end` on such a cell, or a `start` surrounded by them (such as `townhallPosition` of an occupied base), gives an empty path; start from a unit's `pos` or `map.closestPathable(point)`. NOTE: this is *not* the same as querying the API, this is significantly faster (exponentially) and done synchronously. It cannot, however, take into account any information about the map or paths not known to the system. Use `map.path` for static map structure (placement, expansion ordering, regions) and `pathing.findPath` for unit movement, which routes around enemy threats.
 
 #### Ramps and walls
 ```ts
@@ -792,7 +789,8 @@ ramp.protossWallBuildings: Point2D[]
 
 #### Terrain and grids
 ```ts
-map.getExpansionLocations() => Point2D[] // every possible townhall location
+map.getExpansionLocations() => Point2D[] // townhall center of every expansion, in getExpansions() order
+map.getCombatRally() => Point2D // rally point on the path from your natural towards the map center; use mapAnalysis.getDefensivePosition to hold a choke
 map.getTerrainHeight(point) => number // height-map value
 map.getTerrainZHeight(point) => number // world z
 map.inPathingGrid(point), map.inPlacementGrid(point) => boolean // static, from game info
@@ -813,7 +811,7 @@ Command one or more units to move and attack to a position. Without `p`, the fir
 
 #### *`actions.build(unitType: number, target?: Unit, worker?: Unit) => Promise<void>`*
 #### *`actions.build(unitType: number, pos?: Point2D | null, worker?: Unit) => Promise<void>`*
-Command a given worker to build a `unitType` on either a position or a target unit. If no worker is given and `mining` is enabled, `mining.selectWorker(position, { forceClose: true, role: GATHERING })` picks a mining worker near the site; otherwise the least busy, closest worker is selected. The worker gets the `command` label right away; if the build is dropped or SC2 rejects it, the label is removed again during the flush. A gas building is followed by a queued `gather` from the same commander. Nothing is refunded for a build that isn't sent.
+Command a given worker to build a `unitType` on either a position or a target unit. If no worker is given and `mining` is enabled, `mining.selectWorker(position, { forceClose: true, role: GATHERING })` picks a mining worker near the site; otherwise (or when mining finds no one) the closest idle or gathering worker in the `GATHERING` role (or no role) without a `command` or `stuck` label is selected; a Protoss build is queued on such a probe already constructing within 20. A picked worker carrying cargo returns it first (the build is queued after it). A worker that stalled on a tracked build of this type in the last 60 s isn't picked. The worker gets the `command` label right away; if the build is dropped or SC2 rejects it, the label is removed again during the flush. A gas building is followed by a queued `gather` from the same commander. Nothing is refunded for a build that isn't sent.
 
 Rejects with `BuildError` (with `err.data`) if the player is missing the necessary tech, can not afford it, gave a target the build ability doesn't accept (or none where one is required), or no builder is found.
 
@@ -846,7 +844,7 @@ Shortcuts for `do` with the matching ability. `queue = false`. Like every high-l
 
 #### *`actions.train(unitType: number, unit?: Unit) => Promise<void>`*
 Given a `unitType` and, optionally, a production unit, orders a new unit from that facility.
-If no production unit is given, it looks up a facility that is both capable of training the given `unitType` *and* does not currently have a queue. If the player does not have the tech, can not afford the unit, or there is no free production facility, it rejects with `TrainError`.
+If no production unit is given, it looks up a facility that is both capable of training the given `unitType` *and* does not currently have a queue (nor an order this step), preferring a gateway over a warp gate. A warp gate warps the unit in at a free powered spot near the combat rally. If the player does not have the tech, can not afford the unit, or there is no free production facility (a warp gate on cooldown or without a free powered spot), it rejects with `TrainError`.
 
 #### *`actions.upgrade(upgradeId: number, unit?: Unit) => Promise<void>`*
 Given an upgrade and, optionally, a research facility, orders the research from that facility.
@@ -1133,11 +1131,11 @@ The building tracker; nothing happens until `build` or `buildGas` is called. A b
 BuildOptions = {
     at?: Point2D | Unit, // a position, or a geyser for a gas building; default: placement.request(unitType, placement)
     placement?: PlacementRequest,
-    worker?: Unit, // default: mining.selectWorker(target, { forceClose: true }), else (mining disabled) the closest free mineral worker
+    worker?: Unit, // default: mining.selectWorker(target, { forceClose: true }), else (mining disabled) the closest free GATHERING worker
     earmark?: string, // earmark kept until the build command is sent
 }
 ```
-Returns `undefined` when there is no spot or no worker (a reservation it made is released). The builder gets the `BUILDING` role. A dropped or rejected command puts the build back to `'moving'` and counts an attempt; at `maxAttempts` the spot is re-placed by the placement solver (a build started with `placement` repeats that request; gas keeps its geyser). `timeout` applies to non-Terran builds and gas builds. A Terran build is done at `buildProgress` 1, a Protoss or Zerg build once the structure exists.
+Returns `undefined` when there is no spot or no worker (a reservation it made is released). The builder gets the `BUILDING` role. A dropped or rejected command puts the build back to `'moving'` and counts an attempt; at `maxAttempts` the spot is re-placed by the placement solver (a build started with `placement` repeats that request; gas keeps its geyser). A build started with `at` is never re-placed by the solver: where it would be, it fails `'blocked'`. An enemy gas building near the geyser and a blocked townhall spot still move the build. `timeout` applies to non-Terran builds and gas builds. A Terran build is done at `buildProgress` 1, a Protoss or Zerg build once the structure exists.
 
 #### *`buildings.buildGas(opts?: { geyser?: Unit; max?: number }) => TrackedBuild | undefined`*
 `max = 1`. Builds your race's gas building on `geyser`, or on the free geyser closest to one of your townhalls (within 15 of a townhall that is at least 98% built, 55% after 5:00). `undefined` when tracked plus unfinished gas buildings number `max` or more, or no geyser is free. An enemy gas building within 4.5 moves the build to another geyser.
@@ -1165,8 +1163,8 @@ After the first `build` or `buildGas` call of a game that returns a `TrackedBuil
 ### mining
 Off by default. Manages the workers in the `GATHERING` role (not `command`-labelled or constructing) once `enabled` is set; commands are proposed as that role at `priority`. `MiningAssignment = { kind: 'mineral' | 'gas'; resourceTag: string; townhallTag: string }`.
 
-#### *`mining.selectWorker(near: Point2D, opts?: { forceClose?: boolean; minHealth?: number; role?: UnitRole }) => Unit | undefined`*
-`forceClose = false`, `minHealth = 0` (fraction of max health), `role = BUILDING`. Takes the closest unassigned worker, or, with `forceClose` or when all are assigned, a mining worker that carries nothing, preferring the base closest to `near`. The worker is unassigned and given `role`. While mining is disabled nobody is assigned, so `forceClose` returns `undefined`.
+#### *`mining.selectWorker(near: Point2D, opts?: { forceClose?: boolean; minHealth?: number; role?: UnitRole; exclude?: ReadonlySet<string> }) => Unit | undefined`*
+`forceClose = false`, `minHealth = 0` (fraction of max health), `role = BUILDING`; tags in `exclude` are never picked. Takes the closest unassigned worker, or, with `forceClose` or when all are assigned, a mining worker that carries nothing, preferring the base closest to `near`. The worker is unassigned and given `role`. While mining is disabled nobody is assigned, so `forceClose` returns `undefined`.
 
 #### *`mining.release(worker: Unit | string) => void`*
 Unassigns the worker and sets its role to `GATHERING`.
@@ -1250,7 +1248,7 @@ Every region, as a copy. Ids are `0..n-1`.
 The chokes of the region that holds `base`, nearest by ground distance first. A point that isn't walkable is moved to the nearest walkable cell within 4. Unreachable chokes are left out; `[]` when `base` resolves to no cell.
 
 #### *`mapAnalysis.getDefensivePosition(base: Expansion | Point2D, opts?: { towards?: Point2D; offset?: number }) => DefensivePosition | undefined`*
-The `base` choke that minimises the ground distance from the base plus the distance to `towards`, with `position` up to `offset` cells back from the choke centre down the path to the base. `towards` is the first possible enemy start, else the map centre; `offset = defenseOffset` (4). `undefined` when the base's region has no reachable choke.
+The `base` choke that minimises the ground distance from the base plus the distance to `towards`, with `position` up to `offset` cells back from the choke centre down the path to the base. `towards` is the first possible enemy start, else the map centre; `offset = defenseOffset` (4). `undefined` when the base's region has no reachable choke. Use it to hold a choke; `map.getCombatRally()` is the rally point.
 
 #### *`mapAnalysis.getDefensiveThird() => Expansion | undefined`*
 The one of `map.getThirds()` with the longest `pathFromEnemy` (a missing path counts as longest); `undefined` when there are no thirds.
@@ -1344,6 +1342,21 @@ FightSimulation = { ownWins: boolean; ownHealthLeft: number; enemyHealthLeft: nu
 ### *`parseBuildOrder(steps: Array<BuildOrderStep | BuildTask>, race: SC2APIProtocol.Race) => BuildTask[]`*
 Expands ares-style steps into `[supply, task]` pairs; `BuildOrderStep` is `string | Record<string, string[]>`. Strings are `'<supply> <command> [@target ...] [x<n>]'`, case-insensitive, with `x<n>` or `*<n>` repeating the step; object steps only take `<supply> WORKER_SCOUT` / `<supply> OVERLORD_SCOUT` keys with a list of target names (a scout with no targets gets `ENEMY_SPAWN` for a worker, `ENEMY_NAT_VISION` for an overlord). `[supply, task]` pairs and task objects pass through. A command is resolved as a unit type name (a structure becomes a `build`, anything else a `train`; `LAIR` and `HIVE` become morph abilities), then an upgrade name, then an option: `WORKER`, `SUPPLY`, `GAS`, `EXPAND`, `GATE`, `CORE`, `ORBITAL`, `CANCEL_GAS`, `CHRONO`, `WORKER_SCOUT`, `OVERLORD_SCOUT`, `ADDONSWAP`, with the race-specific ones resolved for `race`. `GAS` drops its target; `CHRONO` needs a unit type target; `ADDONSWAP` takes exactly two structure names. Throws `NodeSC2Error` naming the step for an unknown command (an upgrade missing from the game data included), an unknown target, `ENEMY_NAT_HG_SPOT`, a bad `ADDONSWAP` or `CHRONO`, or a dict step that isn't a scout. A missing or non-numeric supply logs on `sc2:debug:buildOrder` and uses `0`. The `BuildTarget` names are in `@sc-bot/core/constants/build-target`.
 
+### *`distance(a: Point2D, b: Point2D) => number`*
+### *`distanceSquared(a: Point2D, b: Point2D) => number`*
+
+### *`towards(from: Point2D, to: Point2D, step: number) => Point2D`*
+The point `step` from `from` in the direction of `to`. A copy of `from` when the two are equal.
+
+### *`avgPoints(points: Point2D[]) => Point2D`*
+The mean of the points; `NaN` coordinates for an empty list.
+
+### *`closestPoint(pos: Point2D, points: Point2D[]) => Point2D`*
+The point nearest `pos`; `undefined` for an empty list.
+
+### *`GAME_LOOPS_PER_SECOND`*
+`22.4`, from `@sc-bot/core/constants/time`: game loops per real second at Faster speed.
+
 ## Behaviors
 Imported from the `@sc-bot/core/behaviors` subpath, not the package root. A behavior is a plain object `Behavior = { readonly name: string; execute(ctx: BehaviorContext): boolean | Promise<boolean> }`; `execute` returns `true` when it acted. Run one with [`behaviors.run`](#behaviors) from inside the step, and compose several with `plan`. Every factory takes one options object; `Target = Point2D | Unit`; `layer?: InfluenceLayer` defaults to `'air'` for a flying unit and `'ground'` otherwise. The readme's "Behaviors and controllers" has the same information as tables.
 
@@ -1354,7 +1367,7 @@ BehaviorContext = {
     hasOrdered(unit: Unit | string): boolean;
 }
 ```
-`order` proposes one command (a unit target gives a target-unit command, a point a world-position command) under the current commander. It drops tags this owner already ordered in the current game loop unless `queue` is set, and returns `false` when no tag is left. `hasOrdered` is whether this owner ordered the unit in this loop. The state is cleared when the game loop changes.
+`order` proposes one command (a unit target gives a target-unit command, a point a world-position command) under the current commander. It drops tags this owner already ordered in the current game loop unless `queue` is set, and returns `false` when no tag is left. `hasOrdered` is whether this owner ordered the unit in this loop. The state is cleared when the game loop changes and on `reset`, which recreates a resource without a `reset` hook.
 
 ### *`plan(...behaviors: Behavior[]) => Behavior`*
 Runs the behaviors in order and returns `true` at the first that does, without running the rest; `false` when none did. Synchronous and asynchronous behaviors can be mixed; the result is a promise as soon as one behavior returns one. Its name is `plan(<names>)`.
@@ -1377,13 +1390,9 @@ The target with the lowest health plus shield; the first on a tie.
 `true` when the group's average `weaponCooldown` is above 2.5 (`stutterForward`) or 5. `false` for an average of 0.
 
 #### *`center(units: Unit[]) => Point2D`*
-#### *`towards(from: Point2D, to: Point2D, step: number) => Point2D`*
 
 #### *`ownUnitCount(world: World, unitType: number) => number`*
-Your units of the type plus `agent.alreadyPending(unitType)`.
-
-#### *`structurePending(world: World, unitType: number) => number`*
-`buildings.pending(unitType)` plus your unfinished structures of the type that no tracked build refers to by `structureTag`.
+Your finished units of the type plus `agent.alreadyPending(unitType)`.
 
 ### Individual combat behaviors
 
@@ -1477,7 +1486,7 @@ The key is a unit type id. `proportion` is the share of the army. `priority` is 
     spawnTarget?: Point2D, // passed to agent.train as closestTo
 }
 ```
-Throws `NodeSC2Error` at creation, unless `freeflow`, when the proportions don't sum to 1 (within 1e-6) or a priority isn't an integer from 0 to 10. Each step, in priority order, for every type with its tech done (`techRequirementProgress` 1) and an idle producer (finished, powered for Protoss, fewer orders than slots: 2 with a finished reactor, and a finished tech lab where the unit requires one): stops at an unaffordable type (skips it with `freeflow` or when proportions are ignored); skips a type whose share (units plus pending, over the composition's total) is above its proportion; otherwise `agent.train`s `min(canAffordN, supply left / supply cost, maximum)`. With `overProduceOnLowTech`, when exactly one type has its tech, `maximum` is above 1 and at least one type was affordable with an idle producer, the first such type is topped up to `maximum` (less what was already trained). `true` when anything was trained. `false` right away when warp gate research is done and a finished gateway is idle.
+Throws `NodeSC2Error` at creation, unless `freeflow`, when the proportions don't sum to 1 (within 1e-6) or a priority isn't an integer from 0 to 10. Each step, in priority order, for every type with its tech done (`techRequirementProgress` 1) and an idle producer (finished, powered for Protoss, fewer orders than slots: 2 with a finished reactor, and a finished tech lab where the unit requires one): stops at an unaffordable type (skips it with `freeflow` or when proportions are ignored); skips a type whose share (units plus pending, over the composition's total) is above its proportion; otherwise `agent.train`s `the most of `maximum` that `canAfford(type, null, { count, supply: true })` allows`. With `overProduceOnLowTech`, when exactly one type has its tech, `maximum` is above 1 and at least one type was affordable with an idle producer, the first such type is topped up to `maximum` (less what was already trained). `true` when anything was trained. `false` right away when warp gate research is done and a finished gateway is idle.
 
 #### *`buildWorkers({ toCount }) => Behavior`*
 Trains your race's worker through a one-type `spawnController` with `maximum = toCount - agent.supplyWorkers`. `false` when there is nothing missing or a worker isn't affordable.
@@ -1498,7 +1507,7 @@ Trains your race's worker through a one-type `spawnController` with `maximum = t
 Calls `buildings.build(structureType, { placement: { base, closestTo, flags, findAlternative } })`. `true` when a build started; `false` when any limit is hit, no spot or worker was found, or for Zerg.
 
 #### *`autoSupply({ base?, closestTo?, returnTrueIfSupplyRequired = true }) => Behavior`*
-Does nothing at 200 supply cap. Terran and Protoss: with P finished production structures (barracks, factory, starport, gateway, warp gate, robotics facility, stargate, hatchery, lair, hive), supply is required when `supplyLeft <= max(2P, 5)` and the pending supply structures (`structurePending`) number fewer than `ceil(P / 2)`, for the difference up to 6; with no production structure, when `supplyLeft <= 2` and none is pending. It then calls `buildStructure` once (Terran with the `supplyDepot` flag). Zerg: overlords by ares' rules from `alreadyPending(OVERLORD)`, the number of townhalls and supply used, trained with `agent.train`. Returns `returnTrueIfSupplyRequired` whenever supply was required, and `false` otherwise.
+Does nothing at 200 supply cap. Terran and Protoss: with P finished production structures (barracks, factory, starport, gateway, warp gate, robotics facility, stargate, hatchery, lair, hive), supply is required when `supplyLeft <= max(2P, 5)` and the pending supply structures (`agent.alreadyPending`) number fewer than `ceil(P / 2)`, for the difference up to 6; with no production structure, when `supplyLeft <= 2` and none is pending. It then calls `buildStructure` once (Terran with the `supplyDepot` flag). Zerg: overlords by ares' rules from `alreadyPending(OVERLORD)`, the number of townhalls and supply used, trained with `agent.train`. Returns `returnTrueIfSupplyRequired` whenever supply was required, and `false` otherwise.
 
 #### *`expansionController(options) => Behavior`*
 ```ts

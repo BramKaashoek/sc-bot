@@ -74,7 +74,7 @@ const eightGateAllIn = createSystem({
         if (newBuilding.isGasMine()) {
             const { units, actions } = resources.get();
 
-            const threeWorkers = units.getClosest(newBuilding.pos, units.getMineralWorkers(), 3);
+            const threeWorkers = units.getMineralWorkers().closestNUnits(newBuilding.pos, 3);
             threeWorkers.forEach((worker: Unit) => worker.labels.set('gasWorker', true));
             return actions.mine(threeWorkers, newBuilding);
         }

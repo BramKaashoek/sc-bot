@@ -5,7 +5,7 @@ import { Ability, UnitType } from '../../constants/index.ts';
 import { NodeSC2Error } from '../../engine/errors.ts';
 import { createTestWorld, loadFixture } from '../../test/create-test-world.ts';
 import { observation, rawUnit } from '../../test/factories.ts';
-import { structurePending } from './helpers.ts';
+import { ownUnitCount } from './helpers.ts';
 import { buildWorkers, spawnController } from './spawn.ts';
 import type { Behavior } from '../../types.ts';
 
@@ -176,16 +176,10 @@ describe('buildWorkers', () => {
     });
 });
 
-describe('structurePending', () => {
-    it('counts tracked builds plus untracked in-progress structures without double counting', async () => {
-        const world = await setup([
-            rawUnit({ tag: 'tracked', unitType: UnitType.SUPPLYDEPOT, buildProgress: 0.5 }),
-            rawUnit({ tag: 'untracked', unitType: UnitType.SUPPLYDEPOT, buildProgress: 0.5 }),
-            rawUnit({ tag: 'done', unitType: UnitType.SUPPLYDEPOT }),
-        ]);
-        const { buildings } = world.resources.get();
-        spyOn(buildings, 'pending').mockReturnValue(1);
-        spyOn(buildings, 'getTracked').mockReturnValue([{ structureTag: 'tracked' }] as never);
-        expect(structurePending(world, UnitType.SUPPLYDEPOT)).toBe(2);
+describe('ownUnitCount', () => {
+    it('counts an unfinished gateway once', async () => {
+        const world = await setup([rawUnit({ unitType: UnitType.GATEWAY, buildProgress: 0.5 })]);
+        world.agent.race = Race.PROTOSS;
+        expect(ownUnitCount(world, UnitType.GATEWAY)).toBe(1);
     });
 });

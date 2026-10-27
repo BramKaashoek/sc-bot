@@ -1,8 +1,8 @@
+import { researchAbilityOf, spend, techEquivalents } from '../../agent/macro.ts';
 import { Ability } from '../../constants/index.ts';
 import { Race } from '../../constants/enums.ts';
 import { researchRequirements } from '../../constants/dicts/research-requirements.ts';
 import { researchedFrom } from '../../constants/dicts/researched-from.ts';
-import { techAlias } from '../../constants/dicts/tech-alias.ts';
 import { techRequirement } from '../../constants/dicts/tech-requirement.ts';
 import { trainedFrom } from '../../constants/dicts/trained-from.ts';
 import { workerTypes } from '../../constants/groups.ts';
@@ -20,6 +20,7 @@ import {
     TECHLAB,
     WARPGATE,
 } from '../../constants/unit-type.ts';
+import { ownUnitCount } from './helpers.ts';
 import { buildStructure } from './structures.ts';
 import type { Behavior, BehaviorContext, Point2D } from '../../types.ts';
 
@@ -40,7 +41,7 @@ type TechUpOptions = {
 
 function pendingOrComplete({ world }: BehaviorContext, upgrade: number): boolean {
     if ((world.agent.upgradeIds ?? []).includes(upgrade)) return true;
-    const ability = researchRequirements[upgrade]?.ability ?? world.data.getUpgradeData(upgrade)?.abilityId;
+    const ability = researchAbilityOf(world.agent, upgrade);
     return (
         !!ability &&
         world.resources
@@ -50,17 +51,8 @@ function pendingOrComplete({ world }: BehaviorContext, upgrade: number): boolean
     );
 }
 
-const present = ({ world }: BehaviorContext, unitTypes: number[]) => {
-    const { buildings, units } = world.resources.get();
-    return unitTypes.some((unitType) => units.getById(unitType).length > 0 || buildings.pending(unitType) > 0);
-};
-
-function deduct({ world }: BehaviorContext, unitType: number) {
-    const { agent } = world;
-    const { minerals, vespene } = agent.calculateCost(unitType);
-    agent.minerals = (agent.minerals ?? 0) - minerals;
-    agent.vespene = (agent.vespene ?? 0) - vespene;
-}
+const present = ({ world }: BehaviorContext, unitTypes: number[]) =>
+    unitTypes.some((unitType) => ownUnitCount(world, unitType) > 0);
 
 function morphTownhall(ctx: BehaviorContext, structureType: number): boolean {
     const { agent } = ctx.world;
@@ -71,7 +63,7 @@ function morphTownhall(ctx: BehaviorContext, structureType: number): boolean {
         .getById(structureType === LAIR ? HATCHERY : LAIR)
         .find((townhall) => townhall.buildProgress === 1 && townhall.isIdle());
     if (!idle || !ctx.order(idle, structureType === LAIR ? Ability.MORPH_LAIR : Ability.MORPH_HIVE)) return false;
-    deduct(ctx, structureType);
+    spend(agent, agent.calculateCost(structureType));
     return true;
 }
 
@@ -112,7 +104,7 @@ async function addTechlab(
     );
     const idleWithAddon = hosts.some((structure) => structure.isIdle() && structure.hasAddOn());
     if (!bare || idleWithAddon || !ctx.order(bare, ability)) return false;
-    deduct(ctx, techlabType);
+    spend(agent, agent.calculateCost(techlabType));
     return true;
 }
 
@@ -189,10 +181,7 @@ export function upgradeController({
 
                 const from = researchedFrom[upgrade];
                 if (from === undefined) continue;
-                const equivalents = Object.entries(techAlias).flatMap(([type, aliases]) =>
-                    aliases.includes(from) ? [Number(type)] : [],
-                );
-                const structures = units.getById([from, ...equivalents]);
+                const structures = units.getById([from, ...techEquivalents(from)]);
                 if (structures.length === 0) {
                     if (autoTechUp && (await techUpTo(ctx, { desired: { upgrade }, base }))) return true;
                     continue;

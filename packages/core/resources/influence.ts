@@ -21,9 +21,9 @@ import type {
     Unit,
     World,
 } from '../types.ts';
+import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
 
 const LAYERS: InfluenceLayer[] = ['ground', 'air', 'groundAvoidance', 'airAvoidance'];
-const GAME_LOOPS_PER_SECOND = 22.4;
 
 const CHANGELINGS = new Set([
     UnitType.CHANGELING,

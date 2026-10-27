@@ -3,8 +3,7 @@ import * as UnitType from '../constants/unit-type.ts';
 import { Alliance, Race, PlayerType, Attribute } from '../constants/enums.ts';
 import { halfSupplyTypes } from '../constants/groups.ts';
 import { trainedFrom } from '../constants/dicts/trained-from.ts';
-import { techRequirement as techRequirements } from '../constants/dicts/tech-requirement.ts';
-import { macroHelpers } from './macro.ts';
+import { affordable, macroHelpers } from './macro.ts';
 import type { Agent, Cost, EventReader, AgentObject, World, SystemWrapper, System } from '../types.ts';
 
 const debug = createDebug('sc2:debug:Bot');
@@ -144,13 +143,6 @@ export default function createAgent(blueprint: EventReader<AgentObject> = {} as 
             const required = this.calculateSupplyCost(unitTypeId);
             return required <= 0 || this.supplyLeft >= required;
         },
-        canAffordUnit(unitTypeId, checkSupplyCost = true) {
-            const { minerals, vespene } = this.calculateCost(unitTypeId);
-            if (minerals > (this.minerals ?? 0) || vespene > (this.vespene ?? 0)) return false;
-            if (!checkSupplyCost) return true;
-            const supplyCost = this.calculateSupplyCost(unitTypeId);
-            return !supplyCost || supplyCost <= this.supplyLeft;
-        },
         ...blueprint,
         _world: null as unknown as World,
         inGame: false,
@@ -175,92 +167,21 @@ export default function createAgent(blueprint: EventReader<AgentObject> = {} as 
             ...blueprint.settings,
         },
         interface: blueprint.interface || { raw: true, score: true, rawCropToPlayableArea: true },
-        canAfford(unitTypeId, earmarkName) {
-            const { data } = this._world;
-            const { minerals, vespene } = this as Required<Pick<Agent, 'minerals' | 'vespene'>>;
-
-            const earmarks = data.getEarmarkTotals(earmarkName);
-            const unitType = data.getUnitTypeData(unitTypeId);
-
-            const result =
-                minerals - earmarks.minerals >= unitType.mineralCost! &&
-                (unitType.vespeneCost ? vespene - earmarks.vespene >= unitType.vespeneCost : true);
-
-            if (result) {
-                if (earmarkName) {
-                    data.settleEarmark(earmarkName);
-                }
-                return true;
-            } else {
-                return false;
-            }
-        },
-        canAffordN(unitTypeId, maxN = 1) {
-            const { data } = this._world;
-            const { minerals, vespene } = this as Required<Pick<Agent, 'minerals' | 'vespene'>>;
-
-            const unitType = data.getUnitTypeData(unitTypeId);
-
-            const checkResult = (n: number) =>
-                minerals >= unitType.mineralCost! * n &&
-                (unitType.vespeneCost ? vespene >= unitType.vespeneCost * n : true);
-
-            for (let i = maxN; i > 0; i -= 1) {
-                if (checkResult(i)) return i;
-            }
-
-            return 0;
+        canAfford(unitTypeId, earmarkName, { count = 1, supply = false } = {}) {
+            const unitCost = this.calculateCost(unitTypeId);
+            const total = { minerals: unitCost.minerals * count, vespene: unitCost.vespene * count };
+            if (!affordable(this._world, total, earmarkName)) return false;
+            if (supply && this.calculateSupplyCost(unitTypeId) * count > this.supplyLeft) return false;
+            if (earmarkName) this._world.data.settleEarmark(earmarkName);
+            return true;
         },
         canAffordUpgrade(upgradeId, earmarkName) {
-            const { data } = this._world;
-            const { minerals, vespene } = this as Required<Pick<Agent, 'minerals' | 'vespene'>>;
-
-            const earmarks = data.getEarmarkTotals(earmarkName);
-            const upgrade = data.getUpgradeData(upgradeId);
-
-            const result =
-                minerals - earmarks.minerals >= upgrade.mineralCost! &&
-                (upgrade.vespeneCost ? vespene - earmarks.vespene >= upgrade.vespeneCost : true);
-
-            if (result) {
-                if (earmarkName) {
-                    data.settleEarmark(earmarkName);
-                }
-                return true;
-            } else {
-                return false;
-            }
+            if (!affordable(this._world, this.calculateUpgradeCost(upgradeId), earmarkName)) return false;
+            if (earmarkName) this._world.data.settleEarmark(earmarkName);
+            return true;
         },
         hasTechFor(unitTypeId) {
-            const { data, resources } = this._world;
-            const { units } = resources.get();
-
-            const techRequirement =
-                data.getUnitTypeData(unitTypeId).techRequirement || techRequirements[unitTypeId] || 0;
-            const { techAlias } = data.getUnitTypeData(techRequirement);
-
-            const needsOneOf = [techRequirement, ...techAlias!];
-
-            if (techRequirement === 0 || needsOneOf.length <= 0) {
-                return true;
-            }
-
-            const needsOneOfAny = needsOneOf.reduce((acc: number[], techUnitType) => {
-                const aliases = data
-                    .get('units')
-                    .filter((utd: SC2APIProtocol.UnitTypeData) => utd.techAlias!.includes(techUnitType));
-                if (aliases.length > 0) {
-                    const aliasUnitIds = aliases.map((alias: SC2APIProtocol.UnitTypeData) => alias.unitId);
-                    acc = acc.concat([techUnitType, ...aliasUnitIds]);
-                } else {
-                    acc = acc.concat([techUnitType]);
-                }
-                return acc;
-            }, []);
-
-            return needsOneOfAny.some((requirementTypeId) => {
-                return units.getById(requirementTypeId, { buildProgress: 1 }).length > 0;
-            });
+            return this.techRequirementProgress(unitTypeId) >= 1;
         },
         setup(world) {
             this._world = world;

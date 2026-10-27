@@ -1,10 +1,12 @@
 import { CANCEL_BUILDINPROGRESS, HARVEST_RETURN, MOVE, SMART } from '../constants/ability.ts';
 import { Alliance, Race } from '../constants/enums.ts';
-import { addonTypes, gasMineTypes, townhallTypes } from '../constants/groups.ts';
+import { addonTypes, creepTumorTypes, gasMineTypes, townhallTypes } from '../constants/groups.ts';
 import { GasMineRace } from '../constants/race-map.ts';
 import { BUILDING } from '../constants/unit-role.ts';
 import * as UnitType from '../constants/unit-type.ts';
 import { distanceSquared } from '../utils/geometry/point.ts';
+import { affordable, spend } from '../agent/macro.ts';
+import { selectBuilder } from '../utils/workers/select-builder.ts';
 import type {
     BuildingSettings,
     BuildingTracker,
@@ -17,15 +19,16 @@ import type {
     Unit,
     World,
 } from '../types.ts';
+import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
 
-const LOOPS_PER_SECOND = 22.4;
 const STRUCTURE_AT_TARGET_SQUARED = 1.5 ** 2;
 const GAS_RANGE = 3.2;
 const BUILD_RANGE = 1;
 const ENEMY_GAS_SQUARED = 4.5 ** 2;
 const GEYSER_NEAR_TOWNHALL_SQUARED = 15 ** 2;
-const GAS_TYPES = [...gasMineTypes, UnitType.ASSIMILATORRICH, UnitType.EXTRACTORRICH, UnitType.REFINERYRICH];
-const CREEP_TUMORS = [UnitType.CREEPTUMOR, UnitType.CREEPTUMORBURROWED, UnitType.CREEPTUMORQUEEN];
+const STALL_LOOPS = 10 * GAME_LOOPS_PER_SECOND;
+const STALL_DISTANCE_SQUARED = 1;
+const STALL_COOLDOWN_LOOPS = 60 * GAME_LOOPS_PER_SECOND;
 const MORPHED_TOWNHALLS = [UnitType.ORBITALCOMMAND, UnitType.PLANETARYFORTRESS];
 
 type Build = {
@@ -37,6 +40,9 @@ type Build = {
     pinned: boolean;
     adopted: boolean;
     finishedAt?: number;
+    stall?: { workerTag: string; target: Point2D; pos: Point2D; since: number };
+    stalls: number;
+    suppliedWorker: boolean;
 };
 
 type State = {
@@ -45,44 +51,39 @@ type State = {
     nextId: number;
     healthByTag: Map<string, number>;
     unfinishedDone: Set<string>;
+    stalledWorkers: Map<string, { unitType: number; until: number }>;
     optedIn: boolean;
     step: () => void;
 };
 
 const stateByTracker = new WeakMap<BuildingTracker, State>();
 
-const isGas = (unitType: number) => GAS_TYPES.includes(unitType);
+const isGas = (unitType: number) => gasMineTypes.includes(unitType);
 
 const isActive = (build: Build) => build.status !== 'done' && build.status !== 'failed';
 
-const loopsToSeconds = (loops: number) => loops / LOOPS_PER_SECOND;
+const loopsToSeconds = (loops: number) => loops / GAME_LOOPS_PER_SECOND;
 
 function context(world: World) {
     return world.resources.get();
 }
 
-function closestFreeWorker(world: World, near: Point2D, busy: Set<string>): Unit | undefined {
-    const { units } = context(world);
-    const free = (workers: Unit[]) =>
-        workers.filter((worker) => !worker.labels.has('command') && !busy.has(worker.tag!));
-    const candidates = free(units.getMineralWorkers());
-    const pool = candidates.length > 0 ? candidates : free(units.getWorkers());
-    return pool.length > 0 ? units.getClosest(near, pool)[0] : undefined;
-}
-
 function selectWorker(world: World, near: Point2D, busy: Set<string>): Unit | undefined {
     const { mining } = context(world);
-    const picked = mining.selectWorker(near, { forceClose: true });
-    return picked ?? (mining.isEnabled() ? undefined : closestFreeWorker(world, near, busy));
+    return mining.isEnabled()
+        ? mining.selectWorker(near, { forceClose: true, exclude: busy })
+        : selectBuilder(world, near, { exclude: busy });
 }
 
-function affordable(world: World, unitType: number, earmark?: string): boolean {
-    const { mineralCost = 0, vespeneCost = 0 } = world.data.getUnitTypeData(unitType);
-    const reserved = world.data.getEarmarkTotals(earmark);
-    return (
-        (world.agent.minerals ?? 0) - reserved.minerals >= mineralCost &&
-        (!vespeneCost || (world.agent.vespene ?? 0) - reserved.vespene >= vespeneCost)
-    );
+export function stalledWorkers(world: World, unitType: number): Set<string> {
+    const state = stateByTracker.get(context(world).buildings)!;
+    const loop = context(world).frame.getGameLoop();
+    const stalled = new Set<string>();
+    state.stalledWorkers.forEach((stall, tag) => {
+        if (stall.until <= loop) state.stalledWorkers.delete(tag);
+        else if (stall.unitType === unitType) stalled.add(tag);
+    });
+    return stalled;
 }
 
 function hasBuilder(world: World, structure: Unit): boolean {
@@ -125,6 +126,7 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
             nextId: 1,
             healthByTag: new Map(),
             unfinishedDone: new Set(),
+            stalledWorkers: new Map(),
             optedIn: false,
             step: () => {},
         };
@@ -141,6 +143,8 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
                 reserved: false,
                 pinned: false,
                 adopted: false,
+                stalls: 0,
+                suppliedWorker: false,
                 ...extra,
             };
             state.builds.push(build);
@@ -148,8 +152,11 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
             return build;
         };
 
-        const busyWorkers = () =>
-            new Set(state.builds.filter(isActive).flatMap((build) => (build.workerTag ? [build.workerTag] : [])));
+        const busyWorkers = (unitType: number) =>
+            new Set([
+                ...state.builds.filter(isActive).flatMap((build) => (build.workerTag ? [build.workerTag] : [])),
+                ...stalledWorkers(world, unitType),
+            ]);
 
         const tracker: BuildingTracker = {
             build(unitType, { at, placement: placementRequest, worker, earmark } = {}) {
@@ -159,7 +166,7 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
                 const target = at ? ('tag' in at ? at.pos : at) : requested;
                 if (!target) return undefined;
 
-                const builder = worker ?? selectWorker(world, target, busyWorkers());
+                const builder = worker ?? selectWorker(world, target, busyWorkers(unitType));
                 if (!builder) {
                     if (requested) placement.release(requested);
                     return undefined;
@@ -171,6 +178,7 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
                     placementRequest,
                     reserved: !!requested,
                     pinned: !!at,
+                    suppliedWorker: !!worker,
                 });
             },
             buildGas({ geyser, max = 1 } = {}) {
@@ -294,11 +302,10 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
 
         function orderBuild(build: Build, worker: Unit) {
             const { frame } = context(world);
-            const { abilityId, mineralCost = 0, vespeneCost = 0 } = world.data.getUnitTypeData(build.unitType);
+            const { abilityId } = world.data.getUnitTypeData(build.unitType);
             const geyser = build.geyserTag ? context(world).units.getByTag(build.geyserTag) : undefined;
             worker.labels.set('command', frame.getGameLoop());
-            world.agent.minerals = (world.agent.minerals ?? 0) - mineralCost;
-            world.agent.vespene = (world.agent.vespene ?? 0) - vespeneCost;
+            spend(world.agent, world.agent.calculateCost(build.unitType));
             const settled = build.earmark
                 ? world.data.get('earmarks').filter((earmark: Earmark) => earmark.name === build.earmark)
                 : [];
@@ -329,6 +336,34 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
             return true;
         }
 
+        // a detour via a ramp first walks away from the target, so closing distance can't measure progress
+        function stalled(build: Build, worker: Unit): boolean {
+            const loop = context(world).frame.getGameLoop();
+            const { stall } = build;
+            if (
+                stall?.workerTag === worker.tag &&
+                stall.target === build.target &&
+                distanceSquared(stall.pos, worker.pos) <= STALL_DISTANCE_SQUARED
+            ) {
+                return loop - stall.since > STALL_LOOPS;
+            }
+            build.stall = {
+                workerTag: worker.tag!,
+                target: build.target,
+                pos: { x: worker.pos.x, y: worker.pos.y },
+                since: loop,
+            };
+            return false;
+        }
+
+        function replaceWorker(build: Build, stalled: Unit) {
+            const next = selectWorker(world, build.target, busyWorkers(build.unitType));
+            if (!next) return;
+            context(world).mining.release(stalled);
+            context(world).roles.assign(next, BUILDING);
+            build.workerTag = next.tag;
+        }
+
         function stepBuild(build: Build) {
             const { units, frame, pathing, placement } = context(world);
             const terran = world.agent.race === Race.TERRAN;
@@ -347,7 +382,7 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
 
             let worker = build.workerTag ? units.getByTag(build.workerTag) : undefined;
             if (!worker || worker.labels.has('dead')) {
-                worker = selectWorker(world, build.target, busyWorkers());
+                worker = selectWorker(world, build.target, busyWorkers(build.unitType));
                 if (!worker) {
                     build.workerTag = undefined;
                     finish(build, 'failed', 'noWorker');
@@ -355,6 +390,7 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
                 }
                 context(world).roles.assign(worker, BUILDING);
                 build.workerTag = worker.tag;
+                build.suppliedWorker = false;
                 if (build.status === 'ordered') build.status = 'moving';
             }
 
@@ -386,9 +422,22 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
 
             if (worker.distanceTo(build.target) > (gas ? GAS_RANGE : BUILD_RANGE)) {
                 build.status = 'moving';
+                if (stalled(build, worker)) {
+                    // SC2 parks a MOVE to an unreachable spot at the closest reachable point, so re-issuing never ends
+                    build.stall = undefined;
+                    build.stalls += 1;
+                    state.stalledWorkers.set(worker.tag!, {
+                        unitType: build.unitType,
+                        until: frame.getGameLoop() + STALL_COOLDOWN_LOOPS,
+                    });
+                    if (build.stalls > 1) finish(build, 'failed', 'blocked');
+                    else if (replan(build) && !build.suppliedWorker) replaceWorker(build, worker);
+                    return;
+                }
                 issue(worker, MOVE, pathing.nextPoint(worker.pos, build.target));
                 return;
             }
+            build.stall = undefined;
 
             if (gas) {
                 const enemyGas = units
@@ -419,7 +468,7 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
 
             if (
                 world.agent.techRequirementProgress(build.unitType) === 1 &&
-                affordable(world, build.unitType, build.earmark)
+                affordable(world, world.agent.calculateCost(build.unitType), build.earmark)
             ) {
                 orderBuild(build, worker);
             }
@@ -439,7 +488,7 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
                     hasBuilder(world, structure)
                 )
                     continue;
-                const worker = selectWorker(world, structure.pos, busyWorkers());
+                const worker = selectWorker(world, structure.pos, busyWorkers(structure.unitType!));
                 if (!worker) return;
                 context(world).roles.assign(worker, BUILDING);
                 track(structure.unitType!, { x: structure.pos.x, y: structure.pos.y }, worker, {
@@ -457,7 +506,7 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
             const { cancelLowHp: mode } = state.settings;
             const seen = new Map<string, number>();
             for (const structure of units.getStructures()) {
-                if (structure.buildProgress! >= 1 || CREEP_TUMORS.includes(structure.unitType!)) continue;
+                if (structure.buildProgress! >= 1 || creepTumorTypes.includes(structure.unitType!)) continue;
                 const health = structure.health ?? 0;
                 seen.set(structure.tag!, health);
                 const previous = state.healthByTag.get(structure.tag!);
@@ -499,6 +548,7 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
         state.nextId = 1;
         state.healthByTag = new Map();
         state.unfinishedDone = new Set();
+        state.stalledWorkers = new Map();
         state.optedIn = false;
     },
     onStep(tracker) {

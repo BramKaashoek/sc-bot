@@ -1,7 +1,8 @@
 import { REQUIRES_TECHLAB } from '../../agent/macro.ts';
 import { Race } from '../../constants/enums.ts';
 import { reactorTypes, techLabTypes } from '../../constants/groups.ts';
-import { DRONE, GATEWAY, NEXUS, PROBE, SCV } from '../../constants/unit-type.ts';
+import { WorkerRace } from '../../constants/race-map.ts';
+import { GATEWAY, NEXUS } from '../../constants/unit-type.ts';
 import { WARPGATERESEARCH } from '../../constants/upgrade.ts';
 import { trainedFrom } from '../../constants/dicts/trained-from.ts';
 import { NodeSC2Error } from '../../engine/errors.ts';
@@ -18,8 +19,6 @@ type SpawnOptions = {
 };
 
 type CompositionEntry = [string, { proportion: number; priority: number }];
-
-const WORKER_BY_RACE: Record<number, number> = { [Race.TERRAN]: SCV, [Race.PROTOSS]: PROBE, [Race.ZERG]: DRONE };
 
 function validate(entries: CompositionEntry[]) {
     entries.forEach(([unitType, { priority }]) => {
@@ -60,9 +59,9 @@ export function spawnController({
             const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
             const ignoreProportions = freeflow || total < ignoreProportionsBelowUnitCount;
             const amountFor = (unitType: number, limit: number) => {
-                const supplyCost = agent.calculateSupplyCost(unitType);
-                const bySupply = supplyCost ? Math.floor(agent.supplyLeft / supplyCost) : Infinity;
-                return Math.min(agent.canAffordN(unitType, limit), bySupply);
+                let count = limit;
+                while (count > 0 && !agent.canAfford(unitType, null, { count, supply: true })) count -= 1;
+                return count;
             };
 
             const hasIdleProducer = (unitType: number) =>
@@ -122,7 +121,7 @@ export function buildWorkers({ toCount }: { toCount: number }): Behavior {
         name: 'buildWorkers',
         execute(ctx) {
             const { agent } = ctx.world;
-            const workerType = WORKER_BY_RACE[agent.race as number];
+            const workerType = WorkerRace[agent.race as number];
             const missing = toCount - agent.supplyWorkers;
             if (!workerType || missing <= 0 || !agent.canAfford(workerType)) return false;
             return spawnController({

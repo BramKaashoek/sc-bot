@@ -194,6 +194,12 @@ describe('createAgent', () => {
     });
 
     it('calculates supply cost net of the morph source and gates feeding and affordability on free supply', async () => {
+        const { agent: poor } = await worldWith({ minerals: 30, vespene: 25, foodCap: 15, foodUsed: 14 });
+        expect([poor.canAfford(UnitType.BANELING), poor.canAfford(UnitType.BANELING, null, { supply: true })]).toEqual([
+            true,
+            true,
+        ]);
+
         const { agent } = await worldWith({ minerals: 200, vespene: 100, foodCap: 15, foodUsed: 14 });
         const unitTypeIds = [
             UnitType.ZERGLING,
@@ -204,22 +210,28 @@ describe('createAgent', () => {
             UnitType.ORBITALCOMMAND,
         ];
 
-        expect([agent.canAfford(UnitType.ORBITALCOMMAND), agent.canAfford(UnitType.ROACH)]).toEqual([false, true]);
         expect(
             unitTypeIds.map((unitType) => ({
                 supplyCost: agent.calculateSupplyCost(unitType),
                 canFeed: agent.canFeed(unitType),
-                canAffordUnit: agent.canAffordUnit(unitType),
+                canAffordWithSupply: agent.canAfford(unitType, null, { supply: true }),
+                canAfford: agent.canAfford(unitType),
             })),
         ).toEqual([
-            { supplyCost: 1, canFeed: true, canAffordUnit: true },
-            { supplyCost: 0, canFeed: true, canAffordUnit: true },
-            { supplyCost: 2, canFeed: false, canAffordUnit: false },
-            { supplyCost: 1, canFeed: true, canAffordUnit: true },
-            { supplyCost: 1, canFeed: true, canAffordUnit: true },
-            { supplyCost: 0, canFeed: true, canAffordUnit: true },
+            { supplyCost: 1, canFeed: true, canAffordWithSupply: true, canAfford: true },
+            { supplyCost: 0, canFeed: true, canAffordWithSupply: true, canAfford: true },
+            { supplyCost: 2, canFeed: false, canAffordWithSupply: false, canAfford: true },
+            { supplyCost: 1, canFeed: true, canAffordWithSupply: true, canAfford: true },
+            { supplyCost: 1, canFeed: true, canAffordWithSupply: true, canAfford: true },
+            { supplyCost: 0, canFeed: true, canAffordWithSupply: true, canAfford: true },
         ]);
-        expect(agent.canAffordUnit(UnitType.ROACH, false)).toBe(true);
+        expect(agent.canAfford(UnitType.ROACH)).toBe(true);
+        expect([1, 2].map((count) => agent.canAfford(UnitType.ORBITALCOMMAND, null, { count }))).toEqual([true, false]);
+        expect(
+            [4, 5]
+                .map((count) => agent.canAfford(UnitType.MARINE, null, { count }))
+                .concat([1, 2].map((count) => agent.canAfford(UnitType.MARINE, null, { count, supply: true }))),
+        ).toEqual([true, false, true, false]);
     });
 
     it('passes (world, data, event) on to the blueprint onGameStart and onStep, keeping a preset opponent id when filling in its race', async () => {

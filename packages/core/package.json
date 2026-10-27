@@ -7,7 +7,8 @@
         "check-types": "tsc --noEmit",
         "test": "bun test --pass-with-no-tests",
         "capture:fixtures": "bun scripts/capture-fixtures.ts",
-        "generate:data": "bun scripts/generate-data.ts"
+        "generate:data": "bun scripts/generate-data.ts",
+        "check:data": "bun scripts/generate-data.ts --check"
     },
     "repository": {
         "type": "git",

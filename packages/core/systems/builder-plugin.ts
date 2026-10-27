@@ -5,12 +5,14 @@ import { BuildOrder, BuildOrderId, BuildResult, Race } from '../constants/enums.
 import type { BuildOrderStatus } from '../constants/enums.ts';
 import * as ability from '../constants/ability.ts';
 import { SupplyUnitRace, TownhallRace, WorkerRace } from '../constants/race-map.ts';
-import { gasMineTypes, townhallTypes, addonTypes, structureTypes } from '../constants/groups.ts';
+import { gasMineTypes, townhallTypes, addonHostTypes, addonTypes, structureTypes } from '../constants/groups.ts';
 import { Upgrade, UnitType, UnitTypeId, AbilityId, UpgradeId, Color } from '../constants/index.ts';
 import { ENEMY_NAT_VISION, ENEMY_SPAWN, NAT } from '../constants/build-target.ts';
 import { BUILD_RUNNER_SCOUT, GATHERING, PERSISTENT_BUILDER } from '../constants/unit-role.ts';
 import { autoSupply } from '../behaviors/macro/structures.ts';
 import { NodeSC2Error } from '../engine/errors.ts';
+import { affordable } from '../agent/macro.ts';
+import { createdTypeByAbility } from '../resources/units.ts';
 import { parseBuildOrder } from '../utils/build-order/parse.ts';
 import { resolveTarget, scoutWaypoints, structurePlacement } from '../utils/build-order/targets.ts';
 import type {
@@ -19,6 +21,7 @@ import type {
     BuildSystemObject,
     BuildTask,
     BuildTaskI,
+    Cost,
     EventReader,
     OpeningDefinition,
     PlacementFlag,
@@ -35,8 +38,7 @@ const debugDraw = createDebug('sc2:DrawDebug');
 const debugBuildSilly = createDebug('sc2:silly:build');
 
 const { BUILD_REACTOR, BUILD_TECHLAB, HARVEST_RETURN, MOVE, MORPH_ORBITALCOMMAND, MORPH_PLANETARYFORTRESS } = ability;
-const { PYLON, BARRACKS, FACTORY, STARPORT, SUPPLYDEPOT, OVERLORD } = UnitType;
-const addonHostTypes = [BARRACKS, FACTORY, STARPORT];
+const { PYLON, SUPPLYDEPOT, OVERLORD } = UnitType;
 
 const NOOP = () => {};
 
@@ -77,7 +79,37 @@ const taskFunctions: TaskFunctions = {
 
 function builderPlugin(system: EventReader<System>): void {
     const prefix = `build${pluginCount++}`;
-    const earmarkName = (task: BuildTaskRuntime) => `${prefix}:task${task.index}`;
+    const earmarkName = ({ index }: Pick<BuildTaskRuntime, 'index'>) => `${prefix}:task${index}`;
+
+    const abilityCost = (world: World, task: Pick<BuildTaskRuntime, 'id'>): Cost | undefined => {
+        const unitType =
+            task.id === BUILD_REACTOR
+                ? UnitType.REACTOR
+                : task.id === BUILD_TECHLAB
+                  ? UnitType.TECHLAB
+                  : createdTypeByAbility(world).get(task.id);
+        const cost = unitType === undefined ? undefined : world.agent.calculateCost(unitType);
+        return cost && (cost.minerals > 0 || cost.vespene > 0) ? cost : undefined;
+    };
+
+    // SC2 reports specific ids (BUILD_REACTOR_BARRACKS) where tasks use the generic one (BUILD_REACTOR)
+    const canCast = (world: World, unit: Unit, id: number) =>
+        unit
+            .availableAbilities()
+            .some((available) => available === id || world.data.getAbilityData(available)?.remapsToAbilityId === id);
+
+    // by type, since SC2 reports the ability unavailable while the caster is busy or short on resources;
+    // availability only admits an `on` type the ability data misses
+    const abilityCasters = (world: World, task: Pick<BuildTaskRuntime, 'id' | 'opts'>) => {
+        const canDo = world.data.findUnitTypesWithAbility(task.id);
+        const casters = world.resources
+            .get()
+            .units.getByType(task.opts?.on ? [task.opts.on] : canDo)
+            .filter((unit) => canDo.includes(unit.unitType!) || canCast(world, unit, task.id));
+        return [BUILD_REACTOR, BUILD_TECHLAB].includes(task.id)
+            ? casters.filter((unit) => unit.addOnTag === '0')
+            : casters;
+    };
     const buildSym = Symbol('build');
     const completeSym = Symbol('complete');
 
@@ -364,38 +396,32 @@ function builderPlugin(system: EventReader<System>): void {
 
         if (this.buildOptions!.earmarks && buildTask.status !== BuildOrder.COMMAND_GIVEN) {
             if (gameLoop - buildTask.started! >= this.buildOptions!.earmarks) {
-                let cost: SC2APIProtocol.UnitTypeData | SC2APIProtocol.UpgradeData | undefined;
+                let cost: Cost | undefined;
                 switch (buildTask.type) {
                     case 'train':
                     case 'build': {
-                        cost = world.data.getUnitTypeData(buildTask.id);
+                        cost = world.agent.calculateCost(buildTask.id);
                         break;
                     }
                     case 'upgrade': {
-                        cost = world.data.getUpgradeData(buildTask.id);
+                        cost = world.agent.calculateUpgradeCost(buildTask.id);
                         break;
                     }
                     case 'ability': {
-                        const unitFromAbility = world.data
-                            .get('units')
-                            .find((ud: SC2APIProtocol.UnitTypeData) => ud.available && ud.abilityId === buildTask.id);
-                        if (unitFromAbility) {
-                            cost = world.data.getUnitTypeData(buildTask.id);
-                        }
+                        cost = abilityCost(world, buildTask);
                         break;
                     }
                 }
 
                 const canAfford =
-                    buildTask.type === 'upgrade'
+                    !cost ||
+                    (buildTask.type === 'upgrade'
                         ? world.agent.canAffordUpgrade(buildTask.id)
-                        : world.agent.canAfford(buildTask.id);
+                        : buildTask.type === 'ability'
+                          ? affordable(world, cost)
+                          : world.agent.canAfford(buildTask.id));
                 if (cost && !canAfford) {
-                    world.data.addEarmark({
-                        name: earmarkName(buildTask),
-                        minerals: cost.mineralCost!,
-                        vespene: cost.vespeneCost!,
-                    });
+                    world.data.addEarmark({ name: earmarkName(buildTask), ...cost });
                     buildTask.earmarked = true;
                 }
             }
@@ -446,7 +472,7 @@ function builderPlugin(system: EventReader<System>): void {
         const main = map.getMain().townhallPosition;
         if (mining.isEnabled()) return mining.selectWorker(main, { role });
         const free = units.getMineralWorkers().filter((worker) => roles.roleOf(worker) === GATHERING);
-        const [worker] = units.getClosest(main, free);
+        const [worker] = free.closestNUnits(main, 1);
         if (worker) roles.assign(worker, role);
         return worker;
     };
@@ -589,15 +615,8 @@ function builderPlugin(system: EventReader<System>): void {
 
     const earmarkOf = (task: BuildTaskRuntime) => (task.earmarked ? earmarkName(task) : undefined);
 
-    // agent.canAfford settles the earmark, which the tracker must keep until it sends BUILD
-    const affordable = ({ agent, data }: World, task: BuildTaskRuntime) => {
-        const { mineralCost = 0, vespeneCost = 0 } = data.getUnitTypeData(task.id);
-        const reserved = data.getEarmarkTotals(earmarkOf(task));
-        return (
-            agent.minerals! - reserved.minerals >= mineralCost &&
-            (!vespeneCost || agent.vespene! - reserved.vespene >= vespeneCost)
-        );
-    };
+    const affordsTask = (world: World, task: BuildTaskRuntime) =>
+        affordable(world, world.agent.calculateCost(task.id), earmarkOf(task));
 
     const trackBuild = (world: World, task: BuildTaskRuntime, opts: BuildOptions) => {
         const { agent, resources } = world;
@@ -691,7 +710,7 @@ function builderPlugin(system: EventReader<System>): void {
             }
         }
 
-        if (!affordable(world, task)) return BuildResult.CANNOT_SATISFY;
+        if (!affordsTask(world, task)) return BuildResult.CANNOT_SATISFY;
         const settle = () => agent.canAfford(task.id, earmarkOf(task));
 
         const { actions, map, placer } = resources.get();
@@ -704,7 +723,7 @@ function builderPlugin(system: EventReader<System>): void {
                     : 'at' in targeted
                       ? targeted.at
                       : await actions.findPlacement(task.id, targeted.near);
-            if (at === false || !affordable(world, task)) return BuildResult.CANNOT_SATISFY;
+            if (at === false || !affordsTask(world, task)) return BuildResult.CANNOT_SATISFY;
             const tracked = trackBuild(world, task, 'placement' in targeted ? targeted : { at });
             if (tracked) return tracked;
             if (at) {
@@ -739,7 +758,7 @@ function builderPlugin(system: EventReader<System>): void {
 
             if (foundPosition) {
                 // in case something changed while waiting for placement position
-                if (!affordable(world, task)) return BuildResult.CANNOT_SATISFY;
+                if (!affordsTask(world, task)) return BuildResult.CANNOT_SATISFY;
                 const tracked = trackBuild(world, task, { at: foundPosition });
                 if (tracked) return tracked;
                 settle();
@@ -757,10 +776,20 @@ function builderPlugin(system: EventReader<System>): void {
     };
 
     buildFns[buildFnSyms.train] = async function (world: World, task: TrainTask) {
+        const { agent, data } = world;
+        const id = Array.isArray(task.id) ? getRandom(task.id) : task.id;
+        const earmark = task.earmarked ? { name: earmarkName(task), ...agent.calculateCost(id) } : undefined;
+
+        // actions.train counts the task's own earmark against it, so lift it and put it back unless the train went out
+        if (earmark) data.settleEarmark(earmark.name);
+        const result = await sendTrain(world, task, id);
+        if (earmark && result !== BuildResult.SUCCESS) data.addEarmark(earmark);
+        return result;
+    };
+
+    const sendTrain = async (world: World, task: TrainTask, id: number) => {
         const { agent, resources } = world;
         const { actions } = resources.get();
-
-        const id = Array.isArray(task.id) ? getRandom(task.id) : task.id;
 
         if (task.opts?.at) {
             const trained = await agent.train(id, 1, resolveTarget(world, task.opts.at));
@@ -820,16 +849,23 @@ function builderPlugin(system: EventReader<System>): void {
         }
     };
 
-    buildFns[buildFnSyms.ability] = async function ({ data, resources }: World, task: BuildTaskRuntime) {
+    buildFns[buildFnSyms.ability] = async function (world: World, task: BuildTaskRuntime) {
+        const { data, resources } = world;
         const { actions, units } = resources.get();
 
-        const canDo = data.findUnitTypesWithAbility(task.id);
-        let unitsCanDo = units
-            .getByType(task.opts?.on ? [task.opts.on] : canDo)
-            .filter((unit) => unit.abilityAvailable(task.id));
+        const casters = abilityCasters(world, task);
+        if (casters.length === 0) {
+            if (task.earmarked) data.settleEarmark(earmarkName(task));
+            return BuildResult.CANNOT_SATISFY;
+        }
+
+        const cost = task.earmarked ? abilityCost(world, task) : undefined;
+        if (cost && !affordable(world, cost, earmarkName(task))) return BuildResult.CANNOT_SATISFY;
+
+        let unitsCanDo = casters.filter((unit) => canCast(world, unit, task.id));
 
         if ([BUILD_REACTOR, BUILD_TECHLAB].includes(task.id)) {
-            unitsCanDo = unitsCanDo.filter((unit) => unit.addOnTag === '0' && unit.noQueue);
+            unitsCanDo = unitsCanDo.filter((unit) => unit.noQueue);
         }
 
         if (unitsCanDo.length <= 0) return BuildResult.CANNOT_SATISFY;
@@ -842,6 +878,7 @@ function builderPlugin(system: EventReader<System>): void {
 
         try {
             await actions.do(task.id, [unitsCanDo[0].tag!], { target });
+            if (cost) data.settleEarmark(earmarkName(task));
             return BuildResult.SUCCESS;
         } catch (e) {
             debugBuild('BUILD ABILITY ERR:', e);

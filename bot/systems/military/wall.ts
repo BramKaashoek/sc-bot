@@ -1,4 +1,4 @@
-import type { Agent, MapResource, Point2D, ResourceManager } from '@sc-bot/core';
+import { type Agent, distance, type MapResource, type Point2D, type ResourceManager } from '@sc-bot/core';
 import { MORPH_SUPPLYDEPOT_LOWER, MORPH_SUPPLYDEPOT_RAISE } from '@sc-bot/core/constants/ability';
 import { Alliance } from '@sc-bot/core/constants/enums';
 import { BARRACKS, SUPPLYDEPOT, SUPPLYDEPOTLOWERED } from '@sc-bot/core/constants/unit-type';
@@ -58,7 +58,7 @@ export const manageWall = async (_agent: Agent, resources: ResourceManager) => {
 
     const enemies = units.getAlive(Alliance.ENEMY).filter((unit) => !unit.isStructure() && !unit.isFlying);
     const nearestEnemyDistance = (depot: { pos: Point2D }) =>
-        Math.min(...enemies.map((enemy) => Math.hypot(enemy.pos.x - depot.pos.x, enemy.pos.y - depot.pos.y)));
+        Math.min(...enemies.map((enemy) => distance(enemy.pos, depot.pos)));
     await Promise.all([
         ...units
             .getById(SUPPLYDEPOT)

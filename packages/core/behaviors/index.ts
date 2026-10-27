@@ -6,7 +6,6 @@ export {
     groupWeaponsOnCooldown,
     inAttackRange,
     pickEnemyTarget,
-    towards,
 } from './combat/helpers.ts';
 export {
     aMove,
@@ -36,7 +35,7 @@ export {
     stutterGroupBack,
     stutterGroupForward,
 } from './combat/group.ts';
-export { ownUnitCount, structurePending } from './macro/helpers.ts';
+export { ownUnitCount } from './macro/helpers.ts';
 export { buildWorkers, spawnController } from './macro/spawn.ts';
 export {
     autoSupply,

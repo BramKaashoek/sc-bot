@@ -64,7 +64,7 @@ describe('buildStructure', () => {
             ...structures(UnitType.BARRACKS, 1),
             ...structures(UnitType.BARRACKS, 1),
         ]);
-        spyOn(counted.world.resources.get().buildings, 'pending').mockReturnValue(1);
+        spyOn(counted.world.agent, 'alreadyPending').mockReturnValue(1);
         expect(await execute(counted.world, buildStructure({ structureType: UnitType.BARRACKS, toCount: 2 }))).toBe(
             false,
         );
@@ -151,7 +151,7 @@ describe('expansionController', () => {
         expect(await execute(ready.world, expansionController({ toCount: 0 }))).toBe(false);
 
         const pending = await setupExpansions();
-        spyOn(pending.world.resources.get().buildings, 'pending').mockReturnValue(1);
+        spyOn(pending.world.agent, 'alreadyPending').mockReturnValue(1);
         expect(await execute(pending.world, expansionController({ toCount: 3 }))).toBe(false);
 
         const poor = await setupExpansions({ minerals: 100 });

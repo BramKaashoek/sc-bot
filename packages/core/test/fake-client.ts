@@ -14,6 +14,8 @@ export type FixtureAbilities = Record<number, Record<string, number[]>>;
 
 export type Fixture = {
     gameInfo: SC2APIProtocol.ResponseGameInfo;
+    // SC2 only adds neutral rocks and towers to the pathing grid once the game has stepped
+    liveGameInfo?: SC2APIProtocol.ResponseGameInfo;
     data: SC2APIProtocol.ResponseData;
     observations: Record<number, SC2APIProtocol.ResponseObservation>;
     abilities?: FixtureAbilities;
@@ -449,7 +451,7 @@ export function createFakeClient({ fixture, onQuery, recordedAnswers = true }: F
             return { playerId: currentObservation.observation?.playerCommon?.playerId ?? 1 };
         },
         async gameInfo() {
-            return fixture.gameInfo;
+            return sent.step.length > 0 ? (fixture.liveGameInfo ?? fixture.gameInfo) : fixture.gameInfo;
         },
         async data() {
             return fixture.data;

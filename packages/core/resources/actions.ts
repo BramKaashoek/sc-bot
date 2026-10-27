@@ -3,11 +3,15 @@ import getRandom from '../utils/get-random.ts';
 import { distance, nClosestPoint } from '../utils/geometry/point.ts';
 import { gridsInCircle } from '../utils/geometry/angle.ts';
 import { Ability, enums, UnitType, UnitTypeId, WarpUnitAbility } from '../constants/index.ts';
+import { creationAbilityOverrides } from '../constants/groups.ts';
 import { GasMineRace } from '../constants/race-map.ts';
 import { GATHERING } from '../constants/unit-role.ts';
 import UnitAbilites from '../constants/unit-ability-map.ts';
 import createClient from '../engine/create-client.ts';
 import { ActionManagerError, BuildError, TrainError, GatherError } from '../engine/errors.ts';
+import { researchAbilityOf, spend } from '../agent/macro.ts';
+import { selectBuilder } from '../utils/workers/select-builder.ts';
+import { stalledWorkers } from './buildings.ts';
 import { arbitrate } from './command-arbiter.ts';
 import { currentCommander, runAsCommander } from './command-context.ts';
 import type { Committed, Proposal } from './command-arbiter.ts';
@@ -71,6 +75,35 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
     const markOrdered = (commands: SC2APIProtocol.ActionRawUnitCommand[]) => {
         const { tags } = thisObservation();
         commands.forEach((command) => (command.unitTags ?? []).forEach((tag) => tags.add(tag)));
+    };
+
+    const warpInPoints = (opts: WarpInOptions): Point2D[] => {
+        const { units, map } = world.resources.get();
+        const nearPosition = opts.nearPosition || map.getCombatRally();
+        const selectedMatricies = [...(world.agent.powerSources ?? [])]
+            .sort((a, b) => distance(nearPosition, a.pos as Point2D) - distance(nearPosition, b.pos as Point2D))
+            .slice(0, opts.nearPosition ? 1 : 3);
+        let myPoints = selectedMatricies
+            .map((matrix) => gridsInCircle(matrix.pos as Point2D, matrix.radius!))
+            .reduce((acc, arr) => acc.concat(arr), [])
+            .filter((point) => map.isPathable(point) && !map.hasCreep(point));
+
+        if (opts.highground) {
+            myPoints = myPoints
+                .map((point) => ({ ...point, z: map.getHeight(point) }))
+                .sort((a, b) => b.z - a.z)
+                .filter((p, i, arr) => p.z === arr[0].z);
+        }
+
+        const myStructures = units.getStructures();
+        const claimed = proposals.flatMap(({ command }) =>
+            command.targetWorldSpacePos ? [command.targetWorldSpacePos as Point2D] : [],
+        );
+        return nClosestPoint(nearPosition, myPoints, 100).filter(
+            (point) =>
+                myStructures.every((structure) => distance(structure.pos, point) > 2) &&
+                claimed.every((target) => distance(target, point) >= 1),
+        );
     };
 
     const commit = (tags: string[], commander: CommandContext) => {
@@ -243,8 +276,8 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                     byDistance.find((base) => base.assignedHarvesters! < base.idealHarvesters!) ?? byDistance[0];
 
                 if (targetBase) {
-                    const targetBaseFields = units.getClosest(targetBase.pos!, units.getMineralFields(), 3);
-                    [target] = units.getClosest(unit.pos!, targetBaseFields);
+                    const targetBaseFields = units.getMineralFields().closestNUnits(targetBase.pos!, 3);
+                    [target] = targetBaseFields.closestNUnits(unit.pos!, 1);
                 }
             }
 
@@ -399,32 +432,23 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
 
             const near = (pos || target?.pos) as Point2D | undefined;
             const { mining } = world.resources.get();
+            const exclude = stalledWorkers(world, unitTypeId);
             let builder: Unit | undefined =
                 worker ??
                 (near && mining.isEnabled()
-                    ? mining.selectWorker(near, { forceClose: true, role: GATHERING })
+                    ? mining.selectWorker(near, { forceClose: true, role: GATHERING, exclude })
                     : undefined);
-            if (!builder) {
-                const builders = [
-                    ...units.getMineralWorkers(),
-                    ...units.getWorkers().filter((worker) => worker.noQueue),
-                ];
-
-                // @FIXME: race-specific stuff should be Proxy'd and not conditional like this, ugly
-                if (world.agent.race === Race.PROTOSS) {
-                    const builderWorkers = units.getConstructingWorkers().filter((worker) => !worker.hasLabel('stuck'));
-                    if (builderWorkers.length > 0) {
-                        [builder] = units.getClosest((pos || target!.pos) as Point2D, builderWorkers);
-                        if (distance(builder.pos!, (pos || target!.pos) as Point2D) < 20) {
-                            queue = true;
-                        } else {
-                            [builder] = units.getClosest((pos || target!.pos) as Point2D, builders);
-                        }
-                    } else {
-                        [builder] = units.getClosest((pos || target!.pos) as Point2D, builders);
-                    }
-                } else {
-                    [builder] = units.getClosest((pos || target!.pos) as Point2D, builders);
+            if (!builder && near) {
+                builder = selectBuilder(world, near, { exclude, reuseConstructing: world.agent.race === Race.PROTOSS });
+                if (builder?.isConstructing()) {
+                    queue = true;
+                } else if (builder?.isCarryingResource()) {
+                    this.queueAction({
+                        abilityId: Ability.HARVEST_RETURN,
+                        unitTags: [builder.tag!],
+                        queueCommand: false,
+                    });
+                    queue = true;
                 }
             }
 
@@ -442,10 +466,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
 
             builder.labels.set('command', frame.getGameLoop());
 
-            const { mineralCost, vespeneCost } = world.data.getUnitTypeData(unitTypeId);
-
-            world.agent.minerals = world.agent.minerals! - mineralCost!;
-            world.agent.vespene = world.agent.vespene! - vespeneCost!;
+            spend(world.agent, world.agent.calculateCost(unitTypeId));
 
             if (target) {
                 unitCommand.targetUnitTag = target.tag;
@@ -491,7 +512,14 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
             if (productionUnit) {
                 trainer = productionUnit;
             } else {
-                trainer = units.getProductionUnits(unitTypeId).find((unit) => unit.noQueue);
+                const received = this.unitTagsReceivedAction();
+                const producers = units.getProductionUnits(unitTypeId).filter((unit) => !received.has(unit.tag!));
+                trainer =
+                    producers.find((unit) => unit.unitType !== UnitType.WARPGATE && unit.noQueue) ??
+                    producers.find(
+                        (unit) =>
+                            unit.unitType === UnitType.WARPGATE && unit.abilityAvailable(WarpUnitAbility[unitTypeId]),
+                    );
             }
 
             if (!trainer) {
@@ -500,17 +528,31 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 });
             }
 
-            const { mineralCost, vespeneCost, abilityId } = world.data.getUnitTypeData(unitTypeId);
+            let unitCommand: SC2APIProtocol.ActionRawUnitCommand;
+            if (trainer.unitType === UnitType.WARPGATE) {
+                const abilityId = WarpUnitAbility[unitTypeId];
+                const [point] = shuffled(warpInPoints({}));
+                if (!trainer.abilityAvailable(abilityId) || !point) {
+                    throw new TrainError(`warp gate cannot warp in type ${unitTypeId}: on cooldown or no free point`, {
+                        data: { unitTypeId, productionUnit },
+                    });
+                }
+                unitCommand = { abilityId, unitTags: [trainer.tag!], targetWorldSpacePos: point };
+            } else {
+                const abilityId =
+                    creationAbilityOverrides[unitTypeId] ?? world.data.getUnitTypeData(unitTypeId).abilityId;
+                unitCommand = { abilityId, unitTags: [trainer.tag!] };
+            }
 
-            world.agent.minerals = world.agent.minerals! - mineralCost!;
-            world.agent.vespene = world.agent.vespene! - vespeneCost!;
-
-            const unitCommand: SC2APIProtocol.ActionRawUnitCommand = { abilityId, unitTags: [trainer.tag!] };
-
+            spend(world.agent, world.agent.calculateCost(unitTypeId));
             this.queueAction(unitCommand);
         },
         async upgrade(upgradeId: number, upgradeFacility?: Unit) {
             const { units } = world.resources.get();
+
+            if (!world.agent.canAffordUpgrade(upgradeId)) {
+                throw new TrainError(`cannot afford upgrade: ${upgradeId}`, { data: { upgradeId, upgradeFacility } });
+            }
 
             let upgrader: Unit | undefined;
 
@@ -526,45 +568,26 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 });
             }
 
-            const { abilityId } = world.data.getUpgradeData(upgradeId);
+            const abilityId = researchAbilityOf(world.agent, upgradeId);
             const unitCommand: SC2APIProtocol.ActionRawUnitCommand = { abilityId, unitTags: [upgrader.tag!] };
 
+            spend(world.agent, world.agent.calculateUpgradeCost(upgradeId));
             this.queueAction(unitCommand);
         },
         async warpIn(unitType: number, opts: WarpInOptions = {}) {
-            const { units, map } = world.resources.get();
+            const { units } = world.resources.get();
             const abilityId = WarpUnitAbility[unitType];
             const n = opts.maxQty || 1;
-            const nearPosition = opts.nearPosition || map.getCombatRally();
 
-            const qtyToWarp = world.agent.canAffordN(unitType, n);
+            let qtyToWarp = n;
+            while (qtyToWarp > 0 && !world.agent.canAfford(unitType, null, { count: qtyToWarp })) qtyToWarp -= 1;
             if (qtyToWarp <= 0) {
                 throw new ActionManagerError(`cannot afford warping any qty of unit: ${UnitTypeId[unitType]}`, {
                     data: { unitType, opts },
                 });
             }
 
-            const selectedMatricies = units.getClosest(
-                nearPosition,
-                world.agent.powerSources ?? [],
-                opts.nearPosition ? 1 : 3,
-            );
-            let myPoints = selectedMatricies
-                .map((matrix) => gridsInCircle(matrix.pos as Point2D, matrix.radius!))
-                .reduce((acc, arr) => acc.concat(arr), [])
-                .filter((point) => map.isPathable(point) && !map.hasCreep(point));
-
-            if (opts.highground) {
-                myPoints = myPoints
-                    .map((point) => ({ ...point, z: map.getHeight(point) }))
-                    .sort((a, b) => b.z - a.z)
-                    .filter((p, i, arr) => p.z === arr[0].z);
-            }
-
-            const myStructures = units.getStructures();
-            const points = nClosestPoint(nearPosition, myPoints, 100).filter((point) =>
-                myStructures.every((structure) => distance(structure.pos, point) > 2),
-            );
+            const points = warpInPoints(opts);
 
             const warpGates = units
                 .getById(UnitType.WARPGATE)

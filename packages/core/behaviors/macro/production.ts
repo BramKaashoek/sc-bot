@@ -3,7 +3,7 @@ import { trainedFrom } from '../../constants/dicts/trained-from.ts';
 import { unitAlias } from '../../constants/dicts/unit-alias.ts';
 import { GATEWAY, WARPGATE } from '../../constants/unit-type.ts';
 import { distance } from '../../utils/geometry/point.ts';
-import { ownUnitCount, structurePending } from './helpers.ts';
+import { notStarted, ownUnitCount } from './helpers.ts';
 import { buildStructure } from './structures.ts';
 import { techUp } from './tech.ts';
 import type { ArmyComposition, Behavior, BehaviorContext, Point2D } from '../../types.ts';
@@ -56,7 +56,7 @@ export function productionController({
             const { world } = ctx;
             const { agent } = world;
             if (agent.race === Race.ZERG) return false;
-            const { buildings, frame, units } = world.resources.get();
+            const { frame, units } = world.resources.get();
             const score = frame.getScore()?.scoreDetails;
             const rateMinerals = (score?.collectionRateMinerals ?? 0) + 1;
             const rateVespene = (score?.collectionRateVespene ?? 0) + 1;
@@ -73,13 +73,7 @@ export function productionController({
                 if (await tech.execute(ctx)) return true;
                 if (agent.techRequirementProgress(producer) < 0.95) continue;
 
-                const notStarted = buildings
-                    .getTracked()
-                    .some(
-                        (b) =>
-                            b.unitType === producer && !b.structureTag && b.status !== 'done' && b.status !== 'failed',
-                    );
-                if (notStarted || existing.length >= maxProductionStructures) continue;
+                if (notStarted(world, producer) > 0 || existing.length >= maxProductionStructures) continue;
 
                 const build = () =>
                     buildStructure({ structureType: producer, base, flags: ['production'] }).execute(ctx);
@@ -91,11 +85,11 @@ export function productionController({
                         ? Math.floor((rateVespene / (cost.vespene + 1)) * alpha * target)
                         : affordMinerals;
                     const production =
-                        existing.filter((s) => s.buildProgress === 1).length + structurePending(world, producer);
+                        existing.filter((s) => s.buildProgress === 1).length + world.agent.alreadyPending(producer);
                     if (production < affordMinerals && production < affordVespene && (await build())) return true;
                 }
 
-                if (target <= 0.15 && trainFrom.some((type) => structurePending(world, type) > 0)) continue;
+                if (target <= 0.15 && trainFrom.some((type) => world.agent.alreadyPending(type) > 0)) continue;
                 if (
                     existing.length >= Math.floor((rateMinerals + rateVespene) / ((cost.minerals + cost.vespene) * 4.5))
                 ) {
@@ -104,7 +98,7 @@ export function productionController({
                 if (agent.race === Race.TERRAN && flyingNearby(ctx, trainFrom)) continue;
                 if (current * 1.2 >= target) continue;
                 if (canAlreadyProduce(ctx, trainFrom)) continue;
-                if (structurePending(world, producer) >= Math.floor((rateMinerals + rateVespene) / 1000)) continue;
+                if (world.agent.alreadyPending(producer) >= Math.floor((rateMinerals + rateVespene) / 1000)) continue;
                 if (await build()) return true;
             }
             return false;

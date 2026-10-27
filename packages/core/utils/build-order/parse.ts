@@ -2,6 +2,7 @@ import createDebug from 'debug';
 import * as Ability from '../../constants/ability.ts';
 import * as BuildTargets from '../../constants/build-target.ts';
 import { Race } from '../../constants/enums.ts';
+import { GasMineRace, SupplyUnitRace, TownhallRace, WorkerRace } from '../../constants/race-map.ts';
 import { structureTypes } from '../../constants/groups.ts';
 import * as UnitType from '../../constants/unit-type.ts';
 import * as Upgrade from '../../constants/upgrade.ts';
@@ -12,26 +13,17 @@ const debugBuildOrder = createDebug('sc2:debug:buildOrder');
 
 type RaceUnits = { worker: number; supply: number; gas: number; townhall: number };
 
-const RACE_UNITS: Record<number, RaceUnits> = {
-    [Race.TERRAN]: {
-        worker: UnitType.SCV,
-        supply: UnitType.SUPPLYDEPOT,
-        gas: UnitType.REFINERY,
-        townhall: UnitType.COMMANDCENTER,
-    },
-    [Race.PROTOSS]: {
-        worker: UnitType.PROBE,
-        supply: UnitType.PYLON,
-        gas: UnitType.ASSIMILATOR,
-        townhall: UnitType.NEXUS,
-    },
-    [Race.ZERG]: {
-        worker: UnitType.DRONE,
-        supply: UnitType.OVERLORD,
-        gas: UnitType.EXTRACTOR,
-        townhall: UnitType.HATCHERY,
-    },
-};
+const RACE_UNIT_TYPES: Record<number, RaceUnits> = Object.fromEntries(
+    [Race.TERRAN, Race.PROTOSS, Race.ZERG].map((race) => [
+        race,
+        {
+            worker: WorkerRace[race],
+            supply: SupplyUnitRace[race],
+            gas: GasMineRace[race],
+            townhall: TownhallRace[race][0],
+        },
+    ]),
+);
 
 const MORPHS: Record<number, number> = {
     [UnitType.LAIR]: Ability.MORPH_LAIR,
@@ -70,7 +62,7 @@ function buildTarget(step: string, name: string): BuildTarget {
 }
 
 function raceUnits(step: string, race: SC2APIProtocol.Race): RaceUnits {
-    return RACE_UNITS[race] ?? fail(step, `no race-specific units for race ${race}`);
+    return RACE_UNIT_TYPES[race] ?? fail(step, `no race-specific units for race ${race}`);
 }
 
 function createTask(step: string, command: string, targets: string[], race: SC2APIProtocol.Race): BuildTaskI {

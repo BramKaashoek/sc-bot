@@ -1,3 +1,4 @@
+import { spend } from '../../agent/macro.ts';
 import { Race } from '../../constants/enums.ts';
 import { Ability } from '../../constants/index.ts';
 import {
@@ -24,29 +25,10 @@ import {
     SUPPLYDEPOT,
     WARPGATE,
 } from '../../constants/unit-type.ts';
-import { structurePending } from './helpers.ts';
+import { GasMineRace, SupplyUnitRace, TownhallRace, TownhallWithFlyingRace } from '../../constants/race-map.ts';
+import { notStarted } from './helpers.ts';
 import type { Behavior, PlacementFlag, Point2D, World } from '../../types.ts';
 
-const SUPPLY_TYPE: Record<number, number> = {
-    [Race.TERRAN]: SUPPLYDEPOT,
-    [Race.PROTOSS]: PYLON,
-    [Race.ZERG]: OVERLORD,
-};
-const GAS_TYPE: Record<number, number> = {
-    [Race.TERRAN]: REFINERY,
-    [Race.PROTOSS]: ASSIMILATOR,
-    [Race.ZERG]: EXTRACTOR,
-};
-const TOWNHALL_TYPE: Record<number, number> = {
-    [Race.TERRAN]: COMMANDCENTER,
-    [Race.PROTOSS]: NEXUS,
-    [Race.ZERG]: HATCHERY,
-};
-const TOWNHALL_TYPES: Record<number, number[]> = {
-    [Race.TERRAN]: [COMMANDCENTER, ORBITALCOMMAND, PLANETARYFORTRESS, COMMANDCENTERFLYING, ORBITALCOMMANDFLYING],
-    [Race.PROTOSS]: [NEXUS],
-    [Race.ZERG]: [HATCHERY, LAIR, HIVE],
-};
 const PRODUCTION_TYPES = [
     BARRACKS,
     FACTORY,
@@ -94,14 +76,11 @@ export function buildStructure({
         execute({ world }) {
             if (isZerg(world)) return false;
             const { buildings } = world.resources.get();
-            const onRoute = buildings
-                .getTracked()
-                .filter(
-                    ({ unitType, status }) =>
-                        unitType === structureType && (status === 'moving' || status === 'ordered'),
-                ).length;
-            if (onRoute >= maxOnRoute) return false;
-            if (toCount > 0 && readyCount(world, [structureType]) + structurePending(world, structureType) >= toCount) {
+            if (notStarted(world, structureType) >= maxOnRoute) return false;
+            if (
+                toCount > 0 &&
+                readyCount(world, [structureType]) + world.agent.alreadyPending(structureType) >= toCount
+            ) {
                 return false;
             }
             if (world.agent.techRequirementProgress(structureType) < techProgressCheck) return false;
@@ -115,7 +94,7 @@ function numSupplyRequired(world: World): number {
     if (agent.supplyCap >= 200) return 0;
 
     const { supplyLeft, supplyUsed } = agent;
-    const townhalls = readyCount(world, TOWNHALL_TYPES[agent.race as number]);
+    const townhalls = readyCount(world, TownhallWithFlyingRace[agent.race as number]);
 
     if (isZerg(world)) {
         const pending = agent.alreadyPending(OVERLORD);
@@ -132,7 +111,7 @@ function numSupplyRequired(world: World): number {
         return 0;
     }
 
-    const pending = structurePending(world, SUPPLY_TYPE[agent.race as number]);
+    const pending = world.agent.alreadyPending(SupplyUnitRace[agent.race as number]);
     const production = readyCount(world, PRODUCTION_TYPES);
     if (supplyLeft <= Math.max(2 * production, 5) && pending < Math.ceil(production / 2)) {
         return Math.min(Math.ceil(production / 2) - pending, 6);
@@ -155,7 +134,7 @@ export function autoSupply({
         async execute(ctx) {
             const { agent } = ctx.world;
             if (numSupplyRequired(ctx.world) <= 0) return false;
-            const structureType = SUPPLY_TYPE[agent.race as number];
+            const structureType = SupplyUnitRace[agent.race as number];
             if (isZerg(ctx.world)) {
                 if (agent.canAfford(structureType) && (await agent.train(structureType, 1)) > 0) return true;
             } else {
@@ -185,9 +164,9 @@ export function expansionController({
         execute({ world }) {
             const { agent } = world;
             const { buildings, map, pathing, placement } = world.resources.get();
-            const townhallType = TOWNHALL_TYPE[agent.race as number];
-            const pending = structurePending(world, townhallType);
-            if (readyCount(world, TOWNHALL_TYPES[agent.race as number]) + pending >= toCount) return false;
+            const townhallType = TownhallRace[agent.race as number]?.[0];
+            const pending = world.agent.alreadyPending(townhallType);
+            if (readyCount(world, TownhallWithFlyingRace[agent.race as number]) + pending >= toCount) return false;
             if (pending >= maxPending) return false;
             if (canAffordCheck && !prioritize && !agent.canAfford(townhallType)) return false;
 
@@ -207,14 +186,8 @@ export function gasBuildingController({ toCount, maxPending = 1 }: { toCount: nu
         name: 'gasBuildingController',
         execute({ world }) {
             const { buildings, units } = world.resources.get();
-            const gasType = GAS_TYPE[world.agent.race as number];
-            const notStarted = buildings
-                .getTracked()
-                .filter(
-                    ({ unitType, structureTag, status }) =>
-                        unitType === gasType && !structureTag && status !== 'done' && status !== 'failed',
-                ).length;
-            if (units.getGasMines().length + notStarted >= toCount) return false;
+            const gasType = GasMineRace[world.agent.race as number];
+            if (units.getGasMines().length + notStarted(world, gasType) >= toCount) return false;
             if (buildings.pending(gasType) >= maxPending || (world.agent.minerals ?? 0) < 35) return false;
             return !!buildings.buildGas({ max: maxPending });
         },
@@ -243,11 +216,7 @@ export function upgradeCCs({
                 cc,
                 to === PLANETARYFORTRESS ? Ability.MORPH_PLANETARYFORTRESS : Ability.MORPH_ORBITALCOMMAND,
             );
-            if (ordered) {
-                const { minerals, vespene } = agent.calculateCost(to);
-                agent.minerals = (agent.minerals ?? 0) - minerals;
-                agent.vespene = (agent.vespene ?? 0) - vespene;
-            }
+            if (ordered) spend(agent, agent.calculateCost(to));
             return ordered;
         },
     };

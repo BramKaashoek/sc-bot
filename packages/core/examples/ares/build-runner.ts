@@ -1,8 +1,10 @@
 import { createAgent, createEngine, createPlayer, createSystem } from '@sc-bot/core';
 import type { World } from '@sc-bot/core';
+import { MORPH_SUPPLYDEPOT_LOWER } from '@sc-bot/core/constants/ability';
 import { WorkerRace } from '@sc-bot/core/constants/race-map';
 import { Difficulty, Race } from '@sc-bot/core/constants/enums';
 import { BUILD_RUNNER_SCOUT } from '@sc-bot/core/constants/unit-role';
+import { SUPPLYDEPOT } from '@sc-bot/core/constants/unit-type';
 import { join } from 'node:path';
 
 const MAP = process.env.MAP ?? 'Melee/Simple64';
@@ -26,7 +28,12 @@ export const createBuildRunner = (race: RaceName) =>
             console.log(`Opening: ${this.getOpening!()}`);
         },
         async onStep({ resources }: World) {
-            const { intel, roles } = resources.get();
+            const { intel, roles, units } = resources.get();
+
+            // ares' build_runner_bot lowers every depot: a raised ramp wall seals the main from builders outside it
+            await Promise.all(
+                units.getById(SUPPLYDEPOT).ready.map((depot) => depot.useAbility(MORPH_SUPPLYDEPOT_LOWER)),
+            );
 
             const scouts = roles.get(BUILD_RUNNER_SCOUT, { types: WorkerRace[RACES[race]] });
             this.setState({ scouts: scouts.map(({ tag }) => tag) });

@@ -2,11 +2,10 @@ import { styleText } from 'node:util';
 import { createSystem, type Unit, type World } from '@sc-bot/core';
 import { UnitTypeId, UpgradeId } from '@sc-bot/core/constants/index';
 import { Alliance } from '@sc-bot/core/constants/enums';
-
-const LOOPS_PER_GAME_SECOND = 22.4;
+import { GAME_LOOPS_PER_SECOND } from '@sc-bot/core/constants/time';
 
 export const formatGameTime = (gameLoop: number) => {
-    const seconds = Math.floor(gameLoop / LOOPS_PER_GAME_SECOND);
+    const seconds = Math.floor(gameLoop / GAME_LOOPS_PER_SECOND);
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 };
 
