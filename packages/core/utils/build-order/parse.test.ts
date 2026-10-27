@@ -119,6 +119,7 @@ describe('parseBuildOrder', () => {
         ['21 addonswap factory', 'ADDONSWAP needs exactly 2 structures'],
         ['21 addonswap factory marine', '"marine" is not a structure'],
         ['18 chrono', 'CHRONO needs a unit type target'],
+        ['16 tempestgroundattackupgrade', 'unknown command "TEMPESTGROUNDATTACKUPGRADE"'],
     ])('throws a NodeSC2Error naming the step for %p', (step, reason) => {
         const parse = () => parseBuildOrder([step], Race.PROTOSS);
         expect(parse).toThrow(NodeSC2Error);

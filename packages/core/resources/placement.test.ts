@@ -250,9 +250,13 @@ describe('placement resource (Terran)', () => {
         expect(placement.canPlace(UnitType.REFINERY, free.pos)).toBe(true);
     });
 
-    it('returns undefined for a Zerg agent', async () => {
-        const world = await solved('blueshift-zerg');
-        expect(world.resources.get().placement.request(UnitType.SPAWNINGPOOL)).toBeUndefined();
+    it('returns undefined for a Zerg agent and ignores add() before and after the solver runs', async () => {
+        const spot = { pos: { x: 30.5, y: 30.5 }, size: '3x3' } as UserPlacement;
+        const world = await solved('blueshift-zerg', { before: (w) => w.resources.get().placement.add([spot]) });
+        const { placement } = world.resources.get();
+        expect(placement.request(UnitType.SPAWNINGPOOL)).toBeUndefined();
+        expect(() => placement.add([spot])).not.toThrow();
+        expect(placement.getPlacements()).toEqual([]);
     });
 
     it('keeps configured settings across a reset but drops spots and reservations', async () => {

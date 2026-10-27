@@ -111,6 +111,11 @@ export const openingsResource: ResourceDefinition<'openings'> = {
             inReplay: false,
         };
 
+        const loadHistory = () => {
+            const { dataDir } = state.settings;
+            if (dataDir !== undefined) state.history = readHistory(historyPath(world, dataDir));
+        };
+
         const openings: OpeningsResource = {
             configure(next) {
                 Object.assign(state.settings, next);
@@ -122,19 +127,24 @@ export const openingsResource: ResourceDefinition<'openings'> = {
                 if (state.decided) return state.chosen;
                 state.decided = true;
 
-                const { choices, dataDir, method, minGames } = state.settings;
+                const { choices, method, minGames } = state.settings;
                 const { opponent } = world.agent;
                 const listed =
                     (opponent?.id !== undefined && choices[opponent.id]) || choices[raceName(opponent?.race)];
                 const cycle = (listed ?? available).filter((name) => available.includes(name));
                 if (cycle.length === 0) return undefined;
 
-                if (dataDir !== undefined) state.history = readHistory(historyPath(world, dataDir));
+                loadHistory();
                 state.chosen =
                     method === 'winrate'
                         ? chooseWinrate(cycle, state.history, minGames)
                         : chooseCycle(cycle, state.history);
                 return state.chosen;
+            },
+            record(name) {
+                if (!state.decided) loadHistory();
+                state.decided = true;
+                state.chosen = name;
             },
             getChosen() {
                 return state.chosen;

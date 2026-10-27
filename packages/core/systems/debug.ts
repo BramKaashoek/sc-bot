@@ -4,7 +4,6 @@ import type { Earmark } from '../types.ts';
 import { Color, UnitTypeId, enums } from '../constants/index.ts';
 
 const { Alliance, AllianceId } = enums;
-const debugDebug = createDebug('sc2:debug:DebugSystem');
 const debugOnScreen = createDebug('sc2:DebugOnScreen');
 
 export default () =>
@@ -13,7 +12,6 @@ export default () =>
         type: 'engine',
         defaultOptions: {
             state: {
-                debug: debugDebug.enabled,
                 unitsLost: {},
                 debugOnScreen: debugOnScreen.enabled,
             },
@@ -49,12 +47,13 @@ export default () =>
                     (totalUnits, u) => {
                         const isWorker = u.isWorker();
 
-                        const isUnit =
-                            u.isCombatUnit() ||
-                            u.data().foodRequired! > 0 ||
-                            (u.data().foodProvided! > 0 && u.canMove());
+                        const typeData = u.typeData(u.unitType!);
+                        const foodRequired = typeData?.foodRequired ?? 0;
+                        const foodProvided = typeData?.foodProvided ?? 0;
 
-                        const isStructure = u.data().foodRequired! <= 0 && u.isStructure();
+                        const isUnit = u.isCombatUnit() || foodRequired > 0 || (foodProvided > 0 && u.canMove());
+
+                        const isStructure = foodRequired <= 0 && u.isStructure();
 
                         if (isWorker) {
                             if (totalUnits.Workers[u.unitType!]) {
@@ -135,12 +134,10 @@ export default () =>
                 ]);
             }
 
-            if (this.state.debug) {
-                if (debug.touched) {
-                    await debug.updateScreen();
-                }
-
-                debug.touched = false;
+            if (debug.touched) {
+                await debug.updateScreen();
             }
+
+            debug.touched = false;
         },
     });

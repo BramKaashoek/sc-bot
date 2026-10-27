@@ -4,7 +4,7 @@ import { Race } from '../constants/enums.ts';
 import { flyingStructureTypes, gasMineTypes } from '../constants/groups.ts';
 import * as UnitType from '../constants/unit-type.ts';
 import { distance, distanceSquared, towards } from '../utils/geometry/point.ts';
-import { getFootprint } from '../utils/geometry/units.ts';
+import { footprintData, getFootprint } from '../utils/geometry/units.ts';
 import { isFlying } from './units-collection.ts';
 import {
     type BuildingScan,
@@ -93,10 +93,6 @@ function attempt<T>(read: () => T): T | undefined {
         debugPlacement(`skipping a map lookup that threw: ${(error as Error).message}`);
         return undefined;
     }
-}
-
-function footprintData(world: World) {
-    return { units: world.data.get('units'), abilities: world.data.get('abilities') };
 }
 
 function sizeOf(world: World, unitType: number): BuildingSize | undefined {
@@ -592,7 +588,11 @@ export const placementResource: ResourceDefinition<'placement'> = {
                     state.pending.push(...placements);
                     return;
                 }
-                refreshLive(world, state.grids!);
+                if (!state.grids) {
+                    debugPlacement('ignoring add(): placement has no grids for this race');
+                    return;
+                }
+                refreshLive(world, state.grids);
                 addUserPlacements(world, state, placements);
             },
             configure(settings) {

@@ -3,9 +3,8 @@ import createDebug from 'debug';
 import { enums, Color } from '../constants/index.ts';
 import { add, distance, avgPoints, closestPoint, areEqual } from '../utils/geometry/point.ts';
 import { gridsInCircle } from '../utils/geometry/angle.ts';
-import { cellsInFootprint } from '../utils/geometry/plane.ts';
 import { gasMineTypes } from '../constants/groups.ts';
-import { getFootprint } from '../utils/geometry/units.ts';
+import { footprintCells } from '../utils/geometry/units.ts';
 import { createStartGrids, findRampsAndVisionBlockers } from '../utils/map/ramp.ts';
 import { findExpansionLocations } from '../utils/map/expansion-locations.ts';
 import type { Ramp, StartGrids } from '../utils/map/ramp.ts';
@@ -95,8 +94,6 @@ function createMapManager(world: World): MapManager {
         setPlaceable(p, placeable = true) {
             const point = createPoint2D(p);
             this._grids.placement![point.y][point.x] = placeable ? 1 : 0;
-            this._graph.setWalkableAt(p.x, p.y, placeable);
-            determinedPaths = [];
         },
         isVisible(p) {
             const point = createPoint2D(p);
@@ -398,11 +395,7 @@ function createMapManager(world: World): MapManager {
             this._ramps = ramps;
         },
         isPlaceableAt(unitType, pos, opts: MapPathOptions = {}) {
-            const footprint = getFootprint(unitType, {
-                units: world.data.get('units'),
-                abilities: world.data.get('abilities'),
-            });
-            const shapePoints = cellsInFootprint(pos, footprint!);
+            const shapePoints = footprintCells(world, unitType, pos);
 
             if (opts.graph) {
                 return shapePoints.every((point) => opts.graph.isWalkableAt(point.x, point.y));

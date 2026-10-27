@@ -55,4 +55,29 @@ describe('frame system', () => {
             clockSpy.mockRestore();
         }
     });
+
+    it("replaces a stuck worker's command label with 'stuck' and keeps its other labels, dropping 'stuck' once idle", async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { units } = world.resources.get();
+        const [worker] = units.getWorkers();
+        worker.addLabel('command', 896);
+        worker.addLabel('mineralPatch', 'a');
+
+        const later = structuredClone(world.client.fixture.observations[896]);
+        later.observation!.gameLoop = 896 + 251;
+        await stepTo(world, later);
+
+        const stuck = world.resources.get().units.getByTag(worker.tag)!;
+        expect([...stuck.labels.entries()]).toEqual([
+            ['mineralPatch', 'a'],
+            ['stuck', true],
+        ]);
+
+        later.observation!.gameLoop += 1;
+        later.observation!.rawData!.units!.find((unit) => unit.tag === worker.tag)!.orders = [];
+        await stepTo(world, later);
+        await stepTo(world, later);
+
+        expect([...stuck.labels.keys()]).toEqual(['mineralPatch']);
+    });
 });

@@ -137,6 +137,56 @@ Please note, this project adheres to [Semantic Versioning](https://semver.org/sp
 - Optional: pass `{ workersPerGas }` to `distributeWorkers` for a mineral-heavy split.
 - A `configure()` call made once after `createEngine` is overridden by the config file's section from the second game on; call it from `setup` or `onGameStart`.
 
+### Phase 5: behaviors and macro controllers
+
+#### Added
+- `behaviors` resource: `run(behavior, { role?, priority? })` executes a behavior at once, in the caller's commander context, as a role (`role:<ROLE>`) or at a priority. `ctx.order` allows one non-queued order per unit per game loop per owner.
+- `@sc-bot/core/behaviors` subpath with `plan(...behaviors)` (first behavior to return `true` wins; synchronous and asynchronous mixed).
+- Combat helpers: `attackReady`, `inAttackRange`, `pickEnemyTarget`, `duplicateOrSimilarOrder`, `groupWeaponsOnCooldown`, `center`, `towards`.
+- Individual combat behaviors: `aMove`, `attackTarget`, `shootTargetInRange`, `useAbility`, `stutterUnitForward`, `stutterUnitBack`, `keepUnitSafe`, `pathUnitToTarget`, `moveToSafeTarget`, `shootAndMoveToTarget`, `workerKiteBack`.
+- Terran behaviors: `medivacHeal`, `pickUpCargo`, `dropCargo`, `pickUpAndDropCargo`, `siegeTankDecision`.
+- Group behaviors: `aMoveGroup`, `keepGroupSafe`, `pathGroupToTarget`, `stutterGroupBack`, `stutterGroupForward`, `groupUseAbility`.
+- Macro controllers: `spawnController`, `buildWorkers`, `buildStructure`, `autoSupply`, `expansionController`, `gasBuildingController`, `upgradeCCs`, `techUp`, `upgradeController`, `productionController`, with the helpers `ownUnitCount` and `structurePending`.
+- `examples/behaviors-bot.ts`: a Terran bio bot made only of controllers and behaviors.
+- Types: `Behavior`, `BehaviorContext`, `BehaviorsResource`, `ArmyComposition`.
+
+#### Changed
+- The agent's default `interface` now has `score: true` (it was `{ raw: true, rawCropToPlayableArea: true }`), so `frame.getScore()` is available out of the box; `productionController` reads it. An agent that passes its own `interface` has to add `score: true` itself.
+
+#### Migrating bot/
+- Nothing breaks; the behaviors are additive and opt-in. Import factories from `@sc-bot/core/behaviors`.
+- Optional: replace per-unit micro in the combat systems with behaviors run under `behaviors.run(behavior, { role: ATTACKING })`.
+- Optional: replace hand-rolled supply, production, expansion, gas and upgrade code with a macro `plan` of controllers run each step.
+- Enable mining (`mining.configure({ enabled: true })`) so the controllers' builds get their workers through `mining.selectWorker`; controllers that build go through the `buildings` tracker.
+- If the bot passes its own `interface` to `createAgent` and uses `productionController`, add `score: true`.
+
+### Phase 6b: build runner upgrades
+
+#### Added
+- String build steps in a build system's `buildOrder`, in ares' format `'<supply> <command> [@target] [x<n>]'`, mixed freely with `[supply, task]` pairs and task objects: unit types, upgrades, and the options `WORKER`, `SUPPLY`, `GAS`, `EXPAND`, `GATE`, `CORE`, `ORBITAL`, `CANCEL_GAS`, `CHRONO`, `WORKER_SCOUT`, `OVERLORD_SCOUT` and `ADDONSWAP`. An object step (`{ '17 worker_scout': ['enemy_nat'] }`) gives a scout its waypoints. A bad step throws `NodeSC2Error` naming it, at game start.
+- `parseBuildOrder(steps, race)`, exported from the package root.
+- Build targets (`@sc-bot/core/constants/build-target`): `RAMP`, `NAT_WALL`, `REAPER_WALL`, `SUPPLY`, `PRODUCTION`, `UPGRADE`, `BUNKER`, your bases (`SPAWN`, `NAT`, `THIRD` to `SIXTH`), enemy bases (`ENEMY_SPAWN`, `ENEMY_NAT`, `ENEMY_THIRD`, `ENEMY_FOURTH`), `ENEMY_RAMP`, `ENEMY_NAT_VISION` and `MAP_CENTER`. Own-side targets use the placement solver, proxies use `actions.findPlacement` near the point.
+- Task functions `taskFunctions.scout(kind, waypoints?)` and `taskFunctions.addonSwap(host, addon)`, and `opts.at` on `build` and `train` tasks (`train` uses the producer closest to the target).
+- Worker and overlord scouts: the worker takes the role `BUILD_RUNNER_SCOUT` (through `mining.selectWorker` when mining is on) and keeps it.
+- `buildOptions.fillWorkers` on a build system (default `true`): `false` is ares' supply-gate mode, with no worker insertion and each step waiting for its supply.
+- Openings: a build system takes `openings` (named definitions or `'config'`) and `opening` (a name or a function), with `switchOpening(name, { removeCompleted })` and `getOpening()`. Options per opening: `constantWorkerProductionTill`, `autoSupplyAtSupply` and `persistentWorker` (a `PERSISTENT_BUILDER` worker for the opening's builds).
+- `openings` resource: definitions and settings (`builds`, `choices`, `method` `'cycle'` or `'winrate'`, `minGames`, `dataDir`), `choose`, `getChosen`, `getHistory`, `getDefinitions`, `configure`. Settings come from the config file's `resources.openings`. With `dataDir` set, each game is appended to `<dataDir>/<opponent id or 'unknown'>-<race>.json` in ares' format, so an ares `data/` folder is reused. `openings.record` is for the runner and must not be called from a bot.
+- `onGameEnd(resource, world, results)` on resource definitions and `world.resources.endGame(world, results)`: hooks run synchronously in registration order before the engine's own `onGameEnd`, and a throwing hook doesn't stop the next.
+- Types: `BuildTarget`, `BuildOrderStep`, `BuildTaskOptions`, `OpeningDefinition`, `OpeningSettings`, `OpeningRecord`, `OpeningsResource`.
+
+#### Changed
+- `buildOrder` accepts strings and objects besides tasks and pairs. A build order without them behaves exactly as before.
+- `SystemObject.buildOptions` has the optional `fillWorkers`, and a new game resets it with `paused` and `earmarks`.
+- `ResourceDefinition` has an optional `onGameEnd`, and `ResourceManager` has `endGame`.
+- A game that crashes or loses its connection doesn't call resource game-end hooks (no opening history is written for it), the same as `createEngine`'s `onGameEnd`.
+
+#### Migrating bot/
+- Nothing breaks; every addition is opt-in and tuple build orders run as before.
+- Optional: write the build arrays as strings (`'14 supply @ramp'`), and replace hand-placed ramp walls with the `@ramp` target.
+- Optional: move builds into `openings` on the build system, or into `sc-bot.config.json` under `resources.openings` with `openings: 'config'`; set `dataDir` to choose per opponent from history; call `switchOpening` on scouting results.
+- Don't call `openings.record`.
+- Ares openings that use `tempestgroundattackupgrade` don't parse: that upgrade isn't in the game data.
+
 ## v0.8.2 - 2019-01-11
 ## Highlights:
 Another small patch to get out some more important fixes:

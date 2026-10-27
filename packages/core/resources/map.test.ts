@@ -309,7 +309,7 @@ describe('MapResource', () => {
         expect(byPosition(map.getVisionBlockers())).toEqual(VISION_BLOCKERS.map(([x, y]) => ({ x, y })));
     });
 
-    it('reads terrain height, z-height, pathing and placement at the floored cell of a point, with watchtowers and unbuildable rocks unplaceable', async () => {
+    it('reads terrain height, z-height, pathing and placement at the floored cell of a point, with watchtowers unpathable and unbuildable rocks walkable but unplaceable', async () => {
         const world = await createTestWorld('blueshift');
         const { map } = world.resources.get();
         const commandCenter = { x: 15.5, y: 15.5 };
@@ -335,7 +335,7 @@ describe('MapResource', () => {
             [223, -16 + (32 * 223) / 255, true, false, 12, true, false],
             [207, -16 + (32 * 207) / 255, true, true, 10, true, true],
             [127, -16 + (32 * 127) / 255, false, false, 0, false, false],
-            [207, -16 + (32 * 207) / 255, true, true, 10, true, false],
+            [207, -16 + (32 * 207) / 255, true, true, 10, false, false],
             [207, -16 + (32 * 207) / 255, true, true, 10, true, false],
         ]);
     });

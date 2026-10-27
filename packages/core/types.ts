@@ -1180,6 +1180,7 @@ export interface OpeningsResource {
     configure(settings: Partial<OpeningSettings>): void;
     getDefinitions(): Readonly<Record<string, OpeningDefinition>>;
     choose(available?: string[]): string | undefined;
+    record(name: string): void;
     getChosen(): string | undefined;
     getHistory(): readonly OpeningRecord[];
 }

@@ -1,0 +1,100 @@
+{
+    "resources": {
+        "openings": {
+            "method": "winrate",
+            "minGames": 3,
+            "choices": {
+                "Protoss": ["BroRush", "OneBaseMuta", "RavagerRush", "LingDroneRush", "Ultras"],
+                "Random": ["BroRush", "OneBaseMuta", "RavagerRush", "LingDroneRush", "Ultras"],
+                "Terran": ["BroRush", "OneBaseMuta", "RavagerRush", "LingDroneRush", "Ultras"],
+                "Zerg": ["BroRush", "OneBaseMuta", "RavagerRush", "LingDroneRush", "Ultras"]
+            },
+            "builds": {
+                "OneBaseMuta": {
+                    "constantWorkerProductionTill": 0,
+                    "buildOrder": [
+                        "12 gas",
+                        "11 drone",
+                        "12 spawningpool",
+                        "11 drone",
+                        "12 drone",
+                        "13 drone",
+                        "14 overlord",
+                        "14 gas",
+                        "13 drone",
+                        "12 lair",
+                        "12 drone *5",
+                        "12 drone",
+                        "12 spire",
+                        "12 queen",
+                        "12 spinecrawler",
+                        "12 drone",
+                        "12 overlord *2"
+                    ]
+                },
+                "BroRush": {
+                    "constantWorkerProductionTill": 0,
+                    "buildOrder": [
+                        "12 drone",
+                        "13 drone",
+                        "14 spawningpool",
+                        "13 gas",
+                        "12 drone",
+                        "13 drone",
+                        "14 overlord",
+                        "14 drone",
+                        "15 roachwarren",
+                        "14 queen",
+                        "14 drone",
+                        "15 drone",
+                        "15 overlord"
+                    ]
+                },
+                "LingDroneRush": {
+                    "constantWorkerProductionTill": 0,
+                    "buildOrder": ["12 spawningpool", "11 drone *3", "12 overlord"]
+                },
+                "ProxyHatch": {
+                    "constantWorkerProductionTill": 0,
+                    "buildOrder": ["12 drone", "13 overlord", "13 drone *3"]
+                },
+                "RavagerRush": {
+                    "constantWorkerProductionTill": 0,
+                    "buildOrder": [
+                        "12 drone *2",
+                        "14 spawningpool",
+                        "13 drone",
+                        "14 gas",
+                        "13 drone",
+                        "14 overlord",
+                        "14 gas",
+                        "13 drone *2",
+                        "14 roachwarren",
+                        "14 drone",
+                        "14 overlord",
+                        "14 roach *4"
+                    ]
+                },
+                "Ultras": {
+                    "constantWorkerProductionTill": 0,
+                    "buildOrder": [
+                        "12 drone",
+                        "13 overlord",
+                        "13 drone *4",
+                        "16 expand",
+                        "15 drone *2",
+                        "14 expand",
+                        "14 drone *2",
+                        "13 spawningpool",
+                        "14 drone *4",
+                        "14 overlord",
+                        "14 drone *2",
+                        "14 queen *2",
+                        "14 drone *2",
+                        "14 queen"
+                    ]
+                }
+            }
+        }
+    }
+}

@@ -206,6 +206,13 @@ describe('createUnit', () => {
         ).toEqual([true, false]);
     });
 
+    it('treats a unit of a type missing from game data as not a structure', async () => {
+        const unknown = rawUnit({ unitType: 99999 });
+        const world = await worldWith({ units: [unknown] });
+
+        expect(unitOf(world, unknown).isStructure()).toBe(false);
+    });
+
     it('classifies rich gas mines and every mineral field variant as resource buildings', async () => {
         const gasTypes = [
             UnitType.REFINERY,

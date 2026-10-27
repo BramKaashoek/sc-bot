@@ -7,16 +7,30 @@ import { consumeRawGrids, consumeImageData } from '../utils/map/grid.ts';
 import { createClusters as findClusters } from '../utils/map/cluster.ts';
 import createExpansion from '../engine/create-expansion.ts';
 import floodFill from '../utils/map/flood.ts';
-import { distanceAAShapeAndPoint, cellsInFootprint } from '../utils/geometry/plane.ts';
+import { distanceAAShapeAndPoint } from '../utils/geometry/plane.ts';
 import { distance, avgPoints, areEqual, closestPoint, createPoint2D, getNeighbors } from '../utils/geometry/point.ts';
 import { frontOfGrid } from '../utils/map/region.ts';
 import { gridsInCircle } from '../utils/geometry/angle.ts';
-import { MineralField, VespeneGeyser, Townhall, getFootprint } from '../utils/geometry/units.ts';
+import {
+    MineralField,
+    VespeneGeyser,
+    Townhall,
+    footprintData,
+    footprintCells,
+    pathingCells,
+    getFootprint,
+} from '../utils/geometry/units.ts';
 import { Alliance } from '../constants/enums.ts';
 import Color from '../constants/color.ts';
 import { UnitType, UnitTypeId } from '../constants/index.ts';
-import { flyingStructureTypes, vespeneGeyserTypes, mineralFieldTypes, townhallTypes } from '../constants/groups.ts';
-import type { Expansion, Grid2D, MapSystem, Point2D, WPoint, World } from '../types.ts';
+import {
+    flyingStructureTypes,
+    vespeneGeyserTypes,
+    mineralFieldTypes,
+    townhallTypes,
+    unbuildablePlateTypes,
+} from '../constants/groups.ts';
+import type { Expansion, Grid2D, MapResource, MapSystem, Point2D, Unit, WPoint, World } from '../types.ts';
 
 const debugDrawPlacement = createDebug('sc2:DrawPlacementMap');
 const debugDrawMap = createDebug('sc2:DrawDebugMap');
@@ -26,13 +40,107 @@ const silly = createDebug('sc2:silly:MapSystem');
 
 type PointCluster = Point2D[] & { centroid?: Point2D };
 
-const footprintData = (world: World) => ({ units: world.data.get('units'), abilities: world.data.get('abilities') });
+type BlockedStructure = { unitType: number; pos: Point2D };
 
-// SC2's pathing grid leaves a townhall's four corner cells pathable, and mining workers walk through them
-function pathingCells(unitType: number, pos: Point2D, cells: Point2D[]) {
-    if (!townhallTypes.includes(unitType)) return cells;
-    return cells.filter(({ x, y }) => Math.abs(x + 0.5 - pos.x) < 2 || Math.abs(y + 0.5 - pos.y) < 2);
+// mapSystem is a shared module object, so per-game state is keyed by world
+const blockedEnemyStructures = new WeakMap<World, Map<string, BlockedStructure>>();
+
+function enemyBlocks(world: World) {
+    let blocked = blockedEnemyStructures.get(world);
+    if (!blocked) {
+        blocked = new Map();
+        blockedEnemyStructures.set(world, blocked);
+    }
+    return blocked;
 }
+
+const cellKey = ({ x, y }: Point2D) => `${x},${y}`;
+
+function blockStructure(world: World, unitType: number, pos: Point2D) {
+    const { map } = world.resources.get();
+    footprintCells(world, unitType, pos).forEach((cell) => map.setPlaceable(cell, false));
+    pathingCells(world, unitType, pos).forEach((cell) => map.setPathable(cell, false));
+}
+
+// own and enemy footprints can overlap through a stale enemy record, so a cell another structure still covers stays blocked
+function releaseStructure(world: World, tag: string, unitType: number, pos: Point2D, { placement = true } = {}) {
+    const { map, units } = world.resources.get();
+    const heldPlacement = new Set<string>();
+    const heldPathing = new Set<string>();
+    const hold = (heldType: number, heldPos: Point2D) => {
+        // footprints are at most 5x5, so farther centres can't share a cell
+        if (Math.abs(heldPos.x - pos.x) >= 5 || Math.abs(heldPos.y - pos.y) >= 5) return;
+        footprintCells(world, heldType, heldPos).forEach((cell) => heldPlacement.add(cellKey(cell)));
+        pathingCells(world, heldType, heldPos).forEach((cell) => heldPathing.add(cellKey(cell)));
+    };
+    enemyBlocks(world).forEach((other, otherTag) => otherTag !== tag && hold(other.unitType, other.pos));
+    units
+        .getAlive(Alliance.SELF)
+        .filter(
+            (own) =>
+                own.tag !== tag &&
+                own.isStructure() &&
+                !own.isGasMine() &&
+                !flyingStructureTypes.includes(own.unitType!),
+        )
+        .forEach((own) => hold(own.unitType!, own.pos));
+
+    if (placement) {
+        footprintCells(world, unitType, pos)
+            .filter((cell) => !heldPlacement.has(cellKey(cell)))
+            .forEach((cell) => map.setPlaceable(cell, true));
+    }
+    pathingCells(world, unitType, pos)
+        .filter((cell) => !heldPathing.has(cellKey(cell)))
+        .forEach((cell) => map.setPathable(cell, true));
+}
+
+// unitCreated and unitTypeChanged are own-only, so enemy structures are diffed against what was blocked for them
+function reconcileEnemyStructures(world: World) {
+    const { units, map } = world.resources.get();
+    const blocked = enemyBlocks(world);
+    const inSight = new Set<string>();
+
+    // getStructures throws on unknown types; isStructure doesn't
+    for (const structure of units.getAlive(Alliance.ENEMY)) {
+        if (!structure.isStructure() || structure.isGasMine()) continue;
+        const { tag, unitType, pos } = structure;
+        inSight.add(tag!);
+
+        const record = blocked.get(tag!);
+        if (record && record.unitType === unitType && areEqual(record.pos, pos)) continue;
+
+        if (record) {
+            blocked.delete(tag!);
+            releaseStructure(world, tag!, record.unitType, record.pos);
+        }
+
+        if (flyingStructureTypes.includes(unitType!) || !getFootprint(unitType!, footprintData(world))) continue;
+
+        blocked.set(tag!, { unitType: unitType!, pos: { x: pos.x, y: pos.y } });
+        blockStructure(world, unitType!, pos);
+    }
+
+    for (const [tag, record] of blocked) {
+        if (inSight.has(tag) || !map.isVisible(record.pos)) continue;
+        blocked.delete(tag);
+        releaseStructure(world, tag, record.unitType, record.pos);
+    }
+}
+
+function assignBase(map: MapResource, townhall: Unit) {
+    const expansion = map.getExpansions().find((candidate) => {
+        return areEqual(candidate.townhallPosition, map.getClosestExpansion(townhall.pos).townhallPosition);
+    });
+
+    // allow for misplaced townhalls, but not macro hatches
+    if (expansion && distance(expansion.townhallPosition, townhall.pos) < 4.5) {
+        expansion.base = townhall.tag;
+    }
+}
+
+// live SC2 lets ground units cross unbuildable rocks, bricks and plates, but not rocks, debris or Xel'Naga towers
+const walkableBlockerTypes = [...unbuildablePlateTypes, UnitType.UNBUILDABLEROCKSDESTRUCTIBLE];
 
 const placementBlockers = (world: World) => {
     const { units } = world.resources.get();
@@ -133,12 +241,8 @@ function calculateWall(world: World, expansion: Expansion) {
     const hull = expansion.areas!.hull;
     const foeHull = frontOfGrid(world, hull);
 
-    // @FIXME: this is duplicated logic and can prolly be consolidated
     const cellsBlockedByUnbuildableUnit = flat(
-        placementBlockers(world).map((plate) => {
-            const footprint = getFootprint(plate.unitType!, footprintData(world))!;
-            return cellsInFootprint(createPoint2D(plate.pos), footprint);
-        }),
+        placementBlockers(world).map((plate) => footprintCells(world, plate.unitType!, plate.pos)),
     );
 
     function findAllPossibleWalls(rampDesired = true): Point2D[][] {
@@ -366,27 +470,26 @@ const mapSystem: MapSystem = {
         const fields = units.getByType(mineralFieldTypes);
 
         [...geysers, ...fields].forEach((blocker) => {
-            const footprint = getFootprint(blocker.unitType!, footprintData(world))!;
-            const blockedCells = cellsInFootprint(createPoint2D(blocker.pos), footprint);
-
-            blockedCells.forEach((cell) => {
+            footprintCells(world, blocker.unitType!, blocker.pos).forEach((cell) => {
                 map.setPlaceable(cell, false);
                 map.setPathable(cell, false);
             });
         });
 
-        placementBlockers(world).forEach((plate) => {
-            const footprint = getFootprint(plate.unitType!, footprintData(world))!;
-            const blockedCells = cellsInFootprint(createPoint2D(plate.pos), footprint);
-
-            blockedCells.forEach((cell) => map.setPlaceable(cell, false));
+        // the start pathing grid leaves rocks and towers walkable
+        placementBlockers(world).forEach((blocker) => {
+            const cells = footprintCells(world, blocker.unitType!, blocker.pos);
+            cells.forEach((cell) => map.setPlaceable(cell, false));
+            if (!walkableBlockerTypes.includes(blocker.unitType!))
+                cells.forEach((cell) => map.setPathable(cell, false));
         });
 
         calculateExpansions(world);
         const natural = map.getNatural();
         if (natural) calculateWall(world, natural);
     },
-    async onStep({ data, resources }) {
+    async onStep(world) {
+        const { data, resources } = world;
         const { frame, map, events, debug } = resources.get();
         const newMapState = frame.getMapState();
         const mapState = {
@@ -395,6 +498,8 @@ const mapSystem: MapSystem = {
         };
 
         map.setMapState(mapState);
+        reconcileEnemyStructures(world);
+
         const currEffectData = map.getEffects();
         const newEffectData = frame.getEffects();
 
@@ -475,15 +580,7 @@ const mapSystem: MapSystem = {
     async onUnitCreated(world, newUnit) {
         const { map, frame } = world.resources.get();
 
-        if (newUnit.isStructure()) {
-            const { pos } = newUnit;
-            const footprint = getFootprint(newUnit.unitType!, footprintData(world))!;
-
-            const blockedCells = cellsInFootprint(createPoint2D(pos), footprint);
-
-            blockedCells.forEach((cell) => map.setPlaceable(cell, false));
-            pathingCells(newUnit.unitType!, pos, blockedCells).forEach((cell) => map.setPathable(cell, false));
-        }
+        if (newUnit.isStructure()) blockStructure(world, newUnit.unitType!, newUnit.pos);
 
         if (newUnit.isTownhall()) {
             debugDebug(`new townhall detected: ${UnitTypeId[newUnit.unitType!]}`);
@@ -491,55 +588,48 @@ const mapSystem: MapSystem = {
             // @TODO: this should happen on frame 1, so we can re-sync to existing games
             if (frame.getGameLoop() <= 8) return;
 
-            const newExpansion = map.getExpansions().find((expansion) => {
-                return areEqual(expansion.townhallPosition, map.getClosestExpansion(newUnit.pos).townhallPosition);
-            });
-
-            // allow for misplaced townhalls, but not macro hatches
-            if (newExpansion && distance(newExpansion.townhallPosition, newUnit.pos) < 4.5) {
-                newExpansion.base = newUnit.tag;
-            }
+            assignBase(map, newUnit);
         }
     },
     async onUnitDestroyed(world, deadUnit) {
-        const { map } = world.resources.get();
+        if (deadUnit.alliance === Alliance.ENEMY) {
+            const record = enemyBlocks(world).get(deadUnit.tag!);
+            if (!record) return;
+
+            enemyBlocks(world).delete(deadUnit.tag!);
+            releaseStructure(world, deadUnit.tag!, record.unitType, record.pos);
+            return;
+        }
 
         if (deadUnit.isStructure() && !deadUnit.isGasMine()) {
-            const { pos } = deadUnit;
-            const footprint = getFootprint(deadUnit.unitType!, footprintData(world))!;
-
-            const freedCells = cellsInFootprint(createPoint2D(pos), footprint);
-
-            freedCells.forEach((cell) => map.setPlaceable(cell, true));
-            pathingCells(deadUnit.unitType!, pos, freedCells).forEach((cell) => map.setPathable(cell, true));
+            releaseStructure(world, deadUnit.tag!, deadUnit.unitType!, deadUnit.pos);
         }
     },
     async onUnitTypeChanged(world, { unit, previousType }) {
         const wasFlying = flyingStructureTypes.includes(previousType);
         const isFlying = flyingStructureTypes.includes(unit.unitType!);
-        if (wasFlying === isFlying) return;
-
         const { map } = world.resources.get();
-        const groundType = isFlying ? previousType : unit.unitType!;
-        const footprint = getFootprint(groundType, footprintData(world))!;
-        const cells = cellsInFootprint(createPoint2D(unit.pos), footprint);
 
-        cells.forEach((cell) => map.setPlaceable(cell, isFlying));
-        pathingCells(groundType, unit.pos, cells).forEach((cell) => map.setPathable(cell, isFlying));
+        if (wasFlying === isFlying) {
+            if (isFlying || !unit.isStructure()) return;
+
+            releaseStructure(world, unit.tag!, previousType, unit.pos, { placement: false });
+            pathingCells(world, unit.unitType!, unit.pos).forEach((cell) => map.setPathable(cell, false));
+            return;
+        }
+
+        if (isFlying) {
+            releaseStructure(world, unit.tag!, previousType, unit.pos);
+        } else {
+            blockStructure(world, unit.unitType!, unit.pos);
+        }
     },
     async onEnemyFirstSeen({ resources }, scoutedUnit) {
         const { map } = resources.get();
 
         if (!scoutedUnit.isTownhall()) return;
 
-        const enemyExpansion = map.getExpansions().find((expansion) => {
-            return areEqual(expansion.townhallPosition, map.getClosestExpansion(scoutedUnit.pos).townhallPosition);
-        });
-
-        // allow for misplaced townhalls, but not macro hatches
-        if (enemyExpansion && distance(enemyExpansion.townhallPosition, scoutedUnit.pos) < 4.5) {
-            enemyExpansion.base = scoutedUnit.tag;
-        }
+        assignBase(map, scoutedUnit);
     },
 };
 

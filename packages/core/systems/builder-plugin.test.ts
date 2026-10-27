@@ -1,17 +1,26 @@
 import { describe, expect, it, spyOn } from 'bun:test';
-import { Ability, UnitType } from '../constants/index.ts';
+import { Ability, UnitType, Upgrade } from '../constants/index.ts';
 import { ENEMY_NAT_VISION, ENEMY_SPAWN, NAT } from '../constants/build-target.ts';
 import { CARRYMINERALFIELDMINERALS } from '../constants/buff.ts';
 import { BuildOrder, BuildResult, Race } from '../constants/enums.ts';
-import { BUILD_RUNNER_SCOUT } from '../constants/unit-role.ts';
+import { BASE_DEFENDER, BUILD_RUNNER_SCOUT, GATHERING, PERSISTENT_BUILDER } from '../constants/unit-role.ts';
 import createAgent from '../agent/create-agent.ts';
 import { createTestWorld, stepTo } from '../test/create-test-world.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
 import { rawUnit } from '../test/factories.ts';
 import { resolveTarget, scoutWaypoints } from '../utils/build-order/targets.ts';
+import { NodeSC2Error } from '../engine/errors.ts';
 import { builderPlugin, taskFunctions } from './builder-plugin.ts';
 import createSystem from './create-system.ts';
-import type { BuildOrderStep, BuildTaskI, CommandResult, EventReader, System, World } from '../types.ts';
+import type {
+    BuildOrderStep,
+    BuildTaskI,
+    CommandResult,
+    EventReader,
+    OpeningDefinition,
+    System,
+    World,
+} from '../types.ts';
 
 const BARRACKS_TAGS = ['4352638978', '4350541825'];
 const REFINERY_TAG = '4351590401';
@@ -71,7 +80,7 @@ function buildSystem(buildOrder: System['buildOrder'], buildOptions?: System['bu
 }
 
 describe('builderPlugin', () => {
-    it('parses string steps, then fills supply gaps with worker tasks, counting a train task with several unit types at the supply of the costliest and a plain task at the running supply', async () => {
+    it('parses string steps mixed in any order with plain tasks and pairs, then fills supply gaps with worker tasks, counting a plain task at the running supply and a train task with several unit types at the supply of the costliest', async () => {
         const world = await createTestWorld('blueshift');
         const { train, build } = taskFunctions;
         const system = {
@@ -79,7 +88,7 @@ describe('builderPlugin', () => {
             setState(this: { state: object }, newState: object) {
                 this.state = { ...this.state, ...newState };
             },
-            buildOrder: [[12, train([UnitType.MARINE, UnitType.MARAUDER])], build(UnitType.BARRACKS), '15 supply'],
+            buildOrder: [build(UnitType.BARRACKS), [12, train([UnitType.MARINE, UnitType.MARAUDER])], '15 supply'],
         } as unknown as EventReader<System>;
         builderPlugin(system);
 
@@ -88,16 +97,16 @@ describe('builderPlugin', () => {
         const [buildOrderKey] = Object.getOwnPropertySymbols(system.state);
         const runtime = { touched: false, status: BuildOrder.NOT_STARTED, started: null, earmarked: false };
         expect(system.state[buildOrderKey]).toEqual([
+            { type: 'build', id: UnitType.BARRACKS, qty: 1, opts: {}, index: 0, supply: null, ...runtime },
             {
                 type: 'train',
                 id: [UnitType.MARINE, UnitType.MARAUDER],
                 qty: 1,
                 opts: {},
-                index: 0,
+                index: 1,
                 supply: null,
                 ...runtime,
             },
-            { type: 'build', id: UnitType.BARRACKS, qty: 1, opts: {}, index: 1, supply: null, ...runtime },
             { type: 'worker', qty: 1, index: 2, supply: 15, ...runtime },
             { type: 'build', id: UnitType.SUPPLYDEPOT, qty: 1, opts: {}, index: 3, supply: null, ...runtime },
         ]);
@@ -123,7 +132,8 @@ describe('builderPlugin', () => {
         );
         const world = await createTestWorld('blueshift', { agent, loop: 896 });
         const { buildings } = world.resources.get();
-        const earmarks = () => world.data.get('earmarks').map(({ name }: { name: string }) => name);
+        const earmarks = () =>
+            world.data.get('earmarks').map(({ name }: { name: string }) => name.replace(/^build\d+:/, ''));
 
         expect(received).toEqual([
             [
@@ -199,7 +209,8 @@ describe('builderPlugin', () => {
             gameLoop += 4;
             return stepAt(world, gameLoop);
         };
-        const earmarks = () => world.data.get('earmarks').map(({ name }: { name: string }) => name);
+        const earmarks = () =>
+            world.data.get('earmarks').map(({ name }: { name: string }) => name.replace(/^build\d+:/, ''));
         const runEarmarked = async (task: BuildTaskI) => {
             world.data.addEarmark({ name: 'saving', minerals: 4800, vespene: 0 });
             const system = createSystem({
@@ -442,5 +453,404 @@ describe('builderPlugin', () => {
             ],
             [BuildResult.CANNOT_SATISFY, BuildResult.SUCCESS],
         ]);
+    });
+
+    describe('openings', () => {
+        const { build, train } = taskFunctions;
+        const opening = (buildOrder: OpeningDefinition['buildOrder'], rest: Partial<OpeningDefinition> = {}) => ({
+            buildOrder,
+            ...rest,
+        });
+
+        async function start(world: World, props: Partial<System>) {
+            const system = {
+                state: {},
+                setState(this: { state: object }, newState: object) {
+                    this.state = { ...this.state, ...newState };
+                },
+                ...props,
+            } as unknown as EventReader<System>;
+            builderPlugin(system);
+            const started = system.onGameStart!(world);
+            const tasks = () =>
+                (system.state[Object.getOwnPropertySymbols(system.state)[0]] as BuildTaskI[]).map(({ type, id }) => [
+                    type,
+                    id,
+                ]);
+            return { system, started, tasks };
+        }
+
+        it('picks the opening from the blueprint, a function, a config, or choose(), recording every pick, ignoring buildOrder, and throws NodeSC2Error for an unknown or missing name', async () => {
+            const world = await createTestWorld('blueshift');
+            const warn = spyOn(console, 'warn').mockImplementation(() => {});
+            const { openings } = world.resources.get();
+            const a = opening([build(UnitType.BARRACKS)]);
+            const b = opening([build(UnitType.FACTORY)]);
+            const picked = async (props: Partial<System>) => {
+                world.resources.reset(world);
+                const run = await start(world, props);
+                await run.started;
+                return [run.tasks(), run.system.getOpening!(), openings.getChosen()];
+            };
+
+            expect(await picked({ openings: { a, b }, opening: 'b', buildOrder: [build(UnitType.STARPORT)] })).toEqual([
+                [['build', UnitType.FACTORY]],
+                'b',
+                'b',
+            ]);
+            expect(warn).toHaveBeenCalledTimes(1);
+            expect(await picked({ openings: { a, b }, opening: (w) => (w === world ? 'a' : 'b') })).toEqual([
+                [['build', UnitType.BARRACKS]],
+                'a',
+                'a',
+            ]);
+
+            openings.configure({ builds: { b, a } });
+            expect(await picked({ openings: 'config' })).toEqual([[['build', UnitType.FACTORY]], 'b', 'b']);
+
+            await expect(start(world, { openings: { a }, opening: 'nope' }).then((run) => run.started)).rejects.toThrow(
+                NodeSC2Error,
+            );
+            await expect(start(world, { openings: {} }).then((run) => run.started)).rejects.toThrow(NodeSC2Error);
+        });
+
+        it('runs the new opening after a switch even when the previous one had completed', async () => {
+            const world = await createTestWorld('blueshift', { loop: 896 });
+            let completions = 0;
+            world.agent.use(
+                createSystem({
+                    name: 'Opener',
+                    type: 'build',
+                    openings: { done: opening([]), next: opening([train(UnitType.MARINE)]) },
+                    opening: 'done',
+                    buildComplete: async () => {
+                        completions += 1;
+                    },
+                }),
+            );
+            const idle = await stepAt(world, 900);
+            const system = world.agent.systems.find(({ name }) => name === 'OpenerWrapper' || name === 'Opener') as {
+                _system?: System;
+            };
+            system._system!.switchOpening!('next', { removeCompleted: false });
+
+            const trained = await stepAt(world, 904);
+            await stepAt(world, 908);
+
+            expect([idle, trained, completions]).toEqual([[], [Ability.TRAIN_MARINE], 2]);
+        });
+
+        it('sets fillWorkers false only while the current opening has constantWorkerProductionTill above 0, re-applying it on switch', async () => {
+            const world = await createTestWorld('blueshift');
+            const orders = [build(UnitType.BARRACKS)];
+            const { system, started } = await start(world, {
+                openings: { gate: opening(orders, { constantWorkerProductionTill: 20 }), fill: opening(orders) },
+                opening: 'gate',
+            });
+            await started;
+            const fill = () => system.buildOptions!.fillWorkers;
+
+            const seen = [fill()];
+            system.switchOpening!('fill');
+            seen.push(fill());
+            system.switchOpening!('gate');
+            seen.push(fill());
+
+            expect(seen).toEqual([false, undefined, false]);
+        });
+
+        it('names earmarks per build system: two systems earmarking task 0 keep both, one spending leaves the other, and switchOpening settles only its own', async () => {
+            const world = await createTestWorld('blueshift', { loop: 896 });
+            const earmarks = () => world.data.get('earmarks').map(({ name }: { name: string }) => name);
+            const upgrading = (id: number) =>
+                start(world, {
+                    openings: {
+                        first: opening([taskFunctions.upgrade(id)]),
+                        second: opening([build(UnitType.BARRACKS)]),
+                    },
+                    opening: 'first',
+                    buildOptions: { earmarks: 1 },
+                });
+            const earmarkBoth = async () => {
+                const a = await upgrading(Upgrade.STIMPACK);
+                const b = await upgrading(Upgrade.SHIELDWALL);
+                await Promise.all([a.started, b.started]);
+                world.data.addEarmark({ name: 'saving', minerals: 4750, vespene: 0 });
+                for (const { system } of [a, b]) {
+                    await system.onStep!(world, 900);
+                    await system.onStep!(world, 901);
+                }
+                return { a, b, both: earmarks().filter((name: string) => name !== 'saving') };
+            };
+
+            const first = await earmarkBoth();
+            first.a.system.switchOpening!('second');
+            const afterSwitch = earmarks().filter((name: string) => name !== 'saving');
+
+            world.data.get('earmarks').length = 0;
+            const second = await earmarkBoth();
+            world.data.settleEarmark('saving');
+            await second.a.system.onStep!(world, 902);
+
+            expect([first.both.length, afterSwitch, second.both.length, earmarks()]).toEqual([
+                2,
+                [first.both[1]],
+                2,
+                [second.both[1]],
+            ]);
+        });
+
+        it('switchOpening drops steps already present (seeded townhall, overlord, worker; unfinished structures count), scouts, chrono and pending upgrades, counts pending builds, re-indexes, settles the old earmarks, resets the persistent builder, keeps all without removeCompleted, and is a no-op for the current opening', async () => {
+            const world = await createTestWorld('blueshift', { loop: 896 });
+            const { roles } = world.resources.get();
+            const second = opening([
+                '14 supply',
+                '16 barracks',
+                '17 barracks',
+                '18 barracks',
+                '19 worker_scout',
+                [20, taskFunctions.ability(Ability.EFFECT_CHRONOBOOSTENERGYCOST)],
+                [20, build(UnitType.COMMANDCENTER)],
+                [20, train(UnitType.MARINE)],
+                [20, train(UnitType.MARINE)],
+                [20, train(UnitType.MARINE)],
+                [20, train(UnitType.MARINE)],
+                [20, train(UnitType.OVERLORD)],
+                [20, taskFunctions.upgrade(Upgrade.STIMPACK)],
+                [20, taskFunctions.upgrade(Upgrade.SHIELDWALL)],
+            ]);
+            spyOn(world.resources.get().buildings, 'pending').mockImplementation((id) =>
+                id === UnitType.BARRACKS ? 1 : 0,
+            );
+            spyOn(world.agent, 'alreadyPendingUpgrade').mockImplementation((id) => (id === Upgrade.STIMPACK ? 0.5 : 0));
+            world.data.addEarmark({ name: 'saving', minerals: 4800, vespene: 0 });
+            await stepCommands(world, 897, {}, [rawUnit({ unitType: UnitType.OVERLORD })]);
+            const { system, started, tasks } = await start(world, {
+                openings: { first: opening([build(UnitType.SUPPLYDEPOT)]), second },
+                opening: 'first',
+                buildOptions: { earmarks: 1 },
+            });
+            await started;
+            await system.onStep!(world, 900);
+            await system.onStep!(world, 901);
+            const earmarks = () =>
+                world.data.get('earmarks').map(({ name }: { name: string }) => name.replace(/^build\d+:/, ''));
+            const earmarked = earmarks();
+            const [builder] = roles.getTags(PERSISTENT_BUILDER);
+            const initial = system.state;
+
+            system.switchOpening!('first');
+            expect(system.state).toBe(initial);
+
+            system.switchOpening!('second');
+            const kept = tasks();
+            const indices = (system.state[Object.getOwnPropertySymbols(system.state)[0]] as BuildTaskI[]).map(
+                ({ index }) => index,
+            );
+            const switched = [earmarks(), roles.roleOf(builder)];
+            await system.onStep!(world, 902);
+            const repicked = roles.getTags(PERSISTENT_BUILDER).size;
+            system.switchOpening!('first');
+            system.switchOpening!('second', { removeCompleted: false });
+
+            expect([kept, indices, earmarked, switched, repicked, tasks().length]).toEqual([
+                [
+                    ...Array(8).fill(['worker', undefined]),
+                    ['build', UnitType.COMMANDCENTER],
+                    ['train', UnitType.MARINE],
+                    ['train', UnitType.OVERLORD],
+                    ['upgrade', Upgrade.SHIELDWALL],
+                ],
+                kept.map((_, index) => index),
+                ['saving', 'task0'],
+                [['saving'], GATHERING],
+                1,
+                22,
+            ]);
+        });
+
+        it('trains workers up to the till value on an idle ready townhall while supply is left and affordable, holding it for a townhall morph that is current after the step unless orbital tech is under 0.95', async () => {
+            const barracksDone = { [BARRACKS_TAGS[0]]: { buildProgress: 1 } };
+            const barracksUnfinished = { [BARRACKS_TAGS[1]]: { buildProgress: 0.5 } };
+            const abilities = async (
+                steps: OpeningDefinition['buildOrder'],
+                { till = 20, foodUsed = 16, foodCap = 23, minerals = 4815, edits = {} as Record<string, object> },
+            ) => {
+                const world = await createTestWorld('blueshift', {
+                    loop: 896,
+                    onQuery: (query) =>
+                        query.abilities?.length
+                            ? { abilities: query.abilities.map(({ unitTag }) => ({ unitTag, abilities: [] })) }
+                            : undefined,
+                });
+                world.agent.use(
+                    createSystem({
+                        name: 'Opener',
+                        type: 'build',
+                        openings: { a: { buildOrder: steps, constantWorkerProductionTill: till } },
+                        opening: 'a',
+                    }),
+                );
+                const commands = await stepCommands(world, 900, edits, [], { foodUsed, foodCap, minerals });
+                return commands.some(({ abilityId }) => abilityId === Ability.TRAIN_SCV);
+            };
+
+            expect([
+                await abilities(['100 barracks'], {}),
+                await abilities(['100 barracks'], { till: 13 }),
+                await abilities(['100 barracks'], { foodUsed: 23 }),
+                await abilities(['100 barracks'], { minerals: 0 }),
+                await abilities(['14 orbital'], { foodUsed: 13, edits: barracksDone }),
+                await abilities(['14 orbital'], { foodUsed: 14, edits: barracksDone }),
+                await abilities(['14 orbital'], { foodUsed: 14, edits: barracksUnfinished }),
+                await abilities(['14 worker_scout', '14 orbital'], { foodUsed: 14, edits: barracksDone }),
+                await abilities([[14, taskFunctions.ability(Ability.MORPH_PLANETARYFORTRESS)]], { foodUsed: 14 }),
+            ]).toEqual([true, false, false, false, true, false, true, false, false]);
+        });
+
+        it('starts auto supply at the threshold through the phase-5 behavior', async () => {
+            const world = await createTestWorld('blueshift', { loop: 896 });
+            const run = spyOn(world.resources.get().behaviors, 'run').mockResolvedValue(false);
+            world.agent.use(
+                createSystem({
+                    name: 'Opener',
+                    type: 'build',
+                    openings: { a: { buildOrder: ['100 barracks'], autoSupplyAtSupply: 20 } },
+                    opening: 'a',
+                }),
+            );
+
+            await stepCommands(world, 900, {}, [], { foodUsed: 19 });
+            const before = run.mock.calls.length;
+            await stepCommands(world, 904, {}, [], { foodUsed: 20 });
+
+            expect([before, run.mock.calls.length]).toEqual([0, 1]);
+        });
+
+        it('picks a persistent builder at 9s for a late first depot, moves it to the depot spot, hands it to builds while it is not on a tracked build, reclaims it from gathering after one, and releases it when the opening completes', async () => {
+            const world = await createTestWorld('blueshift', { loop: 896 });
+            const { buildings, frame, placement, roles } = world.resources.get();
+            const spot = { x: 30.5, y: 40.5 };
+            spyOn(placement, 'request').mockReturnValue(spot);
+            const release = spyOn(placement, 'release');
+            let now = 8;
+            spyOn(frame, 'time').mockImplementation(() => now);
+            world.agent.use(
+                createSystem({
+                    name: 'Opener',
+                    type: 'build',
+                    openings: {
+                        a: {
+                            buildOrder: ['18 supply', '18 barracks', '18 engineeringbay', '18 worker_scout'],
+                            constantWorkerProductionTill: 20,
+                        },
+                    },
+                    opening: 'a',
+                }),
+            );
+            const persistent = () => [...roles.getTags(PERSISTENT_BUILDER)];
+            const structures: SC2APIProtocol.Unit[] = [];
+            const add = (unitType: number) =>
+                structures.push(rawUnit({ unitType, buildProgress: 0.1, pos: { ...spot, z: 10 } }));
+            const handed = new Map<number, boolean>();
+            let gameLoop = 904;
+            const step = async () => {
+                await stepCommands(world, (gameLoop += 4), {}, [...structures], { foodUsed: 18, minerals: 4815 });
+                for (const { unitType, workerTag } of buildings.getTracked()) handed.set(unitType, workerTag === tag);
+            };
+
+            await stepCommands(world, 900, {}, [], { foodUsed: 16 });
+            const early = persistent();
+            now = 9;
+            const moves = (await stepCommands(world, 904, {}, [], { foodUsed: 16 })).filter(
+                ({ abilityId }) => abilityId === Ability.MOVE,
+            );
+            const [tag] = persistent();
+            const released = [...release.mock.calls];
+            await step();
+            add(UnitType.SUPPLYDEPOT);
+            await step();
+            await step();
+            structures[0].buildProgress = 1;
+            add(UnitType.BARRACKS);
+            await step();
+            await step();
+            add(UnitType.ENGINEERINGBAY);
+            await step();
+            structures[2].buildProgress = 1;
+            await step();
+            await step();
+
+            expect([early, moves, released, [...handed], roles.roleOf(tag)]).toEqual([
+                [],
+                [{ abilityId: Ability.MOVE, unitTags: [tag], targetWorldSpacePos: spot, queueCommand: false }],
+                [[spot]],
+                [
+                    [UnitType.SUPPLYDEPOT, true],
+                    [UnitType.BARRACKS, false],
+                    [UnitType.ENGINEERINGBAY, true],
+                ],
+                GATHERING,
+            ]);
+        });
+
+        it('picks the persistent builder at 3s when the first supply is at most 13 or at the natural, else at 9s, never without a supply step, and neither reclaims nor releases it from a role someone else gave it', async () => {
+            const picked = async (order: string) => {
+                const world = await createTestWorld('blueshift', { loop: 896 });
+                const { frame, roles } = world.resources.get();
+                spyOn(frame, 'time').mockReturnValue(3);
+                const system = createSystem({
+                    name: 'Opener',
+                    type: 'build',
+                    openings: { a: { buildOrder: [order], constantWorkerProductionTill: 20 }, b: { buildOrder: [] } },
+                    opening: 'a',
+                });
+                world.agent.use(system);
+                await stepCommands(world, 900, {}, [], { foodUsed: 12 });
+                const [tag] = roles.getTags(PERSISTENT_BUILDER);
+                if (tag) roles.assign(tag, BASE_DEFENDER);
+                await stepCommands(world, 904, {}, [], { foodUsed: 12 });
+                system._system.switchOpening!('b');
+                return tag && roles.roleOf(tag);
+            };
+
+            expect([
+                await picked('13 supply'),
+                await picked('16 supply'),
+                await picked('16 supply @nat'),
+                await picked('13 barracks'),
+            ]).toEqual([BASE_DEFENDER, undefined, BASE_DEFENDER, undefined]);
+        });
+
+        it('releases the persistent builder when a Protoss pylon task completes, before the opening does', async () => {
+            const world = await createTestWorld('blueshift', { loop: 896 });
+            const { buildings, placement, roles, units } = world.resources.get();
+            const probes = Object.fromEntries(
+                units.getById(UnitType.SCV).map(({ tag }) => [tag, { unitType: UnitType.PROBE }]),
+            );
+            world.agent.race = Race.PROTOSS;
+            spyOn(placement, 'request').mockReturnValue({ x: 30.5, y: 40.5 });
+            world.agent.use(
+                createSystem({
+                    name: 'Opener',
+                    type: 'build',
+                    openings: { a: { buildOrder: ['14 pylon', '100 gateway'], constantWorkerProductionTill: 20 } },
+                    opening: 'a',
+                }),
+            );
+            const persistent = () => [...roles.getTags(PERSISTENT_BUILDER)];
+
+            await stepCommands(world, 900, probes, [], { foodUsed: 16 });
+            const [tag] = persistent();
+            await stepCommands(world, 904, probes, [], { foodUsed: 16 });
+            const [tracked] = buildings.getTracked();
+            const pylon = [
+                rawUnit({ unitType: UnitType.PYLON, buildProgress: 0.1, pos: { ...tracked.target, z: 10 } }),
+            ];
+            await stepCommands(world, 908, probes, pylon, { foodUsed: 16 });
+            await stepCommands(world, 912, probes, pylon, { foodUsed: 16 });
+
+            expect([tag !== undefined, roles.roleOf(tag)]).toEqual([true, GATHERING]);
+        });
     });
 });

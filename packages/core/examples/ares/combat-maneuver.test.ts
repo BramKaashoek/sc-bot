@@ -63,10 +63,10 @@ describe('combat-maneuver example', () => {
         const { world } = probe;
         const { map } = world.resources.get();
         const dropSpot = [
-            [2, 0],
-            [-2, 0],
-            [0, 2],
-            [0, -2],
+            [2.5, 0],
+            [-2.5, 0],
+            [0, 2.5],
+            [0, -2.5],
         ]
             .map(([dx, dy]) => ({ x: enemyStart.x + dx, y: enemyStart.y + dy }))
             .find((spot) => map.isPathable(spot))!;

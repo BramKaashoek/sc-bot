@@ -173,6 +173,31 @@ describe('unit system events', () => {
         expect(sortedEvents(events.firstSeen)).toEqual(enemiesAt896.map((tag): [number, string] => [896, tag]));
     });
 
+    it('keeps processing later own units after one of an unknown type, on both the create and update paths', async () => {
+        const { events, record } = recorder();
+        const agent = createAgent({
+            onUnitCreated: record('created'),
+            onUnitTookDamage: async (world: World, { unit, amount }: UnitDamage) =>
+                record('tookDamage')(world, unit, amount),
+        });
+        const world = await createTestWorld('blueshift', { loop: 0, agent });
+        const unknown = { ...world.client.fixture.observations[0].observation!.rawData!.units![0] };
+        Object.assign(unknown, { tag: '99999', unitType: 99999, alliance: Alliance.SELF });
+        const withUnknownFirst = (raws: SC2APIProtocol.Unit[]) => [unknown, ...raws];
+        const worker = '4343988225';
+
+        await stepTo(world, editedObservation(world, 224, 224, withUnknownFirst));
+        await stepTo(
+            world,
+            editedObservation(world, 224, 228, (raws) =>
+                withUnknownFirst(raws.map((raw) => (raw.tag === worker ? { ...raw, health: raw.health! - 5 } : raw))),
+            ),
+        );
+
+        expect(sortedEvents(events.created).filter(([, tag]) => tag === '4351066113')).toEqual([[224, '4351066113']]);
+        expect(events.tookDamage).toEqual([[228, worker, 5]]);
+    });
+
     it('skips the per-step abilities query when asked, answering availability from abilities fetched once per game loop', async () => {
         const world = await createTestWorld('blueshift', {
             loop: 0,

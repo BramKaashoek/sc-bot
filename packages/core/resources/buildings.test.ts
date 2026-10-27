@@ -180,6 +180,39 @@ describe('building tracker', () => {
         expect([build.status, earmarked()]).toEqual(['ordered', false]);
     });
 
+    it('never moves a build pinned with `at`: a blocked spot or maxAttempts rejected BUILDs fail it blocked', async () => {
+        for (const cause of ['unplaceable', 'rejected'] as const) {
+            const world = await createTestWorld('blueshift', { loop: 896 });
+            const { buildings, placement } = world.resources.get();
+            buildings.configure({ maxAttempts: 1 });
+            const spot = placement.request(UnitType.SUPPLYDEPOT, { flags: ['supplyDepot'] })!;
+            placement.release(spot);
+            const build = buildings.build(UnitType.SUPPLYDEPOT, { at: spot })!;
+            const worker = build.workerTag!;
+            const request = spyOn(placement, 'request');
+            const inRange = { edits: { [worker]: { ...at(spot), orders: [] } } };
+
+            if (cause === 'unplaceable') {
+                spyOn(placement, 'canPlace').mockReturnValue(false);
+            } else {
+                spyOn(world.client, 'action').mockImplementationOnce(async (req) => {
+                    world.client.sent.actions.push(req);
+                    return { result: (req.actions ?? []).map(() => 2 as SC2APIProtocol.ActionResult) };
+                });
+                await step(world, 900, inRange);
+            }
+            await step(world, LATER, inRange);
+
+            expect([
+                build.status,
+                build.failure,
+                build.target,
+                request.mock.calls,
+                placement.getPlacements({ state: 'reserved' }),
+            ]).toEqual(['failed', 'blocked', spot, [], []]);
+        }
+    });
+
     it('replaces a dead worker and fails noWorker when nobody is left', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
         const { buildings, units } = world.resources.get();

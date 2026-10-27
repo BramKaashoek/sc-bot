@@ -71,14 +71,19 @@ const createFrameSystem = (isRealtime: () => boolean): FrameSystem => ({
             });
         }
 
-        const outstandingCommands = units.withLabel('command');
+        // frame loop advances before units refresh, so getAlive-based lookups like withLabel are empty here
+        const ownUnits = units.getAll(Alliance.SELF);
+        ownUnits.forEach((unit) => {
+            if (unit.hasLabel('stuck') && unit.isIdle()) unit.removeLabel('stuck');
+        });
+
+        const outstandingCommands = ownUnits.filter((unit) => unit.hasLabel('command'));
         outstandingCommands.forEach((unit) => {
             const frameCommanded = unit.getLabel('command');
             const frameDifference = observation!.gameLoop! - frameCommanded;
             if (frameDifference > 250) {
                 debugFrame(`Outstanding unit command after ${frameDifference}ms!`);
                 if (unit.isWorker()) {
-                    unit.labels.clear();
                     unit.addLabel('stuck', true);
                 }
                 unit.removeLabel('command');

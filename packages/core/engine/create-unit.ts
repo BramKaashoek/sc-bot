@@ -232,7 +232,7 @@ function createUnit(unitData: SC2APIProtocol.Unit, world: World): Unit {
             return this.noQueue;
         },
         isStructure() {
-            return this.data().attributes!.includes(Attribute.STRUCTURE);
+            return this.typeData(this.unitType!)?.attributes?.includes(Attribute.STRUCTURE) ?? false;
         },
         hasReactor() {
             return reactorTypes.includes(units.getByTag(this.addOnTag!)?.unitType!);

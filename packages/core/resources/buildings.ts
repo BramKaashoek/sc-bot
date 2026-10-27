@@ -34,6 +34,7 @@ type Build = {
     earmark?: string;
     placementRequest?: BuildOptions['placement'];
     reserved: boolean;
+    pinned: boolean;
     adopted: boolean;
     finishedAt?: number;
 };
@@ -138,6 +139,7 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
                 requestedAt: context(world).frame.getGameLoop(),
                 attempts: 0,
                 reserved: false,
+                pinned: false,
                 adopted: false,
                 ...extra,
             };
@@ -168,6 +170,7 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
                     earmark,
                     placementRequest,
                     reserved: !!requested,
+                    pinned: !!at,
                 });
             },
             buildGas({ geyser, max = 1 } = {}) {
@@ -272,6 +275,10 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
 
         function replan(build: Build): boolean {
             const { placement } = context(world);
+            if (build.pinned) {
+                finish(build, 'failed', 'blocked');
+                return false;
+            }
             if (build.reserved) placement.release(build.target);
             const next = placement.request(build.unitType, build.placementRequest);
             build.attempts = 0;

@@ -4,11 +4,13 @@ import getRandom from '../utils/get-random.ts';
 import { BuildOrder, BuildOrderId, BuildResult, Race } from '../constants/enums.ts';
 import type { BuildOrderStatus } from '../constants/enums.ts';
 import * as ability from '../constants/ability.ts';
-import { WorkerRace } from '../constants/race-map.ts';
-import { gasMineTypes, townhallTypes, addonTypes } from '../constants/groups.ts';
+import { SupplyUnitRace, TownhallRace, WorkerRace } from '../constants/race-map.ts';
+import { gasMineTypes, townhallTypes, addonTypes, structureTypes } from '../constants/groups.ts';
 import { Upgrade, UnitType, UnitTypeId, AbilityId, UpgradeId, Color } from '../constants/index.ts';
-import { ENEMY_NAT_VISION, ENEMY_SPAWN } from '../constants/build-target.ts';
-import { BUILD_RUNNER_SCOUT } from '../constants/unit-role.ts';
+import { ENEMY_NAT_VISION, ENEMY_SPAWN, NAT } from '../constants/build-target.ts';
+import { BUILD_RUNNER_SCOUT, GATHERING, PERSISTENT_BUILDER } from '../constants/unit-role.ts';
+import { autoSupply } from '../behaviors/macro/structures.ts';
+import { NodeSC2Error } from '../engine/errors.ts';
 import { parseBuildOrder } from '../utils/build-order/parse.ts';
 import { resolveTarget, scoutWaypoints, structurePlacement } from '../utils/build-order/targets.ts';
 import type {
@@ -18,6 +20,7 @@ import type {
     BuildTask,
     BuildTaskI,
     EventReader,
+    OpeningDefinition,
     PlacementFlag,
     PlacementRequest,
     Point2D,
@@ -31,11 +34,19 @@ const debugBuild = createDebug('sc2:debug:build');
 const debugDraw = createDebug('sc2:DrawDebug');
 const debugBuildSilly = createDebug('sc2:silly:build');
 
-const { BUILD_REACTOR, BUILD_TECHLAB, HARVEST_RETURN, MOVE } = ability;
+const { BUILD_REACTOR, BUILD_TECHLAB, HARVEST_RETURN, MOVE, MORPH_ORBITALCOMMAND, MORPH_PLANETARYFORTRESS } = ability;
 const { PYLON, BARRACKS, FACTORY, STARPORT, SUPPLYDEPOT, OVERLORD } = UnitType;
 const addonHostTypes = [BARRACKS, FACTORY, STARPORT];
 
 const NOOP = () => {};
+
+let pluginCount = 0;
+
+const PERSISTENT_EARLY_SUPPLY = 13;
+const PERSISTENT_EARLY_TIME = 3;
+const PERSISTENT_LATE_TIME = 9;
+const ORBITAL_TECH_READY = 0.95;
+const townhallMorphs = [MORPH_ORBITALCOMMAND, MORPH_PLANETARYFORTRESS];
 
 type BuildTaskRuntime = Omit<BuildTaskI, 'id' | 'qty' | 'index' | 'started' | 'status'> & {
     id: number;
@@ -65,6 +76,8 @@ const taskFunctions: TaskFunctions = {
 };
 
 function builderPlugin(system: EventReader<System>): void {
+    const prefix = `build${pluginCount++}`;
+    const earmarkName = (task: BuildTaskRuntime) => `${prefix}:task${task.index}`;
     const buildSym = Symbol('build');
     const completeSym = Symbol('complete');
 
@@ -98,6 +111,12 @@ function builderPlugin(system: EventReader<System>): void {
     };
 
     const buildFns: Record<symbol, BuildFn> = {};
+
+    const baseFillWorkers = system.buildOptions.fillWorkers;
+    let defs: Record<string, OpeningDefinition> | undefined;
+    let currentOpening: string | undefined;
+    let currentWorld: World | undefined;
+    let persistent: { picked: boolean; tag?: string } = { picked: false };
 
     const systemOnGameStart = system.onGameStart ? system.onGameStart.bind(system) : NOOP;
     const { onStep } = system as unknown as BuildSystemObject;
@@ -144,66 +163,140 @@ function builderPlugin(system: EventReader<System>): void {
         if (system.buildOptions!.fillWorkers === false) {
             return bo.map((step, i) => (Array.isArray(step) ? createTask(step[1], i, step[0]) : createTask(step, i)));
         }
-        if (Array.isArray(bo[0])) {
-            return bo.reduce<{
-                supply: number;
-                buildOrder: object[];
-                reducerIndex: number;
-            }>(
-                (acc, step) => {
-                    const [supply, task] = Array.isArray(step) ? step : [acc.supply, step];
-                    if (acc.supply >= supply) {
-                        acc.buildOrder.push(createTask(task, acc.reducerIndex));
-                        calculateSupply(world, acc, supply, task);
+        return bo.reduce<{
+            supply: number;
+            buildOrder: object[];
+            reducerIndex: number;
+        }>(
+            (acc, step) => {
+                const [supply, task] = Array.isArray(step) ? step : [acc.supply, step];
+                if (acc.supply >= supply) {
+                    acc.buildOrder.push(createTask(task, acc.reducerIndex));
+                    calculateSupply(world, acc, supply, task);
+                    acc.reducerIndex++;
+                    return acc;
+                } else {
+                    Array.from({ length: supply - acc.supply }).forEach(() => {
+                        acc.buildOrder.push(createTask(workerTask, acc.reducerIndex, supply));
+                        acc.supply = acc.supply + 1;
                         acc.reducerIndex++;
-                        return acc;
-                    } else {
-                        Array.from({ length: supply - acc.supply }).forEach(() => {
-                            acc.buildOrder.push(createTask(workerTask, acc.reducerIndex, supply));
-                            acc.supply = acc.supply + 1;
-                            acc.reducerIndex++;
-                        });
+                    });
 
-                        acc.buildOrder.push(createTask(task, acc.reducerIndex));
-                        acc.reducerIndex++;
-                        calculateSupply(world, acc, supply, task);
-                        return acc;
-                    }
-                },
-                { supply: 12, buildOrder: [], reducerIndex: 0 },
-            ).buildOrder;
-        } else {
-            return bo.map((task, i: number) => {
-                return createTask(task, i);
-            });
-        }
+                    acc.buildOrder.push(createTask(task, acc.reducerIndex));
+                    acc.reducerIndex++;
+                    calculateSupply(world, acc, supply, task);
+                    return acc;
+                }
+            },
+            { supply: 12, buildOrder: [], reducerIndex: 0 },
+        ).buildOrder;
     }
 
-    system.onGameStart = async function (world: World) {
-        this.setState({
-            [buildSym]: normalizeBuildOrder(world, system.buildOrder!),
+    const openingTasks = (world: World, name: string) => {
+        const def = defs![name];
+        system.buildOptions!.fillWorkers = (def.constantWorkerProductionTill ?? 0) > 0 ? false : baseFillWorkers;
+        return normalizeBuildOrder(world, def.buildOrder);
+    };
+
+    const present = ({ agent, resources }: World, id: number) => {
+        const { buildings, units } = resources.get();
+        const existing = units.getById(id).length;
+        return existing + (structureTypes.includes(id) ? buildings.pending(id) : agent.alreadyPending(id));
+    };
+
+    // ares build_order_parser.py _remove_completed_steps
+    const removeCompleted = (world: World, tasks: BuildTaskRuntime[]) => {
+        const { agent } = world;
+        const worker = WorkerRace[agent.race!];
+        const seen = new Map<number, number>([
+            [TownhallRace[agent.race!][0], 1],
+            [OVERLORD, 1],
+            [worker, 12],
+        ]);
+        return tasks.filter((task) => {
+            if (
+                task.type === 'scout' ||
+                (task.type === 'ability' && task.id === ability.EFFECT_CHRONOBOOSTENERGYCOST)
+            ) {
+                return false;
+            }
+            if (task.type === 'upgrade') return !(agent.alreadyPendingUpgrade(task.id) > 0);
+            const id = task.type === 'worker' ? worker : task.type === 'build' || task.type === 'train' ? task.id : 0;
+            if (!id || Array.isArray(id)) return true;
+            const total = present(world, id);
+            const count = seen.get(id) ?? 0;
+            if (count >= total) return true;
+            seen.set(id, count + 1);
+            return false;
         });
+    };
+
+    system.onGameStart = async function (world: World) {
+        currentWorld = world;
+        persistent = { picked: false };
+        defs = undefined;
+        currentOpening = undefined;
+
+        if (system.openings) {
+            if (system.buildOrder?.length)
+                console.warn('Build system has both openings and buildOrder, ignoring buildOrder');
+            const { openings } = world.resources.get();
+            defs = system.openings === 'config' ? { ...openings.getDefinitions() } : system.openings;
+            const name =
+                typeof system.opening === 'function'
+                    ? system.opening(world)
+                    : (system.opening ?? openings.choose(Object.keys(defs)));
+            if (name === undefined || !defs[name]) {
+                throw new NodeSC2Error(`Unknown opening "${name}", available: ${Object.keys(defs).join(', ')}`);
+            }
+            currentOpening = name;
+            openings.record(name);
+            this.setState({ [buildSym]: openingTasks(world, name) });
+        } else {
+            this.setState({
+                [buildSym]: normalizeBuildOrder(world, system.buildOrder!),
+            });
+        }
 
         return systemOnGameStart(world);
     };
 
-    system.onStep = async function (world: World, gameLoop: number) {
+    system.getOpening = () => currentOpening;
+
+    system.switchOpening = function (name: string, { removeCompleted: remove = true } = {}) {
+        if (!defs || !currentWorld || name === currentOpening) return;
+        if (!defs[name])
+            throw new NodeSC2Error(`Unknown opening "${name}", available: ${Object.keys(defs).join(', ')}`);
+        currentOpening = name;
+        for (const task of system.state[buildSym] as BuildTaskRuntime[]) {
+            if (task.earmarked) currentWorld.data.settleEarmark(earmarkName(task));
+        }
+        releasePersistent(currentWorld);
+        persistent = { picked: false };
+        const tasks = openingTasks(currentWorld, name) as BuildTaskRuntime[];
+        const kept = remove ? removeCompleted(currentWorld, tasks) : tasks;
+        system.setState({
+            [buildSym]: kept.map((task, index) => ({ ...task, index })),
+            [completeSym]: false,
+        });
+    };
+
+    const isOpen = ({ status }: BuildTaskRuntime) =>
+        status === BuildOrder.COMMAND_GIVEN || status === BuildOrder.IN_PROGRESS || status === BuildOrder.NOT_STARTED;
+
+    const runTasks = async function (this: EventReader<System>, world: World, gameLoop: number) {
         if (system.buildOptions!.paused) {
             return systemOnStep(world, gameLoop);
         }
 
-        const task: BuildTaskRuntime | undefined = this.state[buildSym].find(
-            (o: BuildTaskRuntime) =>
-                o.status === BuildOrder.COMMAND_GIVEN ||
-                o.status === BuildOrder.IN_PROGRESS ||
-                o.status === BuildOrder.NOT_STARTED,
-        );
+        const task: BuildTaskRuntime | undefined = this.state[buildSym].find(isOpen);
 
         if (!task) {
             if (this.state[completeSym]) {
                 return systemOnStep(world, gameLoop);
             } else {
                 this.setState({ [completeSym]: true });
+                releasePersistent(world);
                 return buildComplete(world, gameLoop);
             }
         }
@@ -293,9 +386,13 @@ function builderPlugin(system: EventReader<System>): void {
                     }
                 }
 
-                if (cost && !world.agent.canAfford(buildTask.id)) {
+                const canAfford =
+                    buildTask.type === 'upgrade'
+                        ? world.agent.canAffordUpgrade(buildTask.id)
+                        : world.agent.canAfford(buildTask.id);
+                if (cost && !canAfford) {
                     world.data.addEarmark({
-                        name: `task${buildTask.index}`,
+                        name: earmarkName(buildTask),
                         minerals: cost.mineralCost!,
                         vespene: cost.vespeneCost!,
                     });
@@ -314,6 +411,9 @@ function builderPlugin(system: EventReader<System>): void {
                 } else if (task.qty === 1) {
                     buildTask.qty = 0;
                     buildTask.status = BuildOrder.COMPLETE;
+                    if (task.type === 'build' && task.id === PYLON && world.agent.race === Race.PROTOSS) {
+                        releasePersistent(world);
+                    }
                 }
                 break;
             }
@@ -331,6 +431,133 @@ function builderPlugin(system: EventReader<System>): void {
         }
 
         return systemOnStep(world, gameLoop, this.state[buildSym][task.index], result);
+    };
+
+    system.onStep = async function (world: World, gameLoop: number) {
+        const active = () => defs && !system.buildOptions!.paused && !this.state[completeSym];
+        if (active()) reclaimPersistent(world);
+        const result = await runTasks.call(this, world, gameLoop);
+        if (active()) await runOpeningOptions(world, this.state[buildSym].find(isOpen));
+        return result;
+    };
+
+    const pickWorker = (world: World, role: typeof BUILD_RUNNER_SCOUT | typeof PERSISTENT_BUILDER) => {
+        const { map, mining, roles, units } = world.resources.get();
+        const main = map.getMain().townhallPosition;
+        if (mining.isEnabled()) return mining.selectWorker(main, { role });
+        const free = units.getMineralWorkers().filter((worker) => roles.roleOf(worker) === GATHERING);
+        const [worker] = units.getClosest(main, free);
+        if (worker) roles.assign(worker, role);
+        return worker;
+    };
+
+    const persistentWorker = ({ resources }: World) =>
+        persistent.tag ? resources.get().units.getByTag(persistent.tag) : undefined;
+
+    const releasePersistent = (world: World) => {
+        const worker = persistentWorker(world);
+        persistent.tag = undefined;
+        const { mining, roles } = world.resources.get();
+        // a BUILDING worker goes back via the tracker
+        if (!worker || roles.roleOf(worker) !== PERSISTENT_BUILDER) return;
+        if (mining.isEnabled()) mining.release(worker);
+        else roles.assign(worker, GATHERING);
+    };
+
+    // the tracker hands a builder back to GATHERING when its build finishes; other roles are someone else's pick
+    const reclaimPersistent = (world: World) => {
+        const worker = persistentWorker(world);
+        const { roles } = world.resources.get();
+        if (worker && roles.roleOf(worker) === GATHERING) roles.assign(worker, PERSISTENT_BUILDER);
+    };
+
+    // a builder busy on a tracked build holds the BUILDING role
+    const builderFor = (world: World) => {
+        const worker = persistentWorker(world);
+        return worker && world.resources.get().roles.roleOf(worker) === PERSISTENT_BUILDER ? worker : undefined;
+    };
+
+    const firstSupplyStep = (world: World, steps: Array<BuildTask | BuildOrderStep>) => {
+        const supplyType = SupplyUnitRace[world.agent.race as keyof typeof SupplyUnitRace];
+        for (const step of parseBuildOrder(steps, world.agent.race!)) {
+            const [supply, task] = Array.isArray(step) ? step : [undefined, step];
+            if (task.type === 'build' && task.id === supplyType) return { supply, task };
+        }
+        return undefined;
+    };
+
+    const assignPersistent = (world: World, def: OpeningDefinition) => {
+        const { actions, frame, placement, roles } = world.resources.get();
+        const first = firstSupplyStep(world, def.buildOrder);
+        if (!first) return;
+        const early = (first.supply ?? 0) <= PERSISTENT_EARLY_SUPPLY || first.task.opts?.at === NAT;
+        if (frame.time() < (early ? PERSISTENT_EARLY_TIME : PERSISTENT_LATE_TIME)) return;
+
+        const worker = pickWorker(world, PERSISTENT_BUILDER);
+        if (!worker) return;
+        persistent = { picked: true, tag: worker.tag };
+
+        const task = first.task as BuildTaskRuntime;
+        const targeted = task.opts?.at === undefined ? undefined : structurePlacement(world, task.id, task.opts.at);
+        const requested =
+            targeted && 'at' in targeted
+                ? undefined
+                : targeted && 'near' in targeted
+                  ? undefined
+                  : placement.request(task.id, targeted?.placement ?? placementRequest(world, task));
+        const point =
+            (targeted && 'at' in targeted && targeted.at) ||
+            (targeted && 'near' in targeted && targeted.near) ||
+            requested;
+        if (!point) return;
+        roles.as(PERSISTENT_BUILDER, () =>
+            actions.queueAction([
+                { abilityId: MOVE, unitTags: [worker.tag!], targetWorldSpacePos: point, queueCommand: false },
+            ]),
+        );
+        // the tracker re-requests the spot when the depot is built
+        if (requested) placement.release(requested);
+    };
+
+    // judged after the step ran, as in ares, so a morph that just became current already holds
+    const holdsTownhall = ({ agent }: World, task?: BuildTaskRuntime) =>
+        !!task &&
+        task.type === 'ability' &&
+        townhallMorphs.includes(task.id) &&
+        agent.supplyUsed >= (task.supply ?? 0) &&
+        !(
+            task.id === MORPH_ORBITALCOMMAND &&
+            agent.techRequirementProgress(UnitType.ORBITALCOMMAND) < ORBITAL_TECH_READY
+        );
+
+    const runOpeningOptions = async (world: World, current?: BuildTaskRuntime) => {
+        const { agent, resources } = world;
+        const { behaviors, units } = resources.get();
+        const def = defs![currentOpening!];
+
+        const till = def.constantWorkerProductionTill ?? 0;
+        const workerType = WorkerRace[agent.race!];
+        if (
+            till > 0 &&
+            agent.supplyWorkers < till &&
+            agent.supplyLeft > 0 &&
+            agent.canAfford(workerType) &&
+            units.getById(townhallTypes).some((th) => th.isFinished() && th.noQueue)
+        ) {
+            if (!holdsTownhall(world, current)) await agent.train(workerType, 1);
+        }
+
+        if (def.autoSupplyAtSupply !== undefined && agent.supplyUsed >= def.autoSupplyAtSupply) {
+            await behaviors.run(autoSupply({}));
+        }
+
+        if (
+            def.persistentWorker !== false &&
+            (agent.race === Race.TERRAN || agent.race === Race.PROTOSS) &&
+            !persistent.picked
+        ) {
+            assignPersistent(world, def);
+        }
     };
 
     const defaultAnchor = ({ resources }: World): Point2D => {
@@ -360,7 +587,7 @@ function builderPlugin(system: EventReader<System>): void {
         }
     };
 
-    const earmarkOf = (task: BuildTaskRuntime) => (task.earmarked ? `task${task.index}` : undefined);
+    const earmarkOf = (task: BuildTaskRuntime) => (task.earmarked ? earmarkName(task) : undefined);
 
     // agent.canAfford settles the earmark, which the tracker must keep until it sends BUILD
     const affordable = ({ agent, data }: World, task: BuildTaskRuntime) => {
@@ -372,10 +599,14 @@ function builderPlugin(system: EventReader<System>): void {
         );
     };
 
-    const trackBuild = ({ agent, resources }: World, task: BuildTaskRuntime, opts: BuildOptions) => {
+    const trackBuild = (world: World, task: BuildTaskRuntime, opts: BuildOptions) => {
+        const { agent, resources } = world;
         if (agent.race !== Race.TERRAN && agent.race !== Race.PROTOSS) return undefined;
         return (
-            resources.get().buildings.build(task.id, { ...opts, earmark: earmarkOf(task) }) && BuildResult.COMMAND_SENT
+            resources
+                .get()
+                .buildings.build(task.id, { ...opts, worker: builderFor(world), earmark: earmarkOf(task) }) &&
+            BuildResult.COMMAND_SENT
         );
     };
 
@@ -570,7 +801,7 @@ function builderPlugin(system: EventReader<System>): void {
     buildFns[buildFnSyms.upgrade] = async function ({ agent, resources }: World, task: BuildTaskRuntime) {
         const { actions, units } = resources.get();
 
-        if (!agent.canAffordUpgrade(task.id, task.earmarked ? `task${task.index}` : null))
+        if (!agent.canAffordUpgrade(task.id, task.earmarked ? earmarkName(task) : null))
             return BuildResult.CANNOT_SATISFY;
 
         const upgradeFacilities = units.getUpgradeFacilities(task.id);
@@ -618,14 +849,7 @@ function builderPlugin(system: EventReader<System>): void {
         }
     };
 
-    const workerScout = (world: World): Unit | undefined => {
-        const { map, mining, roles, units } = world.resources.get();
-        const main = map.getMain().townhallPosition;
-        if (mining.isEnabled()) return mining.selectWorker(main, { role: BUILD_RUNNER_SCOUT });
-        const [worker] = units.getClosest(main, units.getMineralWorkers());
-        if (worker) roles.assign(worker, BUILD_RUNNER_SCOUT);
-        return worker;
-    };
+    const workerScout = (world: World) => pickWorker(world, BUILD_RUNNER_SCOUT);
 
     const overlordScout = (world: World): Unit | undefined => {
         const { roles, units } = world.resources.get();

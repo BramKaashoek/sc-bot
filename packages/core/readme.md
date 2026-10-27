@@ -14,6 +14,7 @@ This readme walks through everything the library offers. For exhaustive signatur
 - [Agents](#agents)
 - [Events](#events)
 - [Systems](#systems)
+- [Behaviors and controllers](#behaviors-and-controllers)
 - [Resources](#resources)
     - [units](#units)
     - [The Units collection](#the-units-collection)
@@ -35,6 +36,7 @@ This readme walks through everything the library offers. For exhaustive signatur
     - [mining](#mining)
     - [flying](#flying)
     - [mapAnalysis](#mapanalysis)
+    - [openings](#openings-1)
     - [Custom resources](#custom-resources)
 - [Utilities](#utilities)
 - [Constants](#constants)
@@ -174,7 +176,7 @@ Options (all optional):
 | `gameTimeLimit` | In game seconds. Once exceeded, the game is left and every participant is reported as `TIE`. |
 | `saveReplayAs` | Write the replay to this path when the game ends |
 
-**Several games on one engine.** `runGame` can be called again once a game has ended, on the same or another map. From the second game on, each game starts with an empty unit store (no enemy memory from the previous game), fresh map caches (combat rally, cached paths), no earmarks, cleared debug drawings, fresh step times and no proposed commands; the first game's setup resets nothing. Every registered resource, including your [custom resources](#custom-resources), is reset in place, so references to the resources stay valid. Every system is unpaused, its `state` goes back to a deep copy of the `state` it was created with and its step timing is reset, and a build system's `buildOptions` (`paused`, `earmarks`) go back to their initial values. The build and unit plugins are applied only once, so a build order still runs once per step.
+**Several games on one engine.** `runGame` can be called again once a game has ended, on the same or another map. From the second game on, each game starts with an empty unit store (no enemy memory from the previous game), fresh map caches (combat rally, cached paths), no earmarks, cleared debug drawings, fresh step times and no proposed commands; the first game's setup resets nothing. Every registered resource, including your [custom resources](#custom-resources), is reset in place, so references to the resources stay valid. Every system is unpaused, its `state` goes back to a deep copy of the `state` it was created with and its step timing is reset, and a build system's `buildOptions` (`paused`, `earmarks`, `fillWorkers`) go back to their initial values. The build and unit plugins are applied only once, so a build order still runs once per step.
 
 **Leaving.** `actions.surrender()` leaves the game. `runGame` then resolves normally with your player marked `DEFEAT`. If `saveReplayAs` is set, the replay is saved before any leave, including a raw `_client.leaveGame()` (SC2 refuses to save one afterwards).
 
@@ -288,13 +290,13 @@ createAgent({
         commandPriority: 0,                   // see Command arbitration
         skipAvailableAbilitiesQuery: false,   // opt-in, see below
     },
-    interface: { raw: true, rawCropToPlayableArea: true },  // SC2APIProtocol.InterfaceOptions
+    interface: { raw: true, score: true, rawCropToPlayableArea: true },  // SC2APIProtocol.InterfaceOptions
     setup(world) { },                         // synchronous, runs before onGameStart
     ...event handlers                         // see Events
 })
 ```
 
-`interface` must include `raw: true`. You can add `score: true` (for `frame.getScore()`), and `render` / `featureLayer` camera setups; their data is available unprocessed from `frame.getRender()` and `frame.getFeatureLayer()`.
+`interface` must include `raw: true`. The default also has `score: true` (for `frame.getScore()`, which `productionController` reads); if you pass your own `interface`, add it yourself. You can add `render` / `featureLayer` camera setups; their data is available unprocessed from `frame.getRender()` and `frame.getFeatureLayer()`.
 
 ### Settings
 
@@ -391,6 +393,8 @@ The helpers deduct what they spend from the agent's minerals and gas right away,
 **Builder handoff.** When [`mining`](#mining) is enabled, the worker a helper (`expandNow`) or `actions.build` picks comes from `mining.selectWorker(position, { forceClose: true, role: GATHERING })`: a mining worker near the build site, which stays in `GATHERING`. With mining disabled the pick is unchanged. For Terran and Protoss structures, [`buildings.build`](#buildings) does the picking, walking and retrying for you.
 
 **`distributeWorkers` vs `mining`: pick one.** `distributeWorkers` sends gather commands at your commander's priority, `mining` assigns and commands the same `GATHERING` workers every step. Running both makes them fight over workers, so call `distributeWorkers` only while `mining.isEnabled()` is `false`.
+
+The [controllers](#controllers) (`spawnController`, `buildStructure`, `autoSupply`, `techUp`, `productionController` and the rest) wrap these helpers and the building tracker into ready-made plan steps; see [Behaviors and controllers](#behaviors-and-controllers).
 
 `agent.use(system)` mounts one system or an array of them; see [Systems](#systems).
 
@@ -511,14 +515,16 @@ A system with `type: 'build'` and a `buildOrder` gets the builder plugin. Tasks 
 
 | Task | Meaning |
 |---|---|
-| `build(unitType, qty = 1, opts?)` | Build a structure. `opts.near` (a unit type) anchors placement at the first of your units of that type, where the builder uses `findPlacement` (see below); `opts.on` picks the host for an add-on. |
-| `train(unitType \| unitType[], qty = 1, opts?)` | Train a unit (a random one of the list each time). Uses warp-in once warp gate research is done. |
+| `build(unitType, qty = 1, opts?)` | Build a structure. `opts.near` (a unit type) anchors placement at the first of your units of that type, where the builder uses `findPlacement` (see below); `opts.on` picks the host for an add-on; `opts.at` (a [build target](#build-targets)) says where it goes. |
+| `train(unitType \| unitType[], qty = 1, opts?)` | Train a unit (a random one of the list each time). Uses warp-in once warp gate research is done. With `opts.at` (a [build target](#build-targets)) the producer closest to that point trains it. |
 | `upgrade(upgradeId)` | Research an upgrade |
-| `ability(abilityId, opts?)` | Use an ability on any unit that has it; `opts.target` (a unit type) picks a target |
+| `ability(abilityId, opts?)` | Use an ability on any unit that has it; `opts.target` (a unit type) picks a target; `opts.on` (a unit type) limits it to units of that type |
+| `scout('worker' \| 'overlord', waypoints?)` | Send a scout through [build targets](#build-targets), see [Scouts](#scouts-and-the-persistent-builder). `waypoints` defaults to `ENEMY_SPAWN` for a worker and `ENEMY_NAT_VISION` for an overlord. |
+| `addonSwap(hostType, addonType)` | Calls [`flying.addonSwap`](#flying) with the structure type and add-on. While it returns `false` (no finished host or add-on) the step can't be satisfied and is retried each step. |
 
 `build`, `train` and `ability` tasks also accept `opts.skip`: the name of a key in the system's state; when that key is truthy, the task is skipped. `upgrade` takes no options.
 
-A build order is either a plain list of tasks, or a list of `[supply, task]` pairs. With pairs, worker tasks are inserted automatically until the given supply is reached (counting from 12). A `train` task then adds its supply to the count: its unit's supply cost times `qty`, or for a list of unit types the largest supply cost among them. A Zerg `build` task subtracts one, for the drone it consumes.
+A build order is either a plain list of tasks, or a list of `[supply, task]` pairs; both can also hold [string steps](#string-steps). With pairs, worker tasks are inserted automatically until the given supply is reached (counting from 12). A `train` task then adds its supply to the count: its unit's supply cost times `qty`, or for a list of unit types the largest supply cost among them. A Zerg `build` task subtracts one, for the drone it consumes.
 
 ```ts
 import { createAgent, createSystem, taskFunctions } from '@sc-bot/core';
@@ -588,6 +594,7 @@ How the builder places structures:
 
 - Gas buildings go on a free geyser through [`buildings.buildGas`](#buildings), with no cap on simultaneous builds, so every gas step of the order is honoured.
 - Townhalls go to the first available expansion (`actions.canPlace`, then `actions.build`).
+- A step with `opts.at` whose target resolves is placed from that target, before the `placer.place` hook and the solver below are consulted.
 - If a `placer` resource is set (as above) and returns positions for that unit type, one of them that SC2 accepts is built on, as a tracked build.
 - Otherwise, for Terran and Protoss structures other than add-ons, it calls `buildings.build` with a [`placement`](#placement) request: the precomputed spots, anchored at `opts.near` when given (a Protoss structure other than a pylon must be powered; a Terran depot asks for the flag `supplyDepot`, a barracks, factory or starport for `production`). The tracker walks the worker, retries the command and re-places the building when it keeps failing. A `placer.place` hook still wins over the solver; spots from `placer.placements` or `placement.add` are used when their flags match.
 - When the tracker can't start the build (no spot, no worker, or a Zerg order), it falls back to `actions.findPlacement` near `opts.near`, or near a point 8 cells from the main townhall towards the map center. Protoss buildings other than pylons are placed around finished pylons; Terran production buildings require room for an add-on.
@@ -595,6 +602,152 @@ How the builder places structures:
 A `build` task whose command was sent is done when an unfinished structure of that type appears. After 250 game loops without one it starts over, unless the tracker still has a build of that type pending.
 
 A build system's `onStep` receives `(world, gameLoop, task, result)`: the current task and the `BuildResult` of this step's attempt. Both are `undefined` while the order is paused or finished. `createSystem` types a `type: 'build'` blueprint as `BuildSystemObject`, so these parameters are typed. `buildComplete(world, gameLoop)` is called once when the last task is done. `this.pauseBuild()` and `this.resumeBuild()` pause the order. When the current task still can't be afforded 1000 game loops after it came up, the builder earmarks its cost (see [events and data](#events-and-data)); `this.earmarkDelay(loops)` changes that delay, and `0` turns earmarking off.
+
+#### String steps
+
+A `buildOrder` step can also be a string in ares' format, `'<supply> <command> [@target] [x<n>]'`, or an object for a scout. Strings, `[supply, task]` pairs and plain task objects can be mixed in one list. Strings compile to the same `[supply, task]` pairs, so strict order, `skip`, pausing and earmarks work as before, and a build order without strings behaves exactly as it did. [`parseBuildOrder`](#build-orders) does the compiling, and the build system calls it at game start: a bad step throws `NodeSC2Error` naming it (unknown command or target, `ENEMY_NAT_HG_SPOT`, a malformed `ADDONSWAP` or `CHRONO`) before the game runs.
+
+- Matching is case-insensitive. The supply is the minimum supply used for the step; a non-numeric one counts as `0` and logs on `sc2:debug:buildOrder`.
+- The target is written `@ramp`, `@ ramp` or `ramp`; on a unit step the last one wins. `x3` or `*3` repeats the step three times (`x0` is ignored).
+- The command is looked up as a unit type name first (a structure is built, anything else trained), then as an upgrade name, then as one of the options below. `LAIR` and `HIVE` are morph abilities, not builds. An upgrade name has to exist in the library's upgrade constants, which come from the game data. ares' `tempestgroundattackupgrade` isn't there (the only Tempest upgrade is `TEMPESTRANGEUPGRADE`), so `16 tempestgroundattackupgrade` throws `unknown command`.
+
+| Option | Task |
+|---|---|
+| `WORKER` | Train a worker (`SCV`, `PROBE` or `DRONE`); honours the target |
+| `SUPPLY` | Build a `SUPPLYDEPOT` or `PYLON`; for Zerg, train an `OVERLORD`. Honours the target. |
+| `GAS` | Build a `REFINERY`, `ASSIMILATOR` or `EXTRACTOR` through [`buildings.buildGas`](#buildings) on a free geyser at your own bases. A target is parsed and ignored, so `14 gas @enemy_spawn` is a plain `14 gas`. |
+| `EXPAND` | Build a townhall; honours the target |
+| `GATE`, `CORE` | Build a `GATEWAY` or `CYBERNETICSCORE`; honours the target |
+| `ORBITAL` | The `MORPH_ORBITALCOMMAND` ability |
+| `CANCEL_GAS` | Cancel the race's gas building under construction (`CANCEL_BUILDINPROGRESS`, on gas buildings only) |
+| `CHRONO` | Chrono boost; the target is the unit type that gets it and is required (`16 chrono @ nexus`; `core` means `CYBERNETICSCORE`) |
+| `WORKER_SCOUT`, `OVERLORD_SCOUT` | A scout task; the targets are its waypoints |
+| `ADDONSWAP` | `'21 addonswap factory barracksreactor'`: exactly two structure names, the host and the add-on, as the `addonSwap` task |
+
+The object form gives a scout its waypoints: `{ '17 worker_scout': ['enemy_nat', 'enemy_spawn'] }`; its keys are `<supply> worker_scout` or `<supply> overlord_scout` only. Without waypoints a worker scout goes to `ENEMY_SPAWN` and an overlord scout to `ENEMY_NAT_VISION`. A string takes waypoints as targets too: `'17 worker_scout @enemy_nat @enemy_spawn'`.
+
+```ts
+import { createAgent, createSystem, taskFunctions } from '@sc-bot/core';
+import { Race } from '@sc-bot/core/constants/enums';
+import { MARINE } from '@sc-bot/core/constants/unit-type';
+
+const { train } = taskFunctions;
+
+const reaperExpand = createSystem({
+    name: 'ReaperExpand',
+    type: 'build',
+    buildOrder: [
+        '14 supply @ramp',
+        { '15 worker_scout': ['enemy_nat', 'enemy_spawn'] },
+        '16 barracks @ramp',
+        '16 gas',
+        '19 reaper',
+        '19 orbital',
+        '20 expand @nat',
+        '22 supply',
+        '23 barracksreactor',
+        '24 factory @production',
+        '26 barracks x2',
+        '30 stimpack',
+        [32, train(MARINE, 4)],
+    ],
+});
+
+const bot = createAgent({ settings: { race: Race.TERRAN } });
+bot.use(reaperExpand);
+```
+
+#### Build targets
+
+`@target` and `opts.at` say where a step happens. The names are the `BuildTarget` constants of `@sc-bot/core/constants/build-target`.
+
+| Target | The point | A structure with this target |
+|---|---|---|
+| `RAMP` | Top of your main ramp | A [`placement`](#placement) request for the main base with the `wall` flag. When an enemy unit is within 10 of the ramp top the flag is dropped, so the builder isn't sent into them. |
+| `NAT_WALL` | Your natural's townhall position | The same request for the natural. Unlike ares, it keeps the `wall` flag when enemies are at the main ramp. |
+| `REAPER_WALL`, `SUPPLY`, `PRODUCTION`, `UPGRADE`, `BUNKER` | Your start location | A request with the flag `reaperWall`, `supplyDepot`, `production`, `upgradeStructure` or `bunker` |
+| `SPAWN`, `NAT`, `THIRD`, `FOURTH`, `FIFTH`, `SIXTH` | The townhall position of your 1st to 6th expansion, in `map.getExpansions()` order | A request for that base; a townhall goes on that base's townhall position |
+| `ENEMY_SPAWN`, `ENEMY_NAT`, `ENEMY_THIRD`, `ENEMY_FOURTH` | The townhall position of the enemy's 1st to 4th expansion (your start when there is none) | Placed with `actions.findPlacement` near the point (a proxy) |
+| `ENEMY_RAMP` | Top of the enemy main ramp from [`mapAnalysis.getEnemyMainRamp`](#mapanalysis), else the enemy spawn | Proxy near the point |
+| `ENEMY_NAT_VISION` | 10 from the enemy natural towards the map centre | Proxy near the point |
+| `MAP_CENTER` | The map centre | Proxy near the point |
+
+A gas step, a step without a target, and a townhall step whose target isn't one of your bases or an enemy-side or map-centre point use the builder's usual placement. Proxies use query placement, not the solver: with no placement near the point the step can't be satisfied and is retried each step.
+
+Scout waypoints are expanded per target. `SPAWN` and `ENEMY_SPAWN` circle that main along the perimeter of its [region](#mapanalysis): perimeter cells within 8 of the ramp top are dropped, the rest kept at least 4 apart, each moved 2 towards the base, and those that end up outside the region are dropped (ares keeps them). The enemy circuit starts next to the enemy ramp; with no region, or nothing left, it is the base position alone. `NAT` goes behind the natural's mineral line, and any other target is its point.
+
+#### Openings
+
+An opening is a named build order with options. A build system takes them instead of `buildOrder`:
+
+| Field | Meaning |
+|---|---|
+| `buildOrder` | Steps, as above |
+| `constantWorkerProductionTill` | A worker supply. Above 0, the opening trains workers constantly up to it and runs in [supply-gate mode](#workers-and-supply-gate-mode). |
+| `autoSupplyAtSupply` | From this supply used on, the [`autoSupply`](#controllers) controller runs every step while the order is active (not paused and not complete) |
+| `persistentWorker` | `false` turns off the [persistent builder](#scouts-and-the-persistent-builder) (default on; Terran and Protoss only) |
+
+```ts
+import { createSystem } from '@sc-bot/core';
+import type { World } from '@sc-bot/core';
+import { Race } from '@sc-bot/core/constants/enums';
+
+const macro = createSystem({
+    name: 'Macro',
+    type: 'build',
+    openings: {
+        reaperExpand: {
+            buildOrder: ['14 supply @ramp', '16 barracks @ramp', '16 gas', '19 orbital', '20 expand @nat'],
+            constantWorkerProductionTill: 44,
+            autoSupplyAtSupply: 30,
+        },
+        threeRax: { buildOrder: ['14 supply @ramp', '16 barracks @ramp', '20 barracks x2'] },
+    },
+    opening: ({ agent }: World) => (agent.opponent?.race === Race.ZERG ? 'threeRax' : 'reaperExpand'),
+});
+```
+
+Which opening runs is decided once, at game start. `opening` as a string or a function of the world picks it directly. Without `opening`, [`openings.choose`](#openings-1) picks one of the opening names, by the choices and history below. An unknown name, or none to pick, throws `NodeSC2Error` listing the available names. When both `openings` and `buildOrder` are set, `buildOrder` is ignored with a warning.
+
+`openings: 'config'` takes the definitions from the config file's `resources.openings` section instead, so builds change without editing code:
+
+```json
+{
+    "resources": {
+        "openings": {
+            "builds": {
+                "reaperExpand": { "buildOrder": ["14 supply @ramp", "16 barracks @ramp", "16 gas", "19 orbital", "20 expand @nat"], "constantWorkerProductionTill": 44 },
+                "threeRax": { "buildOrder": ["14 supply @ramp", "16 barracks @ramp", "20 barracks x2"] }
+            },
+            "choices": { "Zerg": ["threeRax", "reaperExpand"] },
+            "method": "winrate",
+            "minGames": 3,
+            "dataDir": "data"
+        }
+    }
+}
+```
+
+**Choosing.** `choices` maps an opponent id, or an enemy race name (`Terran`, `Zerg`, `Protoss`, `Random`; `Random` is also used while the race is unknown), to the openings it may pick from. The opponent id wins over the race; with neither, every available opening is a candidate. A name that isn't available is left out, and with none left `choose` returns `undefined`. Two methods pick from the list:
+
+- `cycle` (the default) keeps the opening of the last recorded game after a victory and moves on to the next, wrapping, after a defeat, a tie or anything else. With no history, or a last opening that isn't in the list, it is the first.
+- `winrate` needs every listed opening to have at least `minGames` recorded games (default 3; above 10 it never applies), otherwise it cycles. It scores each opening by its last 10 games (no records scores 0) and takes the best. On a tie it takes the tied opening after the last one used, else the first.
+
+**History.** With `dataDir` set, each game appends a record to `<dataDir>/<opponent id or 'unknown'>-<your race>.json` when it ends. The directory is created, and the file exists when the game-end hook returns. Without `dataDir`, nothing is read or written. The file is in ares' own format (`EnemyRace`, `Duration`, `StrategyUsed`, and `Result` as 0 defeat, 1 tie, 2 victory), so an existing ares `data/` folder is reused. A file that isn't a JSON array warns and counts as empty; entries that don't parse are dropped with a warning and are gone from the file at the next write. A relative `dataDir` is relative to the working directory. Every opening chosen at game start is recorded, whether it came from `choose`, from `opening` as a string or from a function; a mid-game `switchOpening` isn't. No history is written for a replay, or for a game that crashed or lost its connection (resources get no game end for those).
+
+**Switching.** `this.switchOpening(name, { removeCompleted = true }?)` swaps the running opening for another, and `this.getOpening()` returns the current name (`undefined` before the game starts or without `openings`). Switching to the current opening does nothing; an unknown name throws `NodeSC2Error`. With `removeCompleted`, the new order skips what is already done, by ares' rules: the first townhall, one overlord and 12 workers count as done; a build or train step is dropped while you already have (or have pending) more of its type than steps dropped so far; an upgrade is dropped when it is researched or in progress; scout and chrono steps are always dropped. The switch also settles the order's earmarks, releases the persistent builder (the new opening picks its own), continues from the first remaining step and re-applies the new opening's supply-gate setting.
+
+`openings.record(name)` belongs to the runner: it sets the opening that goes into the history at game end. A bot that calls it overwrites that name and corrupts the winrate data. Use `opening` and `switchOpening` instead.
+
+#### Workers and supply-gate mode
+
+By default the builder fills workers: for `[supply, task]` pairs it trains workers until the step's supply is reached, as described above. `buildOptions: { fillWorkers: false }` on the system switches to ares' supply-gate mode: no workers are inserted, and a step with a supply that hasn't started waits until your supply used reaches it; a started step still completes, or resets after 250 loops and then waits. An opening with `constantWorkerProductionTill` above 0 sets `fillWorkers` to `false` for as long as it is the current opening, so the two never stack; an opening without it leaves the system's own setting (default `true`). Like the other opening options, it acts only while the order is active (not paused and not complete). Constant production trains a worker on an idle finished townhall each step while worker supply is under the limit, supply is left and the worker is affordable. It holds back while the current step is a townhall morph whose supply is reached (an orbital also needs its tech requirement 95% done), so the townhall is free for the morph.
+
+#### Scouts and the persistent builder
+
+A worker scout takes a worker through `mining.selectWorker` when [`mining`](#mining) is enabled, else the `GATHERING` mineral worker closest to the main townhall, and gives it the role `BUILD_RUNNER_SCOUT`. A worker carrying resources returns them first; then it moves through the waypoints with queued moves, as owner `role:BUILD_RUNNER_SCOUT`. Without a worker the step can't be satisfied, so the order waits for one. An overlord scout is the first overlord without that role. A scout keeps its role after the last waypoint and isn't given back to mining.
+
+With `persistentWorker` on, a Terran or Protoss opening keeps one builder. At 3 seconds, when its first supply structure is at 13 supply or less or at `NAT`, else at 9 seconds, it takes a worker with the role `PERSISTENT_BUILDER` and moves it to the placement point of that structure. That worker is handed to the builds that go through the [tracker](#buildings) (targeted steps such as `'expand @nat'`, `placer` positions and the placement solver), unless it is busy on a tracked build. Gas, an untargeted townhall, add-ons and the `actions.findPlacement` fallback pick their own worker. It goes back to mining when the opening completes, on `switchOpening`, and for Protoss also once a pylon step completes.
 
 ### Unit systems
 
@@ -605,12 +758,190 @@ A system with `type: 'unit'` manages units by type (`units: [...]`) and/or label
 - `onUnitDestroyed` only for matching units.
 - `onStep(world, { all, unlabeled, labeled })`: the matching finished units, grouped (`UnitSystemUnits`).
 
+## Behaviors and controllers
+
+A behavior is a small named object whose `execute(ctx)` orders units and returns whether it acted. They are ares-sc2's combat behaviors and macro behaviors (called controllers here) as factory functions: `stutterUnitBack({ unit, target })`, `spawnController({ composition })`. You compose them in a [`plan`](#plan) and run it every step with the `behaviors` resource, instead of hand-coding per-unit micro and macro rules. Import the factories from the `@sc-bot/core/behaviors` subpath, not the package root.
+
+```ts
+interface Behavior {
+    readonly name: string;
+    execute(ctx: BehaviorContext): boolean | Promise<boolean>; // true: it acted
+}
+interface BehaviorContext {
+    world: World;
+    order(units: Unit | Unit[], abilityId: number, target?: Point2D | Unit, opts?: { queue?: boolean }): boolean;
+    hasOrdered(unit: Unit | string): boolean;
+}
+```
+
+Most combat behaviors are synchronous, but `keepGroupSafe` is asynchronous; controllers are mixed (`spawnController`, `buildWorkers`, `autoSupply`, `techUp`, `upgradeController` and `productionController` return promises, since they await the [macro helpers](#macro-helpers); `buildStructure`, `expansionController`, `gasBuildingController` and `upgradeCCs` are synchronous). `behaviors.run` always returns a promise.
+
+### Running a behavior
+
+`behaviors.run(behavior, { role?, priority? }) => Promise<boolean>` runs the behavior now, in the commander context of the caller, and resolves with its result. Commands it proposes are arbitrated and sent at the end of the step like any others (see [Command arbitration](#command-arbitration)); nothing is deferred until after the step, as it is in ares.
+
+- `run(b)`: owner and priority are the caller's (the agent's handlers, or the system that calls it).
+- `run(b, { priority })`: the same owner at that priority.
+- `run(b, { role })`: as `roles.as(role, ...)`, so the owner is `'role:<ROLE>'`, which an [exclusive role](#roles) requires. `priority` defaults to the caller's.
+
+**One action per unit per step per owner.** `ctx.order` drops a unit that the same owner already ordered in the same game loop: the second non-queued order is ignored, and `order` returns `false` when no unit is left. `queue: true` orders are always allowed. `ctx.hasOrdered(unit)` tells you whether the owner ordered the unit this loop. Another owner isn't blocked: it can order the same unit, and the arbiter keeps one owner per unit. Inside a [plan](#plan), the first behavior to order a unit wins it.
+
+### plan
+
+`plan(...behaviors) => Behavior` runs the behaviors in order and stops at the first one that returns `true`; it returns `false` when none did. It handles synchronous and asynchronous behaviors in any mix, and replaces ares' `CombatManeuver` and `MacroPlan`.
+
+### Combat helpers
+
+Plain functions, exported next to the behaviors.
+
+| Function | What it does |
+|---|---|
+| `attackReady(unit, target, stepLoops = 4)` | `true` when the unit can hit the target and its weapon is ready within `stepLoops` game loops, or, while cooling down, when the gap between the target and the unit's range is at least `unit.distanceToWeaponReady()` (the unit can't be in range before the weapon is ready). `false` when it can't hit the target |
+| `inAttackRange(unit, targets, extraRange = 0)` | The targets the unit can hit from where it stands |
+| `pickEnemyTarget(targets)` | The target with the lowest health plus shield |
+| `duplicateOrSimilarOrder(world, unit, target, abilityId, distanceSquaredCheck = 2)` | `true` when the unit is within `distanceSquaredCheck` (a squared distance) of the target, or its current order has the same ability (a specific ability counts as its general one) and the same unit target or the same target position rounded to whole cells |
+| `groupWeaponsOnCooldown(group, stutterForward)` | `true` when the group's average weapon cooldown is above 2.5 (`stutterForward`) or above 5 |
+| `center(units)`, `towards(from, to, step)` | The average position of the units; the point `step` from `from` towards `to` |
+| `ownUnitCount(world, unitType)`, `structurePending(world, unitType)` | Your units of a type plus those in production; structures of a type that are being built, from tracked builds plus unfinished structures the tracker doesn't know, never counting one twice |
+
+### Individual combat behaviors
+
+Every behavior takes one options object. `target` is a `Point2D` or a `Unit` unless noted. `layer` is an [influence](#influence) layer (`'ground'`, `'air'`, `'groundAvoidance'`, `'airAvoidance'`) and defaults to `'air'` for a flying unit and `'ground'` otherwise.
+
+| Behavior | Options (defaults) | Orders, and returns `true` when |
+|---|---|---|
+| `aMove` | `unit`, `target`, `successAtDistance = 7` | Attack-moves. `false`, with no order, when the unit is already within `successAtDistance` of the target (`0` turns the check off) |
+| `attackTarget` | `unit`, `target` | Always: attacks the target |
+| `shootTargetInRange` | `unit`, `targets: Unit[]`, `extraRange = 0` | A target is in range and the weapon is ready: attacks the one with the lowest health plus shield, or does nothing when the unit is already shooting an in-range target with its weapon ready. Ignores targets that aren't current (ghosts) and cloaked ones. `false` when nothing is in range or the weapon won't be ready in time |
+| `useAbility` | `unit`, `abilityId`, `target?` | The ability is available to the unit (`unit.abilityAvailable`) |
+| `stutterUnitForward` | `unit`, `target: Unit` | Always: attacks when `attackReady`, otherwise moves to the target |
+| `stutterUnitBack` | `unit`, `target: Unit`, `layer?` | Attacks when `attackReady`; otherwise runs `keepUnitSafe` and returns its result |
+| `keepUnitSafe` | `unit`, `layer?` | The unit stands on a dangerous cell and a safe spot exists: paths to the closest safe spot. `false` when it is already safe |
+| `pathUnitToTarget` | `unit`, `target: Point2D`, `layer?`, `successAtDistance = 0`, `sensitivity = 5`, `senseDanger = true`, `dangerDistance = 20`, `dangerThreshold = 5` | Moves to `pathing.nextPoint(unit.pos, target, ...)`. `false` when the unit is already within `successAtDistance` |
+| `moveToSafeTarget` | `unit`, `target: Point2D`, `layer?`, `usePathing = true`, `successAtDistance = 1`, `radius = 12`, and the `pathUnitToTarget` path options | Moves to the safe spot closest to the target within `radius` of it, by pathing (or a plain move without `usePathing`). `false` when the unit is within `successAtDistance` of the target or no safe spot exists |
+| `shootAndMoveToTarget` | `unit`, `enemies: Unit[]`, `target: Point2D`, `layer?`, `distToTarget = 4`, `attackDestructables = true` | `shootTargetInRange` on the enemies, then on destructables, then `pathUnitToTarget` with `successAtDistance = distToTarget` |
+| `workerKiteBack` | `unit`, `target: Unit`, `shouldAttack = true` | Attacks the target when `shouldAttack`, it is current and `attackReady`. Otherwise gathers: with no ground enemy within 6.5 (larva, eggs, creep tumors, MULEs and changelings don't count), at the mineral field closest to your main; with one, at a field on the far side of the worker from the enemies and at least 4 away, falling back to that same field. `false` when there are no mineral fields |
+
+### Terran behaviors
+
+| Behavior | Options (defaults) | What it does |
+|---|---|---|
+| `medivacHeal` | `unit`, `allies: Unit[]`, `layer?`, `keepSafe = true` | `false` for anything but a medivac. Runs `keepUnitSafe` first (with `keepSafe`); `true` when already healing; otherwise heals the closest hurt biological, non-mechanical ally (an SCV is mechanical, so it is ignored). `false` when no ally is hurt |
+| `pickUpCargo` | `unit`, `targets: Unit[]`, `layer?`, `switchCargoToRole?` | For a medivac, warp prism or overlord transport (pickup range 5): `SMART`s the closest target when in range, else paths to it. With no targets (or any other unit type) it gives the passengers `switchCargoToRole`, when set, and returns `false` |
+| `dropCargo` | `unit` | Unloads everything at the unit's own position. `false` when the unit carries nothing or is on an unpathable cell |
+| `pickUpAndDropCargo` | `unit`, `targets`, `target: Point2D`, `layer?`, `switchCargoToRole?`, `shouldDropUnits = true`, `keepDropshipSafe = true`, `successAtDistance = 2` | `plan(pickUpCargo, pathUnitToTarget, dropCargo, keepUnitSafe)`, the last two only with their option on |
+| `siegeTankDecision` | `unit`, `closeEnemy: Unit[]`, `target: Point2D`, `staySiegedNearTarget = false`, `remainSieged = false`, `forceUnsiege = false` | `false` for anything but a tank. Flying enemies (by the enemy's own flying state), burrowed ones and changelings are ignored. An unsieged tank sieges when no enemy is within 6.5 and there is a bunker, planetary fortress, spine crawler or cannon within 13, or it is within 5 of `target` with `staySiegedNearTarget`, or the enemies near it come to at least 4 supply and number more than one, or one is a tank; otherwise `false`. A sieged tank unsieges with `forceUnsiege`, or when an enemy is within 4 and fewer than two are within 12. Otherwise it returns `false` with `remainSieged`, within 7 of `target` with `staySiegedNearTarget`, or when three or more of your ground units are already ahead of it on the way to `target`; in the remaining case it unsieges when no relevant enemy is near and the target is more than about 14 away, and returns `true` |
+
+### Group behaviors
+
+A group behavior commands the whole group with one multi-unit order. Where it says "skips a duplicate", it sends no order (and returns `false`) when a sample unit of the group already has a duplicate or similar order.
+
+| Behavior | Options (defaults) | What it does |
+|---|---|---|
+| `aMoveGroup` | `group`, `target` | Attack-moves the group; skips a duplicate, judged on the unit farthest from the target. `false` for an empty group |
+| `keepGroupSafe` | `group`, `closeEnemy`, `layer?`, `attackInRangeEnemy = true` | Per unit: shoots a target in range (`shootTargetInRange` on `closeEnemy`), otherwise `keepUnitSafe`. `true` when any unit moved to safety |
+| `pathGroupToTarget` | `start`, `group`, `target: Point2D`, `layer?`, `distanceCheckSquared = 26.25`, `successAtDistance = 0`, `sensitivity = 12`, `senseDanger = false`, `dangerDistance = 20`, `dangerThreshold = 5`, `preventDuplicate = true` | Moves the group to `pathing.nextPoint(start, target, ...)`. `false` within `successAtDistance` of the target, or, with `preventDuplicate`, when the unit closest to `start` is within `distanceCheckSquared` (squared) of a similar move |
+| `stutterGroupBack` | `group`, `groupPosition`, `target`, `layer?` | `true` for any non-empty group. With an average cooldown of 5 or less it attacks the target (skipping a duplicate). While cooling down it does nothing when every unit is safe; otherwise it moves the group to the closest safe spot to the best of eight directions away from the target, clamped to the map and to cells that aren't blocked |
+| `stutterGroupForward` | `group`, `target`, `enemies` (`groupPosition` is accepted and unused) | `false` for an empty group or no enemies. Attacks the enemies' centre when every unit has an enemy in range or the average cooldown is 2.5 or less, otherwise moves to it; skips a duplicate; `true` |
+| `groupUseAbility` | `abilityId`, `group`, `target?`, `syncCommand = true` | Uses the ability with the whole group when every unit has it available (`syncCommand`) or when any unit has |
+
+### Controllers
+
+Macro behaviors, built on the agent's macro helpers, the [`buildings`](#buildings) tracker and [`placement`](#placement). Spend is deducted from `agent.minerals` and `agent.vespene` when the command is proposed, so controllers later in the same plan see what is left. A controller returns `true` when it started something, or, for `autoSupply`, `upgradeCCs` and `upgradeController`, when it is saving up, so the plan stops there.
+
+| Controller | Options (defaults) | What it does |
+|---|---|---|
+| `spawnController` | `composition`, `freeflow = false`, `ignoreProportionsBelowUnitCount = 0`, `overProduceOnLowTech = true`, `maximum = 20`, `spawnTarget?` | Trains toward `composition` (see below). Throws `NodeSC2Error` when created with an invalid composition |
+| `buildWorkers` | `toCount` | Trains workers until you have `toCount`. `false` when you have enough or can't afford one |
+| `buildStructure` | `structureType`, `base?`, `maxOnRoute = 1`, `closestTo?`, `toCount = 0`, `techProgressCheck = 0.85`, `flags?`, `findAlternative = true` | Requests the structure through `buildings.build` with a placement request (`base`, `closestTo`, `flags`, `findAlternative`); `true` when a build started. `false` for Zerg, at `maxOnRoute` builds moving or ordered, when `toCount` (above 0) is reached by finished plus pending structures, or when the required tech is under `techProgressCheck` |
+| `autoSupply` | `base?`, `closestTo?`, `returnTrueIfSupplyRequired = true` | Builds supply by ares' thresholds. Terran and Protoss: when supply left is at most max(5, 2 per production structure) and fewer supply structures than half the production structure count (rounded up) are pending, up to 6 at a time; with no production structure, at 2 left and none pending. Terran depots use the `supplyDepot` placement flag. Zerg trains overlords by ares' rules on townhalls, and returns `true` once one is trained whatever the option says. Otherwise returns `returnTrueIfSupplyRequired` whenever supply is required, whether or not it could build; `false` otherwise, and at the 200 supply cap |
+| `expansionController` | `toCount`, `canAffordCheck = true`, `checkLocationIsSafe = true`, `maxPending = 1`, `prioritize = false` | Builds a townhall at the first free expansion that can be placed on and, with `checkLocationIsSafe`, is safe by `pathing.isPositionSafe`. `false` when townhalls (finished plus pending) reach `toCount`, `maxPending` are pending, or you can't afford one (`prioritize` skips the affordability check) |
+| `gasBuildingController` | `toCount`, `maxPending = 1` | Builds gas buildings through `buildings.buildGas` until you have `toCount` (built, plus tracked builds not started). `false` at `toCount`, at `maxPending` pending, or under 35 minerals |
+| `upgradeCCs` | `to: ORBITALCOMMAND \| PLANETARYFORTRESS`, `prioritize = false` | Morphs the first finished idle command center. `false` with none, or when the required structure (barracks, engineering bay) isn't done; when you can't afford it, returns `prioritize` |
+| `techUp` | `desired: { unit } \| { upgrade }`, `base?`, `ignoreExistingTechlabs = false` | Does the next missing step towards training the unit or researching the upgrade: builds the producing or researching structure and what it requires through `buildStructure`, adds a tech lab to an idle barracks, factory or starport without an add-on (not while one of that type already has an idle tech lab, or any tech lab of that type exists, which `ignoreExistingTechlabs` overrides; and never while another idle one of that type has an add-on of any kind), or morphs a lair or hive. `true` when it started a step |
+| `upgradeController` | `upgrades: number[]`, `base?`, `autoTechUp = true`, `prioritize = false` | Goes through the list in order, skipping upgrades that are owned or researching. Researches the first it can (`agent.research`), after `techUp` has built the research structure or required building (an armory for level 2 weapons) when `autoTechUp` is on. With `prioritize` and an upgrade it can't afford yet, returns `true` to hold the bank |
+| `productionController` | `composition`, `base`, `addProductionAtBank = [400, 400]`, `alpha = 0.9`, `unitPendingProgress = 0.75`, `maxProductionStructures = 12` | Adds production structures for the composition (see below). `false` for Zerg |
+
+**Composition.** `ArmyComposition` maps a unit type to `{ proportion, priority }`: its share of the army (the proportions sum to 1, within 1e-6) and its priority, an integer from 0 to 10 (lower trains first). `spawnController` throws `NodeSC2Error` at creation for any other sum or priority, unless `freeflow` is set. Each step it goes through the types by priority. For each type that has its tech and an idle producer (a finished structure, powered for Protoss, with a free slot: two with a finished reactor, a tech lab for the units that need one) it skips the type when its share of the composition, units in production included, is already above its proportion, and otherwise trains up to `maximum`, limited by money and supply. When it can't afford a type it stops there, so cheaper types further down don't starve it; `freeflow` carries on instead. `freeflow`, or a total below `ignoreProportionsBelowUnitCount`, ignores the proportions. With `overProduceOnLowTech`, when only one type has its tech it tops that type up to `maximum`. Once warp gate research is done it returns `false` while a finished gateway is idle, so the gateway can morph.
+
+**Production.** For each type, `productionController` first runs `techUp` (keeping existing tech labs while the type's share is at or under its proportion), then adds the producing structure when either rule holds. The bank rule: minerals and gas are at or above `addProductionAtBank` and there are fewer producers than the income supports, scaled by `alpha` and the type's proportion. The income rule: the type's share is under its proportion divided by 1.2, no producer is idle, nearly done with its order (`unitPendingProgress`) or nearly built, there are fewer producers than the income pays for (rounded down), no producer of a Terran army is in a [flight plan](#flying) within 19 of `base`, and fewer producers are pending than income / 1000 (rounded down, so below 1000 combined collection income it never builds this way). It stops adding at `maxProductionStructures` (counted over all producer types of the unit, a gateway and a warp gate together) and skips a type whose producer's tech is under 95%. Income comes from `frame.getScore()`, which needs `score: true` in the agent's `interface` (the default has it).
+
+```ts
+import { canWinFight } from '@sc-bot/core';
+import type { World } from '@sc-bot/core';
+import { aMoveGroup, keepGroupSafe, plan, stutterGroupForward } from '@sc-bot/core/behaviors';
+import { VICTORY_CLOSE } from '@sc-bot/core/constants/engagement-result';
+import { ATTACKING } from '@sc-bot/core/constants/unit-role';
+
+export async function onStep({ resources }: World) {
+    const { behaviors, map, roles, spatial, squads } = resources.get();
+    const group = roles.get(ATTACKING).filter((unit) => unit.isCombatUnit());
+    if (group.length === 0) return;
+
+    const position = squads.getMainSquadPosition(ATTACKING);
+    const enemies = [...spatial.unitsInRange(position, 14, 'enemyGround')];
+    const target = map.getEnemyNatural().townhallPosition;
+
+    const winning = enemies.length === 0 || canWinFight(group, enemies) >= VICTORY_CLOSE;
+    await behaviors.run(
+        winning
+            ? plan(stutterGroupForward({ group, target, enemies }), aMoveGroup({ group, target }))
+            : keepGroupSafe({ group, closeEnemy: enemies }),
+        { role: ATTACKING },
+    );
+}
+```
+
+```ts
+import { createAgent } from '@sc-bot/core';
+import type { World } from '@sc-bot/core';
+import {
+    autoSupply,
+    buildWorkers,
+    expansionController,
+    plan,
+    productionController,
+    spawnController,
+    upgradeCCs,
+    upgradeController,
+} from '@sc-bot/core/behaviors';
+import { Race } from '@sc-bot/core/constants/enums';
+import { MARAUDER, MARINE, ORBITALCOMMAND } from '@sc-bot/core/constants/unit-type';
+import { STIMPACK } from '@sc-bot/core/constants/upgrade';
+
+const composition = {
+    [MARINE]: { proportion: 0.8, priority: 1 },
+    [MARAUDER]: { proportion: 0.2, priority: 0 },
+};
+
+export const bot = createAgent({
+    settings: { race: Race.TERRAN },
+    async onStep({ resources }: World) {
+        const { behaviors, map } = resources.get();
+        const base = map.getMain().townhallPosition;
+        await behaviors.run(
+            plan(
+                autoSupply({ base }),
+                buildWorkers({ toCount: 44 }),
+                expansionController({ toCount: 3 }),
+                upgradeCCs({ to: ORBITALCOMMAND }),
+                upgradeController({ upgrades: [STIMPACK], base }),
+                productionController({ composition, base }),
+                spawnController({ composition }),
+            ),
+        );
+    },
+});
+```
+
+The macro plan runs as the agent's own commander. Controllers that build go through `buildings`, whose commands are proposed as the `BUILDING` role. [`examples/behaviors-bot.ts`](examples/behaviors-bot.ts) is a complete Terran bio bot made only of controllers and behaviors.
+
 ## Resources
 
 `world.resources.get()` returns the resources, best destructured:
 
 ```text
-const { actions, events, frame, map, units, debug, memory, spatial, influence, pathing, roles, squads, intel, placement, buildings, mining, flying, mapAnalysis } = resources.get();
+const { actions, events, frame, map, units, debug, memory, spatial, influence, pathing, roles, squads, intel, placement, buildings, mining, flying, mapAnalysis, behaviors, openings } = resources.get();
 ```
 
 Bots and plugins can add their own; see [Custom resources](#custom-resources).
@@ -975,7 +1306,7 @@ export async function onGameStart({ resources }: World) {
 | `getGameLoop()` | The current game loop |
 | `time()`, `timeFormatted()`, `timeInSeconds()` | Game seconds; `'MM:SS'`; rounded seconds (old node-sc2 formula) |
 | `getObservation()`, `getGameInfo()`, `getMapState()`, `getPrevious()` | Raw data |
-| `getScore()` | `SC2APIProtocol.Score`; needs `score: true` in the agent's `interface` |
+| `getScore()` | `SC2APIProtocol.Score`; needs `score: true` in the agent's `interface` (the default has it) |
 | `getAlerts()`, `hasAlert(alert)` | Alerts such as a detected nuke |
 | `getActionErrors()` | Commands SC2 rejected in the last step |
 | `getEffects()` | Active effects |
@@ -1477,9 +1808,47 @@ export async function onStep({ resources }: World) {
 }
 ```
 
+### openings
+
+Holds the opening definitions and settings, picks an opening per game and keeps the per-opponent history. A [build system](#openings) uses it; you rarely call it yourself. The opening rules (choosing, history file, cycle and winrate) are described there.
+
+| Member | What it does |
+|---|---|
+| `configure(settings)` | Merges settings: `builds` (name to [opening definition](#openings)), `choices` (opponent id or race name to opening names), `method` (`'cycle'` default or `'winrate'`), `minGames` (3), `dataDir` (unset: no history). Also set by the config file's `resources.openings`. Settings survive a new game on the same engine. |
+| `getDefinitions()` | The configured `builds` |
+| `choose(available?)` | The opening for this game, or `undefined` when no candidate is left. `available` defaults to every name in `builds`. Decided once per game and then returned unchanged; with `dataDir` it reads the history file. |
+| `getChosen()` | The opening recorded for this game, `undefined` before one is chosen |
+| `getHistory()` | The `OpeningRecord`s (`{ race, duration, opening, result }`) read for this game, plus the one appended at game end |
+| `record(name)` | Runner-internal: sets the opening that goes into the history at game end. Don't call it from a bot; it overwrites the name and corrupts the winrate data. |
+
+At game end, with `dataDir` set, an opening recorded and the game not a replay, the resource appends `{ race: the opponent's, duration in seconds, opening, result for your player }` and writes the whole file synchronously. The chosen name and the history are cleared by a game reset.
+
+```ts
+import { createSystem } from '@sc-bot/core';
+import type { World } from '@sc-bot/core';
+
+export const macro = createSystem({
+    name: 'Macro',
+    type: 'build',
+    openings: 'config',
+    setup({ resources }: World) {
+        resources.get().openings.configure({
+            builds: {
+                reaperExpand: { buildOrder: ['14 supply @ramp', '16 barracks @ramp', '20 expand @nat'] },
+                threeRax: { buildOrder: ['14 supply @ramp', '16 barracks @ramp', '20 barracks x2'] },
+            },
+            method: 'winrate',
+            dataDir: 'data',
+        });
+    },
+});
+```
+
 ### Custom resources
 
 A resource is registered from a definition: a `name`, a `create(world)` factory and an optional `reset(resource, world)`. `world.resources.register(definition)` creates the resource and returns it; call it from a system's `setup`, which runs every game. Registering the same definition object again returns the existing resource; registering another definition under a taken name throws `NodeSC2Error`. Declare the resource's type by augmenting the `ResourceContainer` interface of `@sc-bot/core/types` (augmenting `@sc-bot/core` itself doesn't merge). The key is typed as present before `register` has run, so register it before anything reads it.
+
+A definition can also have an `onGameEnd(resource, world, results)` hook, run when a game ends with the `PlayerResult[]`. Hooks run in registration order, before the engine's own `onGameEnd` option, and must be synchronous. A throwing hook is logged and doesn't stop the next. A game that crashes or loses its connection (`ConnectionClosedError` or an unknown error) doesn't reach them, so persist per-game data you can't lose some other way; a replay ends the same as a game, so check for it yourself. `world.resources.endGame(world, results)` runs the hooks; the engine calls it, you shouldn't.
 
 When a new game starts on the same engine, every registered resource is reset in registration order, keeping its identity, so references held from `resources.get()` stay valid. `reset` runs when given; without it, a fresh `create(world)` is assigned onto the existing object. Resources added with `resources.set()` are left alone.
 
@@ -1564,7 +1933,7 @@ export async function onStep({ resources }: World) {
 
 ### Build orders
 
-`parseBuildOrder(steps, race)` turns ares-style build order strings into the `[supply, task]` pairs of a build system's `buildOrder`, and returns them. A string step is `'<supply> <command> [@target ...] [x<n>]'`, case-insensitive: the command is a unit type, an upgrade, or one of `WORKER`, `SUPPLY`, `GAS`, `EXPAND`, `GATE`, `CORE`, `ORBITAL`, `CANCEL_GAS`, `CHRONO`, `WORKER_SCOUT`, `OVERLORD_SCOUT` and `ADDONSWAP`, with the race-specific ones resolved for `race`. Targets are the `BuildTarget` names of `@sc-bot/core/constants/build-target`, and `x<n>` repeats the step. An object step `{ '<supply> worker_scout': [targets] }` gives the scout its waypoints. `[supply, task]` pairs pass through unchanged. An invalid step throws `NodeSC2Error` naming it.
+`parseBuildOrder(steps, race)` turns ares-style build order strings into the `[supply, task]` pairs of a build system's `buildOrder`, and returns them. A string step is `'<supply> <command> [@target ...] [x<n>]'`, case-insensitive: the command is a unit type, an upgrade, or one of `WORKER`, `SUPPLY`, `GAS`, `EXPAND`, `GATE`, `CORE`, `ORBITAL`, `CANCEL_GAS`, `CHRONO`, `WORKER_SCOUT`, `OVERLORD_SCOUT` and `ADDONSWAP`, with the race-specific ones resolved for `race`. Targets are the `BuildTarget` names of `@sc-bot/core/constants/build-target`, and `x<n>` repeats the step. An object step `{ '<supply> worker_scout': [targets] }` gives the scout its waypoints. The grammar, the targets and how a build system runs them are described under [Build systems](#string-steps). `[supply, task]` pairs pass through unchanged. An invalid step throws `NodeSC2Error` naming it.
 
 ```ts
 import { parseBuildOrder } from '@sc-bot/core';
@@ -1660,6 +2029,21 @@ Where ares-sc2 does something this library deliberately doesn't:
 - **JSON config.** The config file is JSON (`sc-bot.config.json`) with a fixed set of keys, where ares reads YAML.
 - **Chat debug.** It only handles your own chat and is off unless `features.chatDebug` is set.
 - **Workers per gas.** It is an option of each `distributeWorkers` call, not a persistent setting as with ares' mediator. [`mining`](#mining) takes the same name in its own settings.
+- **Immediate execution.** `behaviors.run` executes the behavior at once, in the caller's commander context; ares collects behaviors and runs them after the step.
+- **Per-owner dedupe.** A unit is ordered once per game loop per owner by `ctx.order`, and the arbiter keeps one owner per unit. ares allows one action per unit across all owners, which would let a low-priority system block a high-priority one here.
+- **Factories, one `plan`.** Behaviors are factory functions returning plain objects, with ares' option names in camelCase, not dataclasses. One `plan` replaces `CombatManeuver` and `MacroPlan`, which behave the same.
+- **Dropped options.** `smoothing`, `ignored_build_from_tags`, `to_count_per_base` and the `good_positioning` of the combat sim have no counterpart.
+- **Siege tank and flyers.** `siegeTankDecision` ignores enemies by their own flying state. ares tests the tank's type, so it never excludes a flyer.
+- **`spawnController`.** It doesn't morph units (banelings, ravagers, archons) and validates the composition when you create it, not every step.
+- **Zerg placement.** Zerg structures aren't placed (see Known limitations), so `buildStructure` and `productionController` return `false` for Zerg.
+- **JSON openings.** Openings live in `sc-bot.config.json` under `resources.openings` (or in the blueprint), where ares reads YAML.
+- **Strict order, no look-ahead.** A step runs only when every step before it is done; ares may run a later step when minerals are above 470.
+- **Fill workers by default.** With supply tuples the builder trains workers until a step's supply is reached, as it always has; ares' supply gate (no insertion, a step waits for its supply) is `buildOptions.fillWorkers: false`, and an opening with `constantWorkerProductionTill` sets it.
+- **Proxies use query placement.** A structure at an enemy-side target or `MAP_CENTER` is placed with `actions.findPlacement` near the point, not by the placement solver.
+- **No gas-steal step.** `GAS` always builds on your own geysers, even with a target, and nothing reacts to the enemy taking your gas. `ENEMY_NAT_HG_SPOT` isn't supported and throws, the overlord-spot follow-up after an overlord scout isn't ported, and the Protoss build doesn't start at `supply - 1`.
+- **Scout waypoints.** Waypoints that the inset pushes outside the region are dropped, where ares keeps them.
+- **`NAT_WALL` with enemies at the main ramp.** It keeps its wall flag, where ares drops it.
+- **Unknown upgrades.** A step naming an upgrade that isn't in the game data fails at game start; ares' `tempestgroundattackupgrade` is one.
 - **Roles aren't labels.** Roles live in the `roles` resource. Unit systems give labelled units special handling, so storing roles as labels would change how every unit with a default role is dispatched.
 
 ## Changes compared to node-sc2
@@ -1752,6 +2136,7 @@ The test helpers live inside the package and aren't part of its exports, so they
 - Influence has no climber, air-vs-ground, ground-to-air, tactical or priority grids, and ignores KD8 charges, parasitic bombs and force fields (see [Where this library differs from ares-sc2](#where-this-library-differs-from-ares-sc2)).
 - The fight simulation (`simulateFight`, `canWinFight`) doesn't model splash, healing (medivacs, transfuse, repair), spells, terrain, chokes or high ground, bunker passengers, or micro; units don't move apart from the `timingAdjust` start delay. A sieged tank's minimum range is judged on the starting positions, so a unit that would walk inside it still gets shelled. As in the rest of the combat math, upgrade-dependent bonuses (range, attack speed, ...) count for your own units only.
 - Overlord and scout spots are not implemented.
+- Not ported from ares: ghost snipe, reaper grenade, raven auto-turret, area-of-effect abilities and predictive spell use, transfuse, queen creep and inject, creep tumors, nydus, restore power, Protoss static defence, and the archon, baneling and ravager morphs. There is no Zerg production controller, and Zerg structure placement isn't supported.
 - Placement does no burrowed-unit or blocked-spot detection beyond the placement grid, and Zerg has no precomputed spots.
 - Mining has no vespene boost, and speed mining is weaker at the default step of 4 game loops than at 2 or 1.
 - The launcher waits for a freshly started SC2 to listen on its port without a timeout.
@@ -1767,6 +2152,7 @@ Small runnable bots live in [`examples/`](examples). Each needs SC2 installed. T
 - `bun run examples/bot-vs-bot.ts` (`runBotVsBot`)
 - `bun run examples/watch-replay.ts <replay> [observedPlayerId]` (`runReplay`)
 - `bun run examples/ladder.ts` (started by a ladder manager with `--LadderServer`, `--GamePort`, `--StartPort`)
+- `bun run examples/behaviors-bot.ts` (a Terran bio bot of only [controllers and behaviors](#behaviors-and-controllers): macro plan, squads, `canWinFight`, medivac heal; against the built-in AI, as `worker-rush.ts`)
 - [`examples/tutorial.ts`](examples/tutorial.ts) is a build system (an eight-gate all-in) to mount on an agent. It builds no pylons and has no supply handling, so as is its gateways can't be placed; add pylons to the order before using it.
 
 ## More documentation

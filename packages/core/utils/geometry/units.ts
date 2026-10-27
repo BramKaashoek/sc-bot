@@ -1,4 +1,6 @@
-import type { AAShape, Footprint, Point2D, UnitTypeId } from '../../types.ts';
+import type { AAShape, Footprint, Point2D, UnitTypeId, World } from '../../types.ts';
+import { cellsInFootprint } from './plane.ts';
+import { createPoint2D } from './point.ts';
 import * as UnitType from '../../constants/unit-type.ts';
 import { Attribute } from '../../constants/enums.ts';
 import {
@@ -132,4 +134,41 @@ function getFootprint(unitType: UnitTypeId, data?: FootprintData): Footprint | u
     }
 }
 
-export { MineralField, Townhall, VespeneGeyser, getFootprint };
+const footprintData = (world: World): FootprintData => ({
+    units: world.data.get('units'),
+    abilities: world.data.get('abilities'),
+});
+
+function footprintCells(world: World, unitType: UnitTypeId, pos: Point2D): Point2D[] {
+    return cellsInFootprint(createPoint2D(pos), getFootprint(unitType, footprintData(world))!);
+}
+
+type PathingRule = (unitType: UnitTypeId, cells: Point2D[], pos: Point2D) => Point2D[] | undefined;
+
+const cornerPathableTypes: UnitTypeId[] = [...townhallTypes, UnitType.NYDUSCANAL];
+
+// SC2's pathing grid leaves a townhall's or nydus canal's four corner cells pathable, and mining workers walk through them
+const footprintCorners: PathingRule = (unitType, cells, pos) => {
+    if (!cornerPathableTypes.includes(unitType)) return undefined;
+
+    const reach = (axis: 'x' | 'y') => Math.max(...cells.map((cell) => Math.abs(cell[axis] + 0.5 - pos[axis])));
+    const [reachX, reachY] = [reach('x'), reach('y')];
+    return cells.filter(({ x, y }) => Math.abs(x + 0.5 - pos.x) < reachX || Math.abs(y + 0.5 - pos.y) < reachY);
+};
+
+const loweredDepot: PathingRule = (unitType) => (unitType === UnitType.SUPPLYDEPOTLOWERED ? [] : undefined);
+
+const burrowedCreepTumor: PathingRule = (unitType) => (unitType === UnitType.CREEPTUMORBURROWED ? [] : undefined);
+
+const pathingRules: PathingRule[] = [footprintCorners, loweredDepot, burrowedCreepTumor];
+
+function pathingCells(world: World, unitType: UnitTypeId, pos: Point2D): Point2D[] {
+    const cells = footprintCells(world, unitType, pos);
+    for (const rule of pathingRules) {
+        const result = rule(unitType, cells, pos);
+        if (result) return result;
+    }
+    return cells;
+}
+
+export { MineralField, Townhall, VespeneGeyser, getFootprint, footprintData, footprintCells, pathingCells };

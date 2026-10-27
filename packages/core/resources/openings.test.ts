@@ -87,21 +87,25 @@ describe('openings', () => {
         ).toBe('a');
     });
 
-    it('memoizes the choice and records the game end synchronously, creating the directory', () => {
+    it('memoizes the choice and records the game end synchronously, creating the directory; a recorded pick counts as the choice and appends to the history', () => {
         const { openings } = world.resources.get();
         const nested = join(dir, 'nested');
         expect(choose(undefined, { dataDir: nested })).toBe('a');
         expect(openings.choose(['b'])).toBe('a');
 
         world.resources.endGame(world, [{ playerId: world.agent.playerId, result: GameResult.VICTORY }]);
+        world.resources.reset(world);
+        openings.record('c');
+        const chosen = openings.choose(['a']);
+        world.resources.endGame(world, [{ playerId: world.agent.playerId, result: GameResult.DEFEAT }]);
 
-        expect(JSON.parse(readFileSync(join(nested, 'opp-terran.json'), 'utf8'))).toEqual([
-            {
-                EnemyRace: 'Race.Zerg',
-                Duration: Math.floor(world.resources.get().frame.time()),
-                StrategyUsed: 'a',
-                Result: 2,
-            },
+        const game = { EnemyRace: 'Race.Zerg', Duration: Math.floor(world.resources.get().frame.time()) };
+        expect([chosen, JSON.parse(readFileSync(join(nested, 'opp-terran.json'), 'utf8'))]).toEqual([
+            'c',
+            [
+                { ...game, StrategyUsed: 'a', Result: 2 },
+                { ...game, StrategyUsed: 'c', Result: 0 },
+            ],
         ]);
     });
 

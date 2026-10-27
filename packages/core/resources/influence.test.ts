@@ -155,7 +155,7 @@ describe('InfluenceResource', () => {
             enemy(UnitType.MISSILETURRET, 100.5, 40.5),
         ]);
 
-        expect([costs(world, 40, 40), costs(world, 70, 40), costs(world, 100, 40)]).toEqual([
+        expect([costs(world, 42, 40), costs(world, 72, 40), costs(world, 102, 40)]).toEqual([
             [23, 23, 1, 1],
             [1, 1, 1, 1],
             [1, 40, 1, 1],

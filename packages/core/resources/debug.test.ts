@@ -81,19 +81,31 @@ describe('Debugger', () => {
         expect(boxesIn(afterwards)).toEqual([]);
     });
 
-    it('drops boxes drawn on an earlier loop that never reached the screen', async () => {
+    it('flushes boxes drawn before a step during that step without any debug flag, then sends only newer ones', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
         const debug = world.resources.get().debug!;
         const nextLoop = structuredClone(world.client.fixture.observations[896]);
         nextLoop.observation!.gameLoop = 900;
+        const boxesSince = (sentBefore: number) =>
+            world.client.sent.debug
+                .slice(sentBefore)
+                .flatMap((request) => request.debug ?? [])
+                .flatMap((command) => command.draw?.boxes ?? []);
+        const sentBefore = world.client.sent.debug.length;
 
         debug.drawBox({ x: 10, y: 10, z: 12 }, { x: 11, y: 11, z: 13 });
         await stepTo(world, nextLoop);
+
+        expect(boxesSince(sentBefore)).toEqual([
+            { min: { x: 10, y: 10, z: 12 }, max: { x: 11, y: 11, z: 13 }, color: WHITE },
+        ]);
+        expect(debug.touched).toBe(false);
+
+        const sentAfterStep = world.client.sent.debug.length;
         debug.drawBox({ x: 20, y: 20, z: 12 }, { x: 22, y: 22, z: 14 });
         await debug.updateScreen();
 
-        const [request] = world.client.sent.debug.slice(-1);
-        expect((request.debug ?? []).flatMap((command) => command.draw?.boxes ?? [])).toEqual([
+        expect(boxesSince(sentAfterStep)).toEqual([
             { min: { x: 20, y: 20, z: 12 }, max: { x: 22, y: 22, z: 14 }, color: WHITE },
         ]);
     });

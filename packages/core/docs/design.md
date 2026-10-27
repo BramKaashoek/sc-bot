@@ -20,6 +20,9 @@ Beyond being `EventReader` entities, systems can also implement specific behavio
 
 The pattern of breaking down agent behavior into systems is especially ergonomic for reusable logic that can be shared between your bots. They can even be individually revisioned as modules themselves and simply required and used, without copypasting the same bug fixes and feature enhancements.
 
+#### Behaviors
+A system is a unit of *scheduling*: it reacts to events, and owns state and a commander (name and priority) for the commands it proposes. A behavior is a unit of *logic* with none of that: a small `{ name, execute(ctx) }` object (stutter a marine back, spawn toward a composition) that a system or agent handler runs with `behaviors.run`, optionally as a role or at a priority. It orders units through the commander of whoever runs it, so it never competes with the system that owns it; the command executor still arbitrates between owners and picks one per unit, and `plan` composes behaviors with first-success-wins. Systems decide when and under which owner things run; behaviors are the reusable pieces they run.
+
 ### Level 3 - Advanced Internal Communication
 As mentioned previously, systems are designed to be encapsulated and immutable from the outside world, and yet are organs of the same machine. So how do we communicate between them? The highest level of abstractions exposed by `node-sc2` are broken down into 3 categories of system communication: Custom Events, Data Registers, and Entity Labels.
 

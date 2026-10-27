@@ -162,7 +162,7 @@ export default function createSystem(
             system[pauseSym] = false;
             system.state = clonePlain(initialState);
             if (initialBuildOptions) system.buildOptions = { ...initialBuildOptions };
-        } else if (system.type === 'build' && system.buildOrder) {
+        } else if (system.type === 'build' && (system.buildOrder || system.openings)) {
             builderPlugin(system);
             initialBuildOptions = { ...system.buildOptions! };
         } else if (system.type === 'unit') {
