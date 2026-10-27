@@ -27,7 +27,11 @@ This readme walks through everything the library offers. For exhaustive signatur
     - [spatial](#spatial)
     - [influence](#influence)
     - [pathing](#pathing)
+    - [roles](#roles)
+    - [squads](#squads)
+    - [intel](#intel)
     - [Custom resources](#custom-resources)
+- [Utilities](#utilities)
 - [Constants](#constants)
 - [Where this library differs from python-sc2](#where-this-library-differs-from-python-sc2)
 - [Where this library differs from ares-sc2](#where-this-library-differs-from-ares-sc2)
@@ -381,6 +385,7 @@ Agents and systems react to the game through event handlers named `on` + the eve
 | `onUnitSpawned` | An own non-structure unit is seen for the first time; once per tag per game, even if it later disappears from the observation (e.g. loaded into a transport) | `Unit` |
 | `onNewEffect` / `onExpiredEffect` | An effect (e.g. a storm) appeared / ended | The effect and its effect data |
 | `onCommandResults` | The step after proposed commands were flushed, once per flush that had any | `CommandResult[]`: per proposal, whether it was sent (`won`), `dropped` or `rejected` (see [Command arbitration](#command-arbitration)) |
+| `onEnemyStrategyDetected` | [intel](#intel) detects a strategy flag for the first time this game, in the same step | `EnemyStrategyDetected`: `{ flag, gameLoop }` |
 
 `onStructureConstructionStarted`, `onStructureConstructionComplete` and `onUnitSpawned` correspond to python-sc2's `on_building_construction_started`, `on_building_construction_complete` and `on_unit_created`. The other events keep node-sc2's behaviour.
 
@@ -562,7 +567,7 @@ A system with `type: 'unit'` manages units by type (`units: [...]`) and/or label
 `world.resources.get()` returns the resources, best destructured:
 
 ```text
-const { actions, events, frame, map, units, debug, memory, spatial, influence, pathing } = resources.get();
+const { actions, events, frame, map, units, debug, memory, spatial, influence, pathing, roles, squads, intel } = resources.get();
 ```
 
 Bots and plugins can add their own; see [Custom resources](#custom-resources).
@@ -681,7 +686,8 @@ surplusHarvesters()   // assigned minus ideal
 // combat
 groundDps(), airDps(), groundRange(), airRange(), sightRange(), movementSpeed()
 realSpeed()           // with speed upgrades, creep and speed-changing buffs
-weaponReady(), distanceToWeaponReady(), canShootUp()
+weaponReady(), canShootUp()
+distanceToWeaponReady()   // how far it can move before its weapon is ready again
 targetInRange(target, bonusDistance = 0)
 inAbilityCastRange(abilityId, target, bonusDistance = 0)
 calculateDamageVsTarget(target, ignoreArmor = false, includeOverkillDamage = true) -> [damage, weaponSpeed, weaponRange]
@@ -816,8 +822,8 @@ The step after a flush, handlers named `onCommandResults` receive one `CommandRe
 |---|---|
 | `owner`, `command`, `tags` | Who proposed it, the command as proposed, and the units this outcome covers |
 | `outcome` | `'won'` (sent, SC2 accepted it), `'dropped'` (not sent) or `'rejected'` (SC2 refused it, or the request failed) |
-| `reason` | Dropped only: `'outranked'` or `'repeat'` |
-| `by` | Dropped because outranked: the winning commander |
+| `reason` | Dropped only: `'outranked'`, `'repeat'` or `'not-owner'` (the unit's role is exclusive, see [roles](#roles)) |
+| `by` | Dropped because outranked: the winning commander. Dropped as `'not-owner'`: the owning role, `'role:<ROLE>'`. |
 | `result` | SC2's `ActionResult` for a sent command |
 | `error` | Rejected because the request itself failed: its message |
 
@@ -1077,6 +1083,125 @@ export async function onStep({ resources }: World) {
 }
 ```
 
+### roles
+
+Roles group your own units by job, using ares' role names: the `UnitRole` constants in `@sc-bot/core/constants/unit-role` (`ATTACKING`, `DEFENDING`, `GATHERING`, `BUILDING`, ...). A unit has at most one role. Roles live in their own resource, not in unit labels, so unit systems and `units.withLabel` don't see them.
+
+Each step, before agent code, `roles` drops units that died and gives each new finished own unit its default role, once per unit. By default workers other than MULEs get `GATHERING` and everything else gets none; change that with `configure({ defaultRole })`. A role you clear stays cleared. A unit inside a transport keeps its role, but `get` leaves it out until it is unloaded.
+
+| Member | What it does |
+|---|---|
+| `assign(units, role)` | Gives one or more units (or tags) a role, replacing any previous one |
+| `clear(units)` | Removes their role |
+| `switchRole(from, to)` | Moves every unit of one role to another |
+| `get(roles, { types?, excludeTypes? })` | Your current units with that role, or any of a list of roles, as `Units`, optionally filtered by unit type |
+| `roleOf(unit)` | The role of a unit or tag, or `undefined` |
+| `getTags(role)` | The tags with that role, units in transports included |
+| `as(role, fn, { priority? })` | Runs `fn` as the commander `'role:<ROLE>'` (through `actions.as`); `priority` defaults to the caller's |
+| `mayCommand(owner, tag)` | Whether that commander may command the unit: `false` only when the unit's role is exclusive and the owner isn't that role |
+| `configure({ defaultRole?, exclusive? })` | `defaultRole(unit)` returns the role for a new unit, or `undefined`; `exclusive` defaults to `[]`. Settings survive a new game on the same engine; roles don't. |
+
+**Exclusive roles.** With `configure({ exclusive: [ATTACKING] })`, only `'role:ATTACKING'` may command units in that role: every other commander's proposal for them is dropped with `reason: 'not-owner'` (see [Command arbitration](#command-arbitration)). Make a role exclusive only once everything that commands its units does so inside `roles.as`. The immediate `sendAction`, `swapBuildings` and `toggleAutocast` aren't filtered. A `sendAction` from another commander also takes the unit for the rest of the observation, so the role's own commands only get it back in that step when they strictly outrank the sender; pass `roles.as` a higher `priority` if that matters.
+
+```ts
+import type { World } from '@sc-bot/core';
+import { ATTACKING, GATHERING } from '@sc-bot/core/constants/unit-role';
+import { MULE } from '@sc-bot/core/constants/unit-type';
+
+export async function onGameStart({ resources }: World) {
+    resources.get().roles.configure({
+        defaultRole: (unit) =>
+            unit.isWorker() ? (unit.unitType === MULE ? undefined : GATHERING) : unit.isCombatUnit() ? ATTACKING : undefined,
+        exclusive: [ATTACKING],
+    });
+}
+
+export async function onStep({ resources }: World) {
+    const { actions, map, roles } = resources.get();
+    const army = roles.get(ATTACKING);
+    if (army.length >= 20) {
+        await roles.as(ATTACKING, () => actions.attackMove(army, map.getEnemyNatural().townhallPosition));
+    }
+}
+```
+
+### squads
+
+Groups a role's units into squads by distance, so you can give per-squad orders that hold across steps. It costs nothing until you ask: the first `getSquads` call for a role and type filter in a game loop does the clustering, and later calls in that loop return the same squads.
+
+Clustering is ares': a unit farther than `radius` from its squad's centre leaves it; then at most one pair of squads whose centres are within `radius` merges, the smaller into the larger (the newer into the older on a tie); then each unit without a squad joins the closest squad within `radius`, or starts a new one. Ids are `'<ROLE>-<n>'`, counted per role and type filter, so a squad keeps its id for as long as it exists. The main squad is the one with the most units, the oldest on a tie.
+
+**One radius per role and type filter.** The radius isn't part of what identifies the squads: the first `getSquads` call in a game loop decides it for that loop. Switching radius between loops makes squads split and merge back, so use one radius for each (role, types).
+
+| Member | What it does |
+|---|---|
+| `getSquads(role, { radius = 6, types? })` | The role's squads: `{ id, role, units, tags, position, isMain }`, with `position` the mean position of its units |
+| `getMainSquad(role, { radius?, types? })` | The main squad, or `undefined` when the role has no units |
+| `getMainSquadPosition(role, { types? })` | The main squad's position. With no units, its last position for this role and filter, else your main base's townhall position. |
+
+```ts
+import type { World } from '@sc-bot/core';
+import { ATTACKING } from '@sc-bot/core/constants/unit-role';
+
+export async function onStep({ resources }: World) {
+    const { actions, roles, squads } = resources.get();
+    const rally = squads.getMainSquadPosition(ATTACKING);
+    for (const squad of squads.getSquads(ATTACKING)) {
+        if (!squad.isMain) await roles.as(ATTACKING, () => actions.move(squad.units, rally));
+    }
+}
+```
+
+### intel
+
+Each step, before agent code, `intel` tracks the enemies near each of your bases and sets strategy flags.
+
+**Base threats.** A visible enemy within `groundNearBase` (15) of one of your townhalls joins that base's ground threats, and one within `airNearBase` (20) its air threats; ground and air are split as in [spatial](#spatial). A base's ground threats are all cleared at once when the closest ground enemy is farther than `groundLeavingBase` (24) or is a ghost, and the same for air with `airLeavingBase` (22). That is ares' hysteresis: an enemy that walks off stays a threat while others are still close.
+
+**Strategy flags.** Flags are judged on every known enemy, ghosts included, at game time `t` (`frame.time()`, in game seconds). Distances are to your main's and natural's townhall positions and to the enemy start location and natural. Once set, a flag stays set for the game. The first time, intel records the game loop and writes an `enemyStrategyDetected` event, which `onEnemyStrategyDetected` handlers receive in the same step.
+
+| Flag | Set when |
+|---|---|
+| `workerRush` | Before 3:00, more than 6 enemy workers within 15 of your main or 16 of your natural |
+| `lingRush` | More than 2 zerglings within 50 of your main before 2:30, more than 7 zerglings before 3:00, or more than 4 before 1:30 |
+| `roachRush` | 6 or more roaches within 50 of your main before 4:00, or 3 or more roaches before 3:00 |
+| `ravagerRush` | A ravager before 4:00 |
+| `marineRush` | Up to 3:30, while the enemy has one townhall and no factory: 3 or more barracks before 3:00, or at least `max(3, floor(t / 45))` marines more than 60 from the enemy start |
+| `marauderRush` | Up to 4:00: a barracks tech lab within 55 of your natural, 2 or more marauders before 3:30, or one before 2:40 |
+| `fourGate` | Before 3:20, 3 or more gateways while the enemy has one townhall |
+| `proxyZealot` | Up to 4:00, 2 or more gateways within 100 of your main and more than 60 from the enemy start; or before 2:30, a zealot within 65 of your main |
+| `proxy` | Before 4:00, any structure `getProxies()` returns |
+| `reaper` | A reaper |
+| `expanded` | An enemy townhall more than 6 from the enemy start |
+| `baseOutsideNatural` | An enemy townhall more than 6 from both the enemy start and the enemy natural |
+| `greedy` | 2 Terran or Protoss townhalls started before `greedyTwoBaseBefore` (65 s), or 3 hatcheries (lairs and hives included) started before `greedyThreeHatchBefore` (90 s). The start is estimated from the build progress when the townhall is first seen. |
+| `rushed` | Any of `lingRush`, `workerRush`, `proxyZealot`, `ravagerRush`, `fourGate` or `roachRush`; `marauderRush` without `expanded`; `marineRush` with no enemy structure within 15 of your natural; or 3 or more roaches before 4:00, a zergling before 1:45, or 2 or more barracks before 2:00 |
+
+| Member | What it does |
+|---|---|
+| `getBaseThreats()` | A `BaseThreat` per own townhall with threats: `{ townhall, ground, air, groundSupply, airSupply }`. The units are the threats still visible; supply leaves structures out. |
+| `getMainThreat(kind)` | The base with the most `'ground'` or `'air'` supply, or `undefined` when no base has any |
+| `has(flag)` | Whether the flag has been set this game |
+| `detectedAt(flag)` | The game loop it was first set at, or `undefined` |
+| `getProxies()` | Enemy structures, ghosts included, within 100 of your main and more than 60 from the enemy start, leaving out creep tumors and gas buildings |
+| `configure({ groundNearBase = 15, airNearBase = 20, groundLeavingBase = 24, airLeavingBase = 22, greedyTwoBaseBefore = 65, greedyThreeHatchBefore = 90 })` | Distances, and the `greedy` thresholds in game seconds. Settings survive a new game on the same engine; flags and threats don't. |
+
+```ts
+import { createAgent } from '@sc-bot/core';
+import type { EnemyStrategyDetected, World } from '@sc-bot/core';
+
+const bot = createAgent({
+    async onEnemyStrategyDetected(world: World, { flag, gameLoop }: EnemyStrategyDetected) {
+        console.log(`${flag} detected at loop ${gameLoop}`);
+    },
+    async onStep({ resources }: World) {
+        const { actions, intel, units } = resources.get();
+        const threat = intel.getMainThreat('ground');
+        if (threat && intel.has('rushed')) await actions.attackMove(units.getCombatUnits(), threat.townhall.pos);
+    },
+});
+```
+
 ### Custom resources
 
 A resource is registered from a definition: a `name`, a `create(world)` factory and an optional `reset(resource, world)`. `world.resources.register(definition)` creates the resource and returns it; call it from a system's `setup`, which runs every game. Registering the same definition object again returns the existing resource; registering another definition under a taken name throws `NodeSC2Error`. Declare the resource's type by augmenting the `ResourceContainer` interface of `@sc-bot/core/types` (augmenting `@sc-bot/core` itself doesn't merge). The key is typed as present before `register` has run, so register it before anything reads it.
@@ -1110,6 +1235,72 @@ export const scouting = createSystem({
 });
 ```
 
+## Utilities
+
+Pure functions exported from `@sc-bot/core`.
+
+### Fights
+
+`simulateFight(own, enemy, options?)` simulates a fight between two lists of units and returns a `FightSimulation`: `{ ownWins, ownHealthLeft, enemyHealthLeft, ownHealthStart, enemyHealthStart, seconds }`. `canWinFight(own, enemy, options?)` runs the same simulation and returns an `EngagementResult` on ares' 0 to 10 scale, so ares thresholds carry over. Use `simulateFight` to build your own.
+
+Health is health plus shields on both sides. Every quarter second, each unit deals its `calculateDpsVsTarget` damage (upgrades, armor, attributes and air/ground targeting included, see [Unit](#unit)) to the enemy with the least health that it can hit, skipping enemies already dealt enough to die, and both sides take their damage at the same time. The fight ends when a side has no units left, when neither side can hurt the other, or after `maxSeconds`. A side with units left against none wins; otherwise the side with the larger fraction of its health left wins, and equal fractions are a tie. An empty enemy list gives `VICTORY_EMPHATIC`, an empty own list `LOSS_EMPHATIC`, both empty `TIE`. See [Known limitations](#known-limitations) for what it doesn't model.
+
+| Option | |
+|---|---|
+| `timingAdjust = true` | Each unit starts firing once it could have reached the closest enemy it can hit: the edge-to-edge gap minus its range, at its `realSpeed()`. A unit that can't move waits for the enemy to walk in. Without it every unit fires from the start. |
+| `workersDoNoDamage = false` | Workers on both sides deal no damage |
+| `maxSeconds = 60` | Length limit, in normal-speed seconds (16 game loops each, the time base of the unit data) |
+
+The results are constants in `@sc-bot/core/constants/engagement-result`. A win is graded by the fraction of your health left, a loss by the fraction of the enemy's:
+
+| Result | Value | When |
+|---|---|---|
+| `VICTORY_EMPHATIC` | 10 | Win with at least 90% left |
+| `VICTORY_OVERWHELMING` | 9 | Win with at least 75% |
+| `VICTORY_DECISIVE` | 8 | Win with at least 60% |
+| `VICTORY_CLOSE` | 7 | Win with more than 40% |
+| `VICTORY_MARGINAL` | 6 | Win with more than 20% |
+| `TIE` | 5 | Win with 20% or less, loss with the enemy at 20% or less, or equal fractions |
+| `LOSS_MARGINAL` | 4 | Loss, enemy has more than 20% left |
+| `LOSS_CLOSE` | 3 | More than 40% |
+| `LOSS_DECISIVE` | 2 | More than 60% |
+| `LOSS_OVERWHELMING` | 1 | At least 75% |
+| `LOSS_EMPHATIC` | 0 | At least 90% |
+
+```ts
+import { canWinFight } from '@sc-bot/core';
+import type { World } from '@sc-bot/core';
+import { VICTORY_CLOSE } from '@sc-bot/core/constants/engagement-result';
+import { ATTACKING } from '@sc-bot/core/constants/unit-role';
+
+export async function onStep({ resources }: World) {
+    const { actions, map, spatial, squads } = resources.get();
+    const squad = squads.getMainSquad(ATTACKING);
+    if (!squad) return;
+
+    const enemies = spatial.unitsInRange(squad.position, 15, 'enemy');
+    if (canWinFight(squad.units, enemies) >= VICTORY_CLOSE) {
+        await actions.attackMove(squad.units, enemies.empty ? map.getEnemyNatural().townhallPosition : enemies.first.pos);
+    } else {
+        await actions.move(squad.units, map.getNatural().townhallPosition);
+    }
+}
+```
+
+### Build orders
+
+`parseBuildOrder(steps, race)` turns ares-style build order strings into the `[supply, task]` pairs of a build system's `buildOrder`, and returns them. A string step is `'<supply> <command> [@target ...] [x<n>]'`, case-insensitive: the command is a unit type, an upgrade, or one of `WORKER`, `SUPPLY`, `GAS`, `EXPAND`, `GATE`, `CORE`, `ORBITAL`, `CANCEL_GAS`, `CHRONO`, `WORKER_SCOUT`, `OVERLORD_SCOUT` and `ADDONSWAP`, with the race-specific ones resolved for `race`. Targets are the `BuildTarget` names of `@sc-bot/core/constants/build-target`, and `x<n>` repeats the step. An object step `{ '<supply> worker_scout': [targets] }` gives the scout its waypoints. `[supply, task]` pairs pass through unchanged. An invalid step throws `NodeSC2Error` naming it.
+
+```ts
+import { parseBuildOrder } from '@sc-bot/core';
+import { Race } from '@sc-bot/core/constants/enums';
+
+const opening = parseBuildOrder(
+    ['14 supply @ ramp', '16 barracks @ ramp', '16 gas', '19 orbital', '20 expand', { '17 worker_scout': ['enemy_spawn', 'enemy_nat'] }],
+    Race.TERRAN,
+);
+```
+
 ## Constants
 
 Import constants by module path:
@@ -1123,7 +1314,9 @@ Import constants by module path:
 | `@sc-bot/core/constants/effect` | Effect ids |
 | `@sc-bot/core/constants/enums` | Proto enums (`Race`, `Difficulty`, `AIBuild`, `Alliance`, `GameResult`, `Attribute`, `Alert`, ...) with `*Id` reverse maps |
 | `@sc-bot/core/constants/groups` | Unit and ability groups (`workerTypes`, `townhallTypes`, `combatTypes`, `addonTypes`, ...) |
-| `@sc-bot/core/constants/index` | Namespaces of the above (`UnitType`, `Ability`, `Upgrade`, `Buff`, `Effect`, `enums`, `groups`), `Color`, `WarpUnitAbility`, `AbilitiesByUnit`, plus reverse lookups `UnitTypeId`, `AbilityId`, `UpgradeId`, `BuffId`, `EffectId` |
+| `@sc-bot/core/constants/unit-role` | ares' unit roles for [roles](#roles) (`ATTACKING`, `GATHERING`, ...); their type is `UnitRole` |
+| `@sc-bot/core/constants/engagement-result` | The [fight](#fights) result scale, `LOSS_EMPHATIC` (0) to `VICTORY_EMPHATIC` (10); their type is `EngagementResult` |
+| `@sc-bot/core/constants/index` | Namespaces of the above (`UnitType`, `Ability`, `Upgrade`, `Buff`, `Effect`, `enums`, `groups`, `UnitRole`, `EngagementResult`), `Color`, `WarpUnitAbility`, `AbilitiesByUnit`, plus reverse lookups `UnitTypeId`, `AbilityId`, `UpgradeId`, `BuffId`, `EffectId` |
 | `@sc-bot/core/constants/race-map` | Per-race lookups: `WorkerRace`, `TownhallRace`, `GasMineRace`, `SupplyUnitRace`, `HarvestGatheringRace` |
 | `@sc-bot/core/constants/color` | Named RGB colors for debug drawing |
 | `@sc-bot/core/constants/dicts/trained-from` | `trainedFrom[unitType]`: producer types |
@@ -1162,6 +1355,7 @@ Where python-sc2 has a bug or its data doesn't match SC2 4.10, this library deli
 - **Research structures on 4.10.** The dictionaries reflect 4.10 data: `LIBERATORAGRANGEUPGRADE` and `MEDIVACCADUCEUSREACTOR` are researched at the starport tech lab and `LURKERRANGE` at the hydralisk den. Newer SC2 versions, which python-sc2's tables follow, moved them (to the fusion core and the lurker den).
 - **Build worker selection.** The macro helpers' builder pick (python-sc2's `select_build_worker`) skips an idle worker that already received a command this step. python-sc2 means to, but compares the worker object against a set of tags, so the check never matches.
 - **Snapshots on old builds.** On SC2 before 5.0.4 (including 4.10) `isSnapshot()` and the `visible` filter use the visibility grid, because the API misreports `displayType` there. python-sc2 does the same, but reads the grid at the rounded position; this library floors it, like every other grid lookup here, so a unit near a cell edge can be judged by the neighbouring cell.
+- **`distanceToWeaponReady()`.** It uses 16 game loops per second, the time base of the movement speeds it multiplies, so it is the distance the unit really covers before its weapon is ready. python-sc2 divides by 22.4 and comes out 1.4 times too short.
 
 ## Where this library differs from ares-sc2
 
@@ -1174,6 +1368,11 @@ Where ares-sc2 does something this library deliberately doesn't:
 - **Float weights.** Influence costs are kept as floats. ares truncates them to integers, which changes costs by less than 1.
 - **Inclusive circles.** A cost circle includes the cells exactly at its radius, so at integer radii it can be one ring larger than ares'.
 - **Own liberator zones.** Your own liberators' zones aren't stamped. ares stamps every liberator zone, so a Terran army paths around its own liberators.
+- **Combat sim.** `simulateFight` and `canWinFight` are this library's own focus-fire simulation on per-pair DPS, not ares' native sc2_helper simulator. Health counts shields on both sides (ares leaves out your own shields), and there is no `good_positioning` option, since in sc2_helper it only affects splash, which isn't modelled.
+- **Squad merges.** When two squads merge, the smaller joins the larger (the newer the older on a tie), so the main squad keeps its id, and ids are counters (`'ATTACKING-3'`). ares doesn't order the merge by size, and its ids aren't deterministic.
+- **Rush flags by unit type.** Intel's rush rules check for the unit types involved, not the enemy race, since only one race has those types.
+- **`greedy`.** ares declares the flag but never sets it. Here it is set from townhall start times, with thresholds of our own choosing (`greedyTwoBaseBefore`, `greedyThreeHatchBefore`).
+- **Roles aren't labels.** Roles live in the `roles` resource. Unit systems give labelled units special handling, so storing roles as labels would change how every unit with a default role is dispatched.
 
 ## Changes compared to node-sc2
 
@@ -1263,6 +1462,7 @@ The test helpers live inside the package and aren't part of its exports, so they
 ## Known limitations
 
 - Influence has no climber, air-vs-ground, ground-to-air, tactical or priority grids, and ignores KD8 charges, parasitic bombs and force fields (see [Where this library differs from ares-sc2](#where-this-library-differs-from-ares-sc2)).
+- The fight simulation (`simulateFight`, `canWinFight`) doesn't model splash, healing (medivacs, transfuse, repair), spells, terrain, chokes or high ground, bunker passengers, or micro; units don't move apart from the `timingAdjust` start delay. A sieged tank's minimum range is judged on the starting positions, so a unit that would walk inside it still gets shelled. As in the rest of the combat math, upgrade-dependent bonuses (range, attack speed, ...) count for your own units only.
 - The launcher waits for a freshly started SC2 to listen on its port without a timeout.
 - SC2 under WSL is not discovered.
 

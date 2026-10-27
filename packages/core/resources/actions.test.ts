@@ -1,6 +1,7 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 import createAgent from '../agent/create-agent.ts';
 import { Ability, UnitType, WarpUnitAbility } from '../constants/index.ts';
+import { GATHERING } from '../constants/unit-role.ts';
 import { ActionManagerError, GatherError } from '../engine/errors.ts';
 import { createTestWorld, loadFixture, stepTo } from '../test/create-test-world.ts';
 import { rawUnit, toyFixture } from '../test/factories.ts';
@@ -87,6 +88,28 @@ describe('ActionManager', () => {
         await expect(actions.attackMove([marine])).rejects.toBeInstanceOf(ActionManagerError);
         await actions.flushQueuedActions();
         expect(world.client.sent.actions.length).toBe(sentBefore);
+    });
+
+    it('builds with the worker mining selects only when mining is enabled', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { actions, mining, units } = world.resources.get();
+        const pos = { x: 30, y: 30 };
+        const [closest] = units.getClosest(pos, units.getMineralWorkers());
+        const worker = units.getWorkers().find((scv) => scv.tag !== closest.tag)!;
+        const select = spyOn(mining, 'selectWorker').mockReturnValue(worker);
+        const builders = async () => {
+            const before = world.client.sent.actions.length;
+            await actions.build(UnitType.SUPPLYDEPOT, pos);
+            await actions.flushQueuedActions();
+            return world.client.sent.actions
+                .slice(before)
+                .flatMap((request) => request.actions!.map((action) => action.actionRaw!.unitCommand!.unitTags));
+        };
+
+        expect(await builders()).toEqual([[closest.tag]]);
+        mining.configure({ enabled: true });
+        expect(await builders()).toEqual([[worker.tag]]);
+        expect(select.mock.calls).toEqual([[pos, { forceClose: true, role: GATHERING }]]);
     });
 
     it('rejects gather without a mineral field when no own base is complete', async () => {

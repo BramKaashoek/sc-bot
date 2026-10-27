@@ -7,6 +7,7 @@ import { techRequirement } from '../constants/dicts/tech-requirement.ts';
 import { trainedFrom } from '../constants/dicts/trained-from.ts';
 import { researchedFrom } from '../constants/dicts/researched-from.ts';
 import { researchRequirements } from '../constants/dicts/research-requirements.ts';
+import { GATHERING } from '../constants/unit-role.ts';
 import { distance } from '../utils/geometry/point.ts';
 import type { Agent, OwnedExpansion, Point2D, Unit } from '../types.ts';
 
@@ -123,7 +124,7 @@ const CREATION_ABILITY_FIX: Record<number, number> = {
 };
 
 // python-sc2 TRAIN_INFO requires_techlab; 4.10 data lacks the TECHLAB requirement for GHOST/THOR/BATTLECRUISER
-const REQUIRES_TECHLAB = [
+export const REQUIRES_TECHLAB = [
     UnitType.MARAUDER,
     UnitType.GHOST,
     UnitType.CYCLONE,
@@ -237,6 +238,10 @@ function abilitiesCountAndBuildProgress(agent: Agent): AbilityProgress {
 }
 
 function selectBuildWorker(agent: Agent, position: Point2D, force = false): Unit | undefined {
+    const { mining } = agent._world.resources.get();
+    const mined = mining.isEnabled() ? mining.selectWorker(position, { forceClose: true, role: GATHERING }) : undefined;
+    if (mined) return mined;
+
     const { workers } = context(agent);
     const received = receivedThisFrame(agent);
     const isIdle = (worker: Unit) => (worker.orders ?? []).length === 0;

@@ -20,6 +20,9 @@ import {
     GatherError,
     MapDecompositionError,
     GameEndedError,
+    canWinFight,
+    simulateFight,
+    parseBuildOrder,
 } from '@sc-bot/core';
 ```
 Types are exported from the same entry (`import type { World, Unit } from '@sc-bot/core'`), constants from `@sc-bot/core/constants/<module>`.
@@ -327,18 +330,19 @@ EventConsumer is a trait that represents a sum of the available event handlers t
         onNewEffect?: (world: World, effect: Effect) => Promise<any>;
         onExpiredEffect?: (world: World, effect: Effect) => Promise<any>;
         onCommandResults?: (world: World, results: CommandResult[], event?: SystemEvent) => Promise<any>;
+        onEnemyStrategyDetected?: (world: World, data: EnemyStrategyDetected, event?: SystemEvent) => Promise<any>;
 }
 ```
 
-`onBuildingConstructionStarted` fires when a new own structure appears unfinished, `onBuildingConstructionComplete` when one finishes or a new one appears already finished. The python-sc2 equivalents are `onStructureConstructionStarted` (also fires when an own unit turns into an unfinished structure while keeping its tag; on SC2 4.10 a drone's building gets a new tag instead, so for drones it fires alongside `onBuildingConstructionStarted` with the building, and the drone is reported destroyed when the building finishes), `onStructureConstructionComplete` (also for structures first seen finished, such as the starting townhall) and `onUnitSpawned` (own non-structure units, once per tag per game — unlike `onUnitCreated`, which also fires for structures). `onUnitTypeChanged` (own units only) receives `{ unit, previousType }` (morphs, sieging, lowering depots). `onUnitTookDamage` (own units only) receives `{ unit, amount }`, the health and shield lost since the previous frame. Event handlers are called as `(world, data, event)`, where `event` is the raw `SystemEvent` (`name`, `gameLoop`, ...); extra event fields are never spread into further arguments. This includes the agent's own `onStep` (`data` is the game loop) and `onGameStart` (`data` is `null`). The system hooks with their own arguments are the exceptions: a unit system's `onStep(world, units)`, `onNewUnit`, `onUnitIdle`, `onUnitDestroyed` and `idleFunctions` (`(world, unit)`), a build system's `onStep(world, gameLoop, task?, result?)` and `buildComplete(world, gameLoop)`, `onStepPaused(world)`, and `onGameStart(world)` of a system mounted after the game started. `event` is optional in the handler types, so handlers can also be called directly with two arguments. `onEnemyUnitLeftVision` fires for an enemy that was visible last frame and is not now; the unit stays in `units` as a memory (see `unit.isMemory()`). `onCommandResults` receives, the step after each flush of proposed commands, one entry per (proposal, outcome):
+`onBuildingConstructionStarted` fires when a new own structure appears unfinished, `onBuildingConstructionComplete` when one finishes or a new one appears already finished. The python-sc2 equivalents are `onStructureConstructionStarted` (also fires when an own unit turns into an unfinished structure while keeping its tag; on SC2 4.10 a drone's building gets a new tag instead, so for drones it fires alongside `onBuildingConstructionStarted` with the building, and the drone is reported destroyed when the building finishes), `onStructureConstructionComplete` (also for structures first seen finished, such as the starting townhall) and `onUnitSpawned` (own non-structure units, once per tag per game — unlike `onUnitCreated`, which also fires for structures). `onEnemyStrategyDetected` receives `EnemyStrategyDetected` (`{ flag: IntelFlag; gameLoop: number }`) once per flag per game, in the step `intel` first sets it. `onUnitTypeChanged` (own units only) receives `{ unit, previousType }` (morphs, sieging, lowering depots). `onUnitTookDamage` (own units only) receives `{ unit, amount }`, the health and shield lost since the previous frame. Event handlers are called as `(world, data, event)`, where `event` is the raw `SystemEvent` (`name`, `gameLoop`, ...); extra event fields are never spread into further arguments. This includes the agent's own `onStep` (`data` is the game loop) and `onGameStart` (`data` is `null`). The system hooks with their own arguments are the exceptions: a unit system's `onStep(world, units)`, `onNewUnit`, `onUnitIdle`, `onUnitDestroyed` and `idleFunctions` (`(world, unit)`), a build system's `onStep(world, gameLoop, task?, result?)` and `buildComplete(world, gameLoop)`, `onStepPaused(world)`, and `onGameStart(world)` of a system mounted after the game started. `event` is optional in the handler types, so handlers can also be called directly with two arguments. `onEnemyUnitLeftVision` fires for an enemy that was visible last frame and is not now; the unit stays in `units` as a memory (see `unit.isMemory()`). `onCommandResults` receives, the step after each flush of proposed commands, one entry per (proposal, outcome):
 ```ts
 CommandResult {
     owner: string; // the proposing commander
     command: SC2APIProtocol.ActionRawUnitCommand; // as proposed
     tags: string[]; // the units this outcome covers
     outcome: 'won' | 'dropped' | 'rejected';
-    reason?: 'outranked' | 'repeat'; // dropped only
-    by?: string; // dropped and outranked: the winning owner
+    reason?: 'outranked' | 'repeat' | 'not-owner'; // dropped only; 'not-owner': the unit's role is exclusive
+    by?: string; // dropped: the winning owner, or for 'not-owner' the owning 'role:<ROLE>'
     result?: SC2APIProtocol.ActionResult; // won: SUCCESS; rejected by SC2: its code
     error?: string; // rejected because the request failed
 }
@@ -452,7 +456,8 @@ unit.surplusHarvesters() => number // assigned minus ideal
 // combat
 unit.groundDps(), airDps(), groundRange(), airRange(), sightRange(), movementSpeed()
 unit.realSpeed() // movement speed with upgrades, creep and speed-changing buffs
-unit.weaponReady(), distanceToWeaponReady()
+unit.weaponReady()
+unit.distanceToWeaponReady() // realSpeed() / 16 * weaponCooldown: how far it moves before its weapon is ready
 unit.targetInRange(target, bonusDistance = 0), inAbilityCastRange(abilityId, target, bonusDistance = 0)
 unit.calculateDamageVsTarget(target, ignoreArmor?, includeOverkillDamage?) => [damage, weaponSpeed, weaponRange]
 unit.calculateDpsVsTarget(target, ignoreArmor?, includeOverkillDamage?) => number
@@ -952,5 +957,100 @@ The cell centre with the lowest finite cost within `radius` (`11`), closest firs
 #### *`pathing.isPositionSafe(point: Point2D, opts?: { layer?: InfluenceLayer | InfluenceGrid; limit?: number }) => boolean`*
 Whether the cell's cost is at most `limit` (`1`).
 
+### roles
+Own units grouped by `UnitRole` (string constants from `@sc-bot/core/constants/unit-role`), one role per unit, kept apart from labels. `onStep` drops dead units and gives each new finished own unit `defaultRole(unit)` once; a cleared role isn't re-defaulted. Units in transports keep their role.
+
+#### *`roles.assign(units: Unit | Unit[] | string | string[], role: UnitRole) => void`*
+Replaces any previous role.
+
+#### *`roles.clear(units: Unit | Unit[] | string | string[]) => void`*
+
+#### *`roles.switchRole(from: UnitRole, to: UnitRole) => void`*
+Moves every unit of `from` to `to`.
+
+#### *`roles.get(roles: UnitRole | UnitRole[], opts?: { types?: number | number[]; excludeTypes?: number | number[] }) => Units`*
+Current, alive own units with any of the roles, filtered by unit type when given.
+
+#### *`roles.roleOf(unit: Unit | string) => UnitRole | undefined`*
+
+#### *`roles.getTags(role: UnitRole) => ReadonlySet<string>`*
+The tags with that role, units in transports included.
+
+#### *`roles.as<T>(role: UnitRole, fn: () => T, opts?: { priority?: number }) => T`*
+`actions.as({ owner: 'role:<ROLE>', priority }, fn)`. `priority` defaults to the current commander's.
+
+#### *`roles.mayCommand(owner: string, tag: string) => boolean`*
+`false` only when the unit's role is in `exclusive` and `owner` isn't `'role:<ROLE>'`. The flush drops such proposals with `reason: 'not-owner'`. `sendAction`, `swapBuildings` and `toggleAutocast` aren't filtered, and a `sendAction` commits the unit to its sender for the rest of the observation.
+
+#### *`roles.configure(settings: Partial<RoleSettings>) => void`*
+```ts
+RoleSettings = {
+    defaultRole: (unit) => unit.isWorker() && unit.unitType !== MULE ? GATHERING : undefined,
+    exclusive: [],
+}
+```
+Settings survive a new game on the same engine; roles don't.
+
+### squads
+A role's units clustered by distance, lazily: the first `getSquads` call per (role, sorted types) in a game loop clusters, later calls in that loop return the cached squads. The radius isn't part of that key, so use one radius per (role, types). `Squad` is `{ id: string; role: UnitRole; units: Units; tags: ReadonlySet<string>; position: Point2D; isMain: boolean }`; ids are `'<ROLE>-<n>'`, counted per key.
+
+#### *`squads.getSquads(role: UnitRole, opts?: { radius?: number; types?: number | number[] }) => Squad[]`*
+`radius = 6`. Units farther than `radius` from their squad's previous centre leave it, at most one pair of squads within `radius` merges (smaller into larger, newer into older on a tie), and the rest join the closest squad within `radius` or start one. `position` is the mean unit position; the main squad has the most units, the oldest on a tie.
+
+#### *`squads.getMainSquad(role: UnitRole, opts?: { radius?: number; types?: number | number[] }) => Squad | undefined`*
+
+#### *`squads.getMainSquadPosition(role: UnitRole, opts?: { types?: number | number[] }) => Point2D`*
+The main squad's position, else the last main squad position for that key, else `map.getMain().townhallPosition`.
+
+### intel
+Base threats and sticky enemy strategy flags, updated in `onStep`. `IntelFlag` is `'workerRush' | 'lingRush' | 'roachRush' | 'ravagerRush' | 'marineRush' | 'marauderRush' | 'fourGate' | 'proxyZealot' | 'proxy' | 'reaper' | 'expanded' | 'baseOutsideNatural' | 'greedy' | 'rushed'`; the rules are in the readme. The first time a flag is set, intel writes `{ name: 'enemyStrategyDetected', data: { flag, gameLoop } }`.
+
+#### *`intel.getBaseThreats() => BaseThreat[]`*
+`BaseThreat` is `{ townhall: Unit; ground: Units; air: Units; groundSupply: number; airSupply: number }`, one per own townhall with tracked enemies. A visible enemy within `groundNearBase` / `airNearBase` joins a base's set; the set clears when the closest enemy of that kind is beyond `groundLeavingBase` / `airLeavingBase` or is a ghost. The units are the tracked enemies still visible; supply is their `foodRequired`, structures excluded.
+
+#### *`intel.getMainThreat(kind: 'ground' | 'air') => BaseThreat | undefined`*
+The threat with the most supply of that kind, or `undefined` when none has any.
+
+#### *`intel.has(flag: IntelFlag) => boolean`*
+
+#### *`intel.detectedAt(flag: IntelFlag) => number | undefined`*
+The game loop the flag was first set.
+
+#### *`intel.getProxies() => Units`*
+Enemy structures, ghosts included, within 100 of your main and more than 60 from the enemy start, excluding creep tumors and gas buildings.
+
+#### *`intel.configure(settings: Partial<IntelSettings>) => void`*
+```ts
+IntelSettings = {
+    groundNearBase: 15,
+    airNearBase: 20,
+    groundLeavingBase: 24,
+    airLeavingBase: 22,
+    greedyTwoBaseBefore: 65, // game seconds: 2nd Terran/Protoss townhall started before this
+    greedyThreeHatchBefore: 90, // game seconds: 3rd hatchery started before this
+}
+```
+Settings survive a new game on the same engine; flags and threats don't.
+
 ### events
 TBD
+
+## Utilities
+Pure functions exported from `@sc-bot/core`.
+
+### *`simulateFight(own: Unit[], enemy: Unit[], opts?: FightOptions) => FightSimulation`*
+A deterministic focus-fire simulation in 0.25 s ticks: health plus shields on both sides, each unit's `calculateDpsVsTarget` to the lowest-health enemy it can hit, without overkill, damage applied to both sides at once. It stops when a side is dead, when neither side can deal damage, or at `maxSeconds`. `ownWins` when you have units left and the enemy has none, or both have units and your fraction of health left is higher. `seconds` is the simulated time.
+```ts
+FightOptions = {
+    timingAdjust: true, // each unit starts once it could reach the closest enemy it can hit
+    workersDoNoDamage: false,
+    maxSeconds: 60, // normal-speed seconds (16 game loops)
+}
+FightSimulation = { ownWins: boolean; ownHealthLeft: number; enemyHealthLeft: number; ownHealthStart: number; enemyHealthStart: number; seconds: number }
+```
+
+### *`canWinFight(own: Unit[], enemy: Unit[], opts?: FightOptions) => EngagementResult`*
+`simulateFight` bucketed on ares' scale (`@sc-bot/core/constants/engagement-result`). A win by your health fraction left: ≥ 0.9 `VICTORY_EMPHATIC` (10), ≥ 0.75 `VICTORY_OVERWHELMING`, ≥ 0.6 `VICTORY_DECISIVE`, > 0.4 `VICTORY_CLOSE`, > 0.2 `VICTORY_MARGINAL`, else `TIE` (5). A loss by the enemy's fraction left: equal to yours `TIE`, ≥ 0.9 `LOSS_EMPHATIC` (0), ≥ 0.75 `LOSS_OVERWHELMING`, > 0.6 `LOSS_DECISIVE`, > 0.4 `LOSS_CLOSE`, > 0.2 `LOSS_MARGINAL`, else `TIE`. An empty enemy list is `VICTORY_EMPHATIC`, an empty own list `LOSS_EMPHATIC`, both `TIE`.
+
+### *`parseBuildOrder(steps: Array<BuildOrderStep | BuildTask>, race: SC2APIProtocol.Race) => BuildTask[]`*
+Expands ares-style steps into `[supply, task]` pairs; `BuildOrderStep` is `string | Record<string, string[]>`. Strings are `'<supply> <command> [@target ...] [x<n>]'`; object steps only take `WORKER_SCOUT` / `OVERLORD_SCOUT` keys with a list of target names. `[supply, task]` pairs and task objects pass through. Throws `NodeSC2Error` for an unknown command, target or structure, naming the step. A missing supply logs on `sc2:debug:buildOrder` and uses `0`.

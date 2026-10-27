@@ -1,13 +1,16 @@
-import { describe, expect, it } from 'bun:test';
-import { BUILD_SUPPLYDEPOT, HARVEST_GATHER } from '../constants/ability.ts';
-import { DisplayType } from '../constants/enums.ts';
+import { describe, expect, it, spyOn } from 'bun:test';
+import { ATTACK, BUILD_SUPPLYDEPOT, HARVEST_GATHER, HARVEST_RETURN, MOVE, SMART } from '../constants/ability.ts';
+import { CARRYMINERALFIELDMINERALS } from '../constants/buff.ts';
+import { Alliance, DisplayType } from '../constants/enums.ts';
 import { BUILDING, GATHERING } from '../constants/unit-role.ts';
-import { COMMANDCENTER, REFINERY } from '../constants/unit-type.ts';
+import { COMMANDCENTER, REFINERY, ZERGLING } from '../constants/unit-type.ts';
 import createAgent from '../agent/create-agent.ts';
 import { createTestWorld, stepTo } from '../test/create-test-world.ts';
 import { rawUnit } from '../test/factories.ts';
+import { mineralTargets, townhallTarget } from '../utils/mining/targets.ts';
+import { miningResource } from './mining.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
-import type { CommandResult } from '../types.ts';
+import type { BaseThreat, CommandResult, Point2D, Unit } from '../types.ts';
 
 const CLOSE_PATCHES = ['4302045185', '4318560257', '4305715201', '4324851713'];
 const FAR_PATCHES = ['4304928769', '4313317377', '4333240321', '4332453889'];
@@ -55,6 +58,32 @@ const withRefinery: Edit = (units) => [
     rawUnit({ tag: 'refinery', unitType: REFINERY, pos: { x: 19.5, y: 8.5, z: 12 }, vespeneContents: 2250 }),
 ];
 
+type Sent = { abilityId?: number; target?: string; pos?: Point2D; queue?: boolean };
+
+async function commandsFor(world: TestWorld, worker: Unit): Promise<Sent[]> {
+    const { mining, actions } = world.resources.get();
+    actions.clearQueuedActions();
+    const before = world.client.sent.actions.length;
+    miningResource.onStep!(mining, world);
+    await actions.flushQueuedActions();
+    return world.client.sent.actions
+        .slice(before)
+        .flatMap(({ actions: list }) => list ?? [])
+        .map(({ actionRaw }) => actionRaw!.unitCommand!)
+        .filter(({ unitTags }) => unitTags!.includes(worker.tag))
+        .map(({ abilityId, targetUnitTag, targetWorldSpacePos, queueCommand }) => ({
+            abilityId,
+            ...(targetUnitTag && { target: targetUnitTag }),
+            ...(targetWorldSpacePos && { pos: targetWorldSpacePos as Point2D }),
+            ...(queueCommand && { queue: true }),
+        }));
+}
+
+const mainThreat = (world: TestWorld, threat: boolean) =>
+    spyOn(world.resources.get().intel, 'getMainThreat').mockReturnValue(
+        threat ? ({ ground: [{}] } as unknown as BaseThreat) : undefined,
+    );
+
 describe('mining', () => {
     it('does nothing until enabled', async () => {
         const world = await createTestWorld('blueshift', { loop: 0 });
@@ -66,6 +95,7 @@ describe('mining', () => {
 
         expect(events.read(reader).filter(({ name }) => name === 'commandResults')).toHaveLength(0);
         expect([roles.getTags(GATHERING).size, roles.getTags(BUILDING).size]).toEqual([before, 0]);
+        expect(world.resources.get().mining.isEnabled()).toBe(false);
     });
 
     it('splits 2 onto the 4 closest patches and 1 onto the rest, then caps every patch at 2', async () => {
@@ -77,7 +107,7 @@ describe('mining', () => {
             [1, 1, 1, 1],
         ]);
         const targets = results
-            .filter(({ owner, command }) => owner === MINING && command.abilityId === HARVEST_GATHER)
+            .filter(({ owner, command }) => owner === MINING && command.abilityId === SMART)
             .map(({ command }) => command.targetUnitTag!);
         expect(targets.length).toBeGreaterThan(0);
         expect(targets.filter((tag) => !PATCHES.includes(tag))).toEqual([]);
@@ -224,5 +254,170 @@ describe('mining', () => {
 
         for (let pass = 0; pass < 3; pass += 1) await step(withRefinery);
         expect(mining.getWorkersOn('refinery')).toHaveLength(2);
+    });
+
+    it('speed mines with MOVE + queued SMART inside the 0.75-2 window and the plain command outside it', async () => {
+        const { world, step } = await miningWorld();
+        await step();
+        const { mining, units, map, pathing } = world.resources.get();
+        const minerals = units.getMineralFields();
+        const expected = mineralTargets(
+            minerals.map(({ tag, pos }) => ({ tag, pos })),
+            map.getExpansions().map(({ townhallPosition }) => townhallPosition),
+        );
+        expect(minerals.map(({ tag }) => mining.getMineralTarget(tag))).toEqual(
+            minerals.map(({ tag }) => expected.get(tag)),
+        );
+
+        const patch = CLOSE_PATCHES[0];
+        const mineral = units.getByTag(patch)!;
+        const worker = units.getByTag(mining.getWorkersOn(patch)[0])!;
+        const townhall = units.getByTag(mining.getAssignment(worker)!.townhallTag)!;
+        const target = mining.getMineralTarget(patch)!;
+        const gathering = { abilityId: HARVEST_GATHER, targetUnitTag: patch };
+        const off = (from: Point2D, dx: number) => ({ x: from.x + dx, y: from.y });
+        const at = (pos: Point2D, orders: SC2APIProtocol.UnitOrder[], carrying = false) => {
+            worker.pos = { ...pos, z: worker.pos.z };
+            worker.orders = orders;
+            worker.buffIds = carrying ? [CARRYMINERALFIELDMINERALS] : [];
+            return commandsFor(world, worker);
+        };
+        const returning = off(townhall.pos, 2.75 * 1.08 + 1.9);
+        const far = off(mineral.pos, 8);
+
+        expect(await at(off(target, 1.9), [gathering])).toEqual([
+            { abilityId: MOVE, pos: target },
+            { abilityId: SMART, target: patch, queue: true },
+        ]);
+        expect(await at(off(target, 0.7), [gathering])).toEqual([]);
+        expect(await at(off(target, 2.1), [gathering])).toEqual([{ abilityId: MOVE, pos: target }]);
+        expect(await at(off(target, 2.1), [gathering, gathering])).toEqual([]);
+        expect(await at(off(target, 2.1), [{ abilityId: MOVE, targetWorldSpacePos: target }, gathering])).toEqual([]);
+        expect(await at(off(target, 2.1), [{ abilityId: MOVE, targetWorldSpacePos: far }])).toEqual([]);
+        expect(await at(off(target, 2.1), [{ abilityId: MOVE, targetUnitTag: townhall.tag }])).toEqual([
+            { abilityId: SMART, target: patch },
+        ]);
+        expect(await at(off(target, 2.1), [{ abilityId: HARVEST_GATHER, targetUnitTag: CLOSE_PATCHES[1] }])).toEqual([
+            { abilityId: SMART, target: patch },
+        ]);
+        expect(await at(returning, [{ abilityId: HARVEST_RETURN, targetUnitTag: townhall.tag }], true)).toEqual([
+            { abilityId: MOVE, pos: townhallTarget(townhall.pos, returning) },
+            { abilityId: SMART, target: townhall.tag, queue: true },
+        ]);
+        expect(await at(off(townhall.pos, 7), [], true)).toEqual([{ abilityId: SMART, target: townhall.tag }]);
+        expect(
+            await at(off(townhall.pos, 7), [{ abilityId: HARVEST_RETURN, targetUnitTag: townhall.tag }], true),
+        ).toEqual([]);
+        expect(await at(far, [])).toEqual([
+            { abilityId: MOVE, pos: pathing.nextPoint(far, mineral.pos, { layer: 'ground' }) },
+        ]);
+
+        mining.configure({ speedMining: false });
+        expect(await at(off(target, 1.9), [])).toEqual([{ abilityId: HARVEST_GATHER, target: patch }]);
+    });
+
+    it('flees on avoidance, on low health in danger, or above weightSafetyLimit', async () => {
+        const { world, step } = await miningWorld();
+        const { mining, units, influence, pathing } = world.resources.get();
+        const flees = async (layer: 'ground' | 'groundAvoidance', weight: number, health = 45) => {
+            await step();
+            const worker = units.getByTag(mining.getWorkersOn(CLOSE_PATCHES[0])[0])!;
+            worker.health = health;
+            influence.addCost(layer, worker.pos, 1, weight);
+            const spot = pathing.closestSafeSpot(worker.pos, { layer: 'ground' });
+            return Bun.deepEquals(await commandsFor(world, worker), [{ abilityId: MOVE, pos: spot }]);
+        };
+
+        expect([
+            await flees('groundAvoidance', 50),
+            await flees('ground', 5),
+            await flees('ground', 5, 20),
+            await flees('ground', 20),
+        ]).toEqual([true, false, true, true]);
+    });
+
+    it('self-defends only against a main ground threat, hitting the lowest-health enemy in range', async () => {
+        const { world, step } = await miningWorld();
+        await step();
+        const { mining, units } = world.resources.get();
+        const tag = mining.getWorkersOn(CLOSE_PATCHES[0])[0];
+        const { x, y, z } = units.getByTag(tag)!.pos;
+        const lings = [35, 10].map((health, i) =>
+            rawUnit({
+                alliance: Alliance.ENEMY,
+                owner: 2,
+                unitType: ZERGLING,
+                pos: { x: x + (i ? 0.5 : -0.5), y, z },
+                health,
+                healthMax: 35,
+            }),
+        );
+        const attacks = async (threat: boolean, weaponCooldown = 0) => {
+            await step((all) => [...all, ...lings]);
+            const worker = units.getByTag(tag)!;
+            worker.orders = [];
+            worker.weaponCooldown = weaponCooldown;
+            mainThreat(world, threat);
+            return (await commandsFor(world, worker)).filter(({ abilityId }) => abilityId === ATTACK);
+        };
+
+        expect(await attacks(true)).toEqual([{ abilityId: ATTACK, target: lings[1].tag }]);
+        expect(await attacks(true, 5)).toEqual([]);
+        expect(await attacks(false)).toEqual([]);
+    });
+
+    it('long-distance mines the safe unassigned field closest to the natural when local patches are full', async () => {
+        const { world, step } = await miningWorld();
+        const extra = extraWorkers(6);
+        await step((all) => [...all, ...extra]);
+        await step((all) => [...all, ...extra]);
+        const { mining, units, map, influence, frame } = world.resources.get();
+        const [spare] = extra.map(({ tag }) => units.getByTag(tag)!).filter((worker) => !mining.getAssignment(worker));
+        const natural = map.getNatural().townhallPosition;
+        const fields = units.getMineralFields().filter((mineral) => mining.getWorkersOn(mineral).length === 0);
+        const costly = fields.closestTo(natural);
+        influence.addCost('ground', mining.getMineralTarget(costly)!, 1, 50);
+        const next = fields.filter((mineral) => mineral !== costly).closestTo(natural);
+        const gathers = async (collectionRateMinerals: number) => {
+            frame.getObservation().score = { scoreDetails: { collectionRateMinerals } };
+            return commandsFor(world, spare);
+        };
+
+        expect([await gathers(299), await gathers(300)]).toEqual([
+            [{ abilityId: HARVEST_GATHER, target: costly.tag }],
+            [{ abilityId: HARVEST_GATHER, target: next.tag }],
+        ]);
+    });
+
+    it('assigns new workers near the start before 300 s while intel reports a main ground threat', async () => {
+        const world = await createTestWorld('blueshift', { loop: 0 });
+        const { mining, map } = world.resources.get();
+        mining.configure({ enabled: true });
+        const natural = map.getNatural();
+        const naturalPatches = natural.cluster.mineralFields.map(({ tag }) => tag);
+        const atNatural = { ...natural.townhallPosition, z: 12 };
+        await stepTo(world, observation(world, 4480));
+        const added = [rawUnit({ unitType: COMMANDCENTER, pos: atNatural })];
+        const assignedAt = async (loop: number, threat: boolean) => {
+            const worker = rawUnit({ pos: atNatural });
+            added.push(worker);
+            mainThreat(world, threat);
+            await stepTo(
+                world,
+                observation(world, loop, (all) => [
+                    ...all.map((unit) =>
+                        naturalPatches.includes(unit.tag!) ? { ...unit, displayType: DisplayType.VISIBLE } : unit,
+                    ),
+                    ...added,
+                ]),
+            );
+            return naturalPatches.includes(mining.getAssignment(worker.tag)!.resourceTag) ? 'natural' : 'main';
+        };
+
+        expect([await assignedAt(4492, true), await assignedAt(4504, false), await assignedAt(6720, true)]).toEqual([
+            'main',
+            'natural',
+            'natural',
+        ]);
     });
 });

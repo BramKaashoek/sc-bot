@@ -2,6 +2,7 @@ import { describe, expect, it, spyOn } from 'bun:test';
 import createAgent from './create-agent.ts';
 import { Ability, UnitType, Upgrade } from '../constants/index.ts';
 import { Alliance, Attribute, Race } from '../constants/enums.ts';
+import { GATHERING } from '../constants/unit-role.ts';
 import { createTestWorld, loadFixture, stepTo } from '../test/create-test-world.ts';
 import { observation, rawUnit, toyFixture, unitTypeData } from '../test/factories.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
@@ -517,6 +518,30 @@ describe('agent macro helpers', () => {
 
         expect(commands.map(({ abilityId, targetWorldSpacePos }) => ({ abilityId, targetWorldSpacePos }))).toEqual([
             { abilityId: Ability.BUILD_COMMANDCENTER, targetWorldSpacePos: { x: 14.5, y: 43.5 } },
+        ]);
+    });
+
+    it('builds with the worker mining selects when mining is enabled', async () => {
+        const world = await createTestWorld('blueshift', { loop: 224, onQuery: straightLinePathing });
+        const { mining, units } = world.resources.get();
+        mining.configure({ enabled: true });
+        const worker = units.getWorkers().find((scv) => scv.tag !== '4343463937')!;
+        const select = spyOn(mining, 'selectWorker').mockReturnValue(worker);
+        const target = { x: 14.5, y: 43.5 };
+
+        const { commands } = await commandsAfterStep(world, world.client.fixture.observations[224], () =>
+            world.agent.expandNow(undefined, 10, target),
+        );
+
+        expect(select.mock.calls[0]).toEqual([target, { forceClose: true, role: GATHERING }]);
+        expect(commands.filter(({ abilityId }) => abilityId === Ability.BUILD_COMMANDCENTER)).toEqual([
+            {
+                tag: worker.tag!,
+                abilityId: Ability.BUILD_COMMANDCENTER,
+                targetWorldSpacePos: target,
+                targetUnitTag: undefined,
+                queueCommand: false,
+            },
         ]);
     });
 

@@ -8,10 +8,13 @@ import { WorkerRace } from '../constants/race-map.ts';
 import { gasMineTypes, townhallTypes, addonTypes } from '../constants/groups.ts';
 import { Upgrade, UnitType, UnitTypeId, AbilityId, UpgradeId, Color } from '../constants/index.ts';
 import type {
+    BuildOptions,
     BuildSystemObject,
     BuildTask,
     BuildTaskI,
     EventReader,
+    PlacementFlag,
+    PlacementRequest,
     Point2D,
     System,
     TaskFunctions,
@@ -24,7 +27,7 @@ const debugDraw = createDebug('sc2:DrawDebug');
 const debugBuildSilly = createDebug('sc2:silly:build');
 
 const { BUILD_REACTOR, BUILD_TECHLAB } = ability;
-const { PYLON, BARRACKS, FACTORY, STARPORT } = UnitType;
+const { PYLON, BARRACKS, FACTORY, STARPORT, SUPPLYDEPOT } = UnitType;
 const addonHostTypes = [BARRACKS, FACTORY, STARPORT];
 
 const NOOP = () => {};
@@ -268,7 +271,7 @@ function builderPlugin(system: EventReader<System>): void {
         }
 
         if (buildTask.status === BuildOrder.COMMAND_GIVEN) {
-            if (gameLoop - buildTask.commanded! >= 250) {
+            if (gameLoop - buildTask.commanded! >= 250 && world.resources.get().buildings.pending(buildTask.id) === 0) {
                 buildTask.status = BuildOrder.NOT_STARTED;
             }
         }
@@ -327,6 +330,35 @@ function builderPlugin(system: EventReader<System>): void {
         } catch (e) {
             return BuildResult.ERROR;
         }
+    };
+
+    const earmarkOf = (task: BuildTaskRuntime) => (task.earmarked ? `task${task.index}` : undefined);
+
+    // agent.canAfford settles the earmark, which the tracker must keep until it sends BUILD
+    const affordable = ({ agent, data }: World, task: BuildTaskRuntime) => {
+        const { mineralCost = 0, vespeneCost = 0 } = data.getUnitTypeData(task.id);
+        const reserved = data.getEarmarkTotals(earmarkOf(task));
+        return (
+            agent.minerals! - reserved.minerals >= mineralCost &&
+            (!vespeneCost || agent.vespene! - reserved.vespene >= vespeneCost)
+        );
+    };
+
+    const trackBuild = ({ agent, resources }: World, task: BuildTaskRuntime, opts: BuildOptions) => {
+        if (agent.race !== Race.TERRAN && agent.race !== Race.PROTOSS) return undefined;
+        return (
+            resources.get().buildings.build(task.id, { ...opts, earmark: earmarkOf(task) }) && BuildResult.COMMAND_SENT
+        );
+    };
+
+    const placementRequest = (world: World, task: BuildTaskRuntime): PlacementRequest => {
+        const { units } = world.resources.get();
+        const [nearUnit] = task.opts?.near ? units.getById(task.opts.near) : [];
+        const near = nearUnit?.pos && { base: nearUnit.pos, closestTo: nearUnit.pos };
+        if (world.agent.race === Race.PROTOSS) return { ...near, powered: task.id !== PYLON };
+        const flags: PlacementFlag[] =
+            task.id === SUPPLYDEPOT ? ['supplyDepot'] : addonHostTypes.includes(task.id) ? ['production'] : [];
+        return { ...near, flags };
     };
 
     const buildPlacement: Record<number, BuildFn> = {
@@ -400,18 +432,19 @@ function builderPlugin(system: EventReader<System>): void {
             }
         }
 
-        if (!agent.canAfford(task.id, task.earmarked ? `task${task.index}` : null)) return BuildResult.CANNOT_SATISFY;
+        if (!affordable(world, task)) return BuildResult.CANNOT_SATISFY;
+        const settle = () => agent.canAfford(task.id, earmarkOf(task));
 
         const { actions, map, placer } = resources.get();
 
         if (gasMineTypes.includes(task.id)) {
-            try {
-                await actions.buildGasMine();
-                return BuildResult.COMMAND_SENT;
-            } catch (e) {
-                return BuildResult.ERROR;
-            }
+            settle();
+            // build-order gas steps are explicit, so don't cap simultaneous builds like buildGas' default
+            return resources.get().buildings.buildGas({ max: Infinity })
+                ? BuildResult.COMMAND_SENT
+                : BuildResult.CANNOT_SATISFY;
         } else if (townhallTypes.includes(task.id)) {
+            settle();
             const expansionLocation = map.getAvailableExpansions()[0].townhallPosition;
 
             const foundPosition = await actions.canPlace(task.id, [expansionLocation]);
@@ -425,31 +458,25 @@ function builderPlugin(system: EventReader<System>): void {
                 return BuildResult.ERROR;
             }
         } else {
-            if (placer && placer.place) {
-                const placements = placer.place(world, task.id);
+            const placements = placer?.place?.(world, task.id);
+            const foundPosition = placements?.length ? await actions.canPlace(task.id, placements) : false;
 
-                if (!placements || placements.length <= 0) {
-                    return buildPlacement[agent.race!](world, task);
-                }
-
-                const foundPosition = await actions.canPlace(task.id, placements);
-                if (!foundPosition) {
-                    return buildPlacement[agent.race!](world, task);
-                }
-
+            if (foundPosition) {
                 // in case something changed while waiting for placement position
-                const canNoLongerAfford = !agent.canAfford(task.id);
-                if (canNoLongerAfford) return BuildResult.CANNOT_SATISFY;
-
-                try {
-                    await actions.build(task.id, foundPosition);
-                    return BuildResult.COMMAND_SENT;
-                } catch (e) {
-                    return BuildResult.ERROR;
-                }
-            } else {
-                return buildPlacement[agent.race!](world, task);
+                if (!affordable(world, task)) return BuildResult.CANNOT_SATISFY;
+                const tracked = trackBuild(world, task, { at: foundPosition });
+                if (tracked) return tracked;
+                settle();
+                return buildAt(world, task, foundPosition);
             }
+
+            if (!addonTypes.includes(task.id)) {
+                const tracked = trackBuild(world, task, { placement: placementRequest(world, task) });
+                if (tracked) return tracked;
+            }
+
+            settle();
+            return buildPlacement[agent.race!](world, task);
         }
     };
 

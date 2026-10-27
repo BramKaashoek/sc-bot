@@ -1072,6 +1072,7 @@ export interface MiningResource {
     getAssignment(worker: Unit | string): MiningAssignment | undefined;
     getWorkersOn(resource: Unit | string): string[];
     getMineralTarget(mineral: Unit | string): Point2D | undefined;
+    isEnabled(): boolean;
     configure(settings: Partial<MiningSettings>): void;
 }
 

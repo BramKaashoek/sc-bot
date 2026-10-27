@@ -4,6 +4,7 @@ import { distance, nClosestPoint } from '../utils/geometry/point.ts';
 import { gridsInCircle } from '../utils/geometry/angle.ts';
 import { Ability, enums, UnitType, UnitTypeId, WarpUnitAbility } from '../constants/index.ts';
 import { GasMineRace } from '../constants/race-map.ts';
+import { GATHERING } from '../constants/unit-role.ts';
 import UnitAbilites from '../constants/unit-ability-map.ts';
 import createClient from '../engine/create-client.ts';
 import { ActionManagerError, BuildError, TrainError, GatherError } from '../engine/errors.ts';
@@ -396,10 +397,14 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 );
             }
 
-            let builder: Unit;
-            if (worker) {
-                builder = worker;
-            } else {
+            const near = (pos || target?.pos) as Point2D | undefined;
+            const { mining } = world.resources.get();
+            let builder: Unit | undefined =
+                worker ??
+                (near && mining.isEnabled()
+                    ? mining.selectWorker(near, { forceClose: true, role: GATHERING })
+                    : undefined);
+            if (!builder) {
                 const builders = [
                     ...units.getMineralWorkers(),
                     ...units.getWorkers().filter((worker) => worker.noQueue),

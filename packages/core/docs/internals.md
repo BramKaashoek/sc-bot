@@ -58,6 +58,9 @@ The built-in resources are as follows:
 - `spatial` is of type `SpatialIndex`, a bucket grid over enemies (ghosts included) and own units, rebuilt lazily on the first query of each game loop.
 - `influence` is of type `InfluenceResource`, the per-loop ground/air (and avoidance) cost grids, built lazily from the pathing grid, enemy units and effects.
 - `pathing` is of type `PathingResource`, an A* over the influence grids with buffers reused between queries.
+- `roles` is of type `RolesResource`, a tag-to-`UnitRole` map kept apart from labels. Its `onStep` drops dead units and applies the default role once per new finished unit; `flushQueuedActions` asks its `mayCommand` to drop proposals for units in an exclusive role (`'not-owner'`).
+- `squads` is of type `SquadsResource`. It has no `onStep`: a role's units are clustered on the first `getSquads` call per (role, types) in a game loop and cached for the rest of it.
+- `intel` is of type `IntelResource`. Its `onStep` reads `spatial` and `memory` to update the per-base threat sets and the sticky strategy flags, and writes `enemyStrategyDetected` for each newly set flag, so agent handlers see it in the same step.
 
 ## Other Concepts
 

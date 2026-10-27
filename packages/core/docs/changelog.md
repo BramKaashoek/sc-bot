@@ -65,6 +65,30 @@ Please note, this project adheres to [Semantic Versioning](https://semver.org/sp
 - Code that treats `units.getAll(Alliance.ENEMY)` as a permanent record now sees fewer units. To get the old behaviour, raise the expiry with `memory.configure({ expireGround, expireAir })`, for example from a system's `setup`.
 - Nothing else breaks: the new resources and `getArmyValue` are additions.
 
+### Phase 3: combat sim, roles, squads, intel
+
+#### Added
+- `simulateFight(own, enemy, opts?)` and `canWinFight(own, enemy, opts?)`: a focus-fire fight simulation on per-pair DPS, health plus shields, with `timingAdjust` (default `true`), `workersDoNoDamage` and `maxSeconds` options. `canWinFight` returns ares' 0 to 10 `EngagementResult` scale.
+- `@sc-bot/core/constants/engagement-result` (`LOSS_EMPHATIC` to `VICTORY_EMPHATIC`) and `@sc-bot/core/constants/unit-role` (ares' unit roles), also as the `EngagementResult` and `UnitRole` namespaces of `@sc-bot/core/constants/index`.
+- `roles` resource: `assign`, `clear`, `switchRole`, `get`, `roleOf`, `getTags`, `as`, `mayCommand`, `configure({ defaultRole, exclusive })`. Workers other than MULEs start as `GATHERING`.
+- `squads` resource: `getSquads`, `getMainSquad`, `getMainSquadPosition`, clustered lazily once per game loop.
+- `intel` resource: `getBaseThreats`, `getMainThreat`, `has`, `detectedAt`, `getProxies`, `configure`, with sticky flags for worker, ling, roach, ravager, marine and marauder rushes, 4-gate, proxy zealots, proxies, reapers, expansions, greedy openings and `rushed`.
+- `enemyStrategyDetected` event and `onEnemyStrategyDetected(world, { flag, gameLoop })` handler, once per flag per game.
+- `parseBuildOrder(steps, race)` is documented under Utilities.
+- Types: `FightOptions`, `FightSimulation`, `EngagementResult`, `UnitRole`, `RoleSettings`, `RolesResource`, `Squad`, `SquadsResource`, `IntelFlag`, `IntelSettings`, `IntelResource`, `BaseThreat`, `EnemyStrategyDetected`.
+
+#### Changed
+- `CommandResult.reason` can be `'not-owner'`: a proposal for a unit in an exclusive role from a commander other than that role, with `by: 'role:<ROLE>'`. Nothing is dropped this way unless `roles.configure({ exclusive })` is set.
+- `unit.distanceToWeaponReady()` is 1.4 times larger: it divides by 16 game loops per second instead of python-sc2's 22.4, so it matches the distance the unit really covers before its weapon is ready.
+
+#### Migrating bot/
+- An exhaustive `switch` over `CommandResult.reason` needs a `'not-owner'` case.
+- Code that compares `distanceToWeaponReady()` against a distance now gets values 1.4 times larger; recheck any threshold tuned on the old value.
+- Optional: put army units in a role with `roles.configure({ defaultRole })` (e.g. combat units to `ATTACKING`), and wrap a system's unit commands in `roles.as(role, fn)`.
+- Optional: once every system that commands a role's units does so through `roles.as`, list that role in `roles.configure({ exclusive })`.
+- Optional: replace hand-rolled engage checks with `canWinFight(own, enemies) >= VICTORY_CLOSE` (or your own threshold).
+- Optional: read `intel.has(flag)` or handle `onEnemyStrategyDetected` instead of scouting heuristics, and `intel.getMainThreat('ground')` for base defence.
+
 ## v0.8.2 - 2019-01-11
 ## Highlights:
 Another small patch to get out some more important fixes:
