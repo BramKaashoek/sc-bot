@@ -30,6 +30,10 @@ This readme walks through everything the library offers. For exhaustive signatur
     - [roles](#roles)
     - [squads](#squads)
     - [intel](#intel)
+    - [placement](#placement)
+    - [buildings](#buildings)
+    - [mining](#mining)
+    - [flying](#flying)
     - [Custom resources](#custom-resources)
 - [Utilities](#utilities)
 - [Constants](#constants)
@@ -320,7 +324,7 @@ These follow python-sc2's `BotAI` helpers of the same names:
 | `getNextExpansion()` | `Promise<Point2D \| null>`: the expansion location without a townhall of yours that is closest by SC2 ground distance from your start |
 | `ownedExpansions()` | `{ location, townhall }[]` |
 | `expandNow(unitType?, maxDistance = 10, location?)` | Builds a townhall at the next (or given) expansion |
-| `distributeWorkers(resourceRatio = 2)` | Sends idle workers, and workers above saturation, to bases and gas buildings below saturation |
+| `distributeWorkers(resourceRatio = 2)` | Sends idle workers, and workers above saturation, to bases and gas buildings below saturation. Use it or [`mining`](#mining), not both. |
 | `train(unitType, amount = 1, closestTo?, trainOnlyIdleBuildings = true)` | Starts up to `amount` units across your production structures, larva and warp gates, using reactors for two at a time and tech labs where required. Resolves with how many were started. |
 | `research(upgradeId)` | Starts the upgrade if it is affordable, the required building exists, the previous level is done, and an idle (and, for Protoss, powered) research structure is free. Resolves `false` otherwise. Throws for an upgrade that isn't in the researched-from dictionary. |
 
@@ -352,6 +356,10 @@ const bot = createAgent({
 ```
 
 The helpers deduct what they spend from the agent's minerals and gas right away, and `train` also adds the supply it uses to `foodUsed`, so a second call in the same step doesn't spend the same money or supply twice. `train` and `research` also skip structures that already received a command for the current observation (`actions.unitTagsReceivedAction()`), and the worker picked for a build is only taken from idle workers when it hasn't received one. Their commands are proposed like every other command and go out at the end of the step (see [Command arbitration](#command-arbitration)); the money is deducted when they are proposed, even if the command later loses or SC2 rejects it, until the next observation corrects it.
+
+**Builder handoff.** When [`mining`](#mining) is enabled, the worker a helper (`expandNow`) or `actions.build` picks comes from `mining.selectWorker(position, { forceClose: true, role: GATHERING })`: a mining worker near the build site, which stays in `GATHERING`. With mining disabled the pick is unchanged. For Terran and Protoss structures, [`buildings.build`](#buildings) does the picking, walking and retrying for you.
+
+**`distributeWorkers` vs `mining`: pick one.** `distributeWorkers` sends gather commands at your commander's priority, `mining` assigns and commands the same `GATHERING` workers every step. Running both makes them fight over workers, so call `distributeWorkers` only while `mining.isEnabled()` is `false`.
 
 `agent.use(system)` mounts one system or an array of them; see [Systems](#systems).
 
@@ -546,10 +554,13 @@ bot.use([opener, pressure, workers]);
 
 How the builder places structures:
 
-- Gas buildings go on a free geyser at an owned base (`actions.buildGasMine()`).
-- Townhalls go to the first available expansion.
-- If a `placer` resource is set (as above) and returns positions for that unit type, one of them that SC2 accepts is used.
-- Otherwise it calls `actions.findPlacement` near `opts.near`, or near a point 8 cells from the main townhall towards the map center. Protoss buildings other than pylons are placed around finished pylons; Terran production buildings require room for an add-on.
+- Gas buildings go on a free geyser through [`buildings.buildGas`](#buildings), with no cap on simultaneous builds, so every gas step of the order is honoured.
+- Townhalls go to the first available expansion (`actions.canPlace`, then `actions.build`).
+- If a `placer` resource is set (as above) and returns positions for that unit type, one of them that SC2 accepts is built on, as a tracked build.
+- Otherwise, for Terran and Protoss structures other than add-ons, it calls `buildings.build` with a [`placement`](#placement) request: the precomputed spots, anchored at `opts.near` when given (a Protoss structure other than a pylon must be powered; a Terran depot asks for the flag `supplyDepot`, a barracks, factory or starport for `production`). The tracker walks the worker, retries the command and re-places the building when it keeps failing. A `placer.place` hook still wins over the solver; spots from `placer.placements` or `placement.add` are used when their flags match.
+- When the tracker can't start the build (no spot, no worker, or a Zerg order), it falls back to `actions.findPlacement` near `opts.near`, or near a point 8 cells from the main townhall towards the map center. Protoss buildings other than pylons are placed around finished pylons; Terran production buildings require room for an add-on.
+
+A `build` task whose command was sent is done when an unfinished structure of that type appears. After 250 game loops without one it starts over, unless the tracker still has a build of that type pending.
 
 A build system's `onStep` receives `(world, gameLoop, task, result)`: the current task and the `BuildResult` of this step's attempt. Both are `undefined` while the order is paused or finished. `createSystem` types a `type: 'build'` blueprint as `BuildSystemObject`, so these parameters are typed. `buildComplete(world, gameLoop)` is called once when the last task is done. `this.pauseBuild()` and `this.resumeBuild()` pause the order. When the current task still can't be afforded 1000 game loops after it came up, the builder earmarks its cost (see [events and data](#events-and-data)); `this.earmarkDelay(loops)` changes that delay, and `0` turns earmarking off.
 
@@ -567,7 +578,7 @@ A system with `type: 'unit'` manages units by type (`units: [...]`) and/or label
 `world.resources.get()` returns the resources, best destructured:
 
 ```text
-const { actions, events, frame, map, units, debug, memory, spatial, influence, pathing, roles, squads, intel } = resources.get();
+const { actions, events, frame, map, units, debug, memory, spatial, influence, pathing, roles, squads, intel, placement, buildings, mining, flying } = resources.get();
 ```
 
 Bots and plugins can add their own; see [Custom resources](#custom-resources).
@@ -746,18 +757,18 @@ On SC2 versions before 5.0.4 (base build 82457, which includes 4.10) the API mis
 | `repair(units, target, queue?)` | |
 | `gather(worker, mineralField?, queue = true)` | Mine. Without a field, picks one at the closest undersaturated base (or the closest base). Rejects (`GatherError`) for a non-worker or when there is nothing to mine. |
 | `mine(workers, gasBuilding, queue = true)` | Harvest gas |
-| `build(unitType, positionOrTarget?, worker?)` | Build. Picks a worker when none is given. Rejects (`BuildError`) without tech or money. |
+| `build(unitType, positionOrTarget?, worker?)` | Build. Picks a worker when none is given (through [`mining.selectWorker`](#mining) when mining is enabled). Rejects (`BuildError`) without tech or money. |
 | `buildGasMine()` | Build a gas building on a free geyser at an owned base |
 | `train(unitType, producer?)` | Train; finds an idle producer when none is given. Rejects (`TrainError`). |
 | `upgrade(upgradeId, facility?)` | Research |
 | `warpIn(unitType, { nearPosition?, maxQty?, highground? })` | Warp in at power fields. Rejects when nothing is affordable, no warp gate is ready, or no point is free. |
-| `swapBuildings(a, b)` | Lift two Terran buildings and land each in the other's spot. Sent immediately, step by step; resolves after both land commands, rejects if either can't lift or isn't finished. |
+| `swapBuildings(a, b)` | Lift two Terran buildings and land each in the other's spot. Delegates to [`flying.swap`](#flying): resolves with no value once the plans are made, not when the buildings have landed. Rejects (`ActionManagerError`) if either can't lift or isn't finished. |
 | `do(abilityId, tags, { target?, queue? })` | Any ability |
 | `toggleAutocast(units, abilityId)` | Sent immediately |
 | `chatSend(message, teamOnly = false)` | Sent immediately |
 | `surrender()` | Leave the game; `runGame` resolves with your `DEFEAT` (see [Running games](#running-games)) |
-| `canPlace(unitType, positions)` | One random placeable position from the list (at most 10 are checked, sampled at random), or `false` |
-| `findPlacement(unitType, near, options?)` | The closest placeable position, searching outward in rings, or `false` |
+| `canPlace(unitType, positions)` | One random placeable position from the list (at most 10 are checked, sampled at random), or `false`. [`placement.canPlace`](#placement) checks one position on the grids without a query. |
+| `findPlacement(unitType, near, options?)` | The closest placeable position, searching outward in rings, or `false`. For Terran and Protoss, [`placement.request`](#placement) returns precomputed spots with flags and reservations. |
 | `sendAction(commands)`, `sendQuery(query)` | Raw `ActionRawUnitCommand`s, sent immediately, and `RequestQuery` |
 
 `findPlacement` options: `maxDistance = 20`, `placementStep = 2`, `randomAlternative = true` (pick randomly among the valid candidates of the closest ring, instead of the single closest) and `addonPlace = false` (also require room for a Terran add-on).
@@ -812,7 +823,7 @@ At the end of the step, after all systems have run, the engine decides per unit 
 
 `actions.as({ owner?, priority?, rank? }, fn)` runs `fn` with a different commander; what it doesn't set is taken from the current one. `rank` is the tie-break at equal priority, lower wins (the agent is `-1`, systems count from `0` in `use()` order).
 
-`sendAction`, `swapBuildings`, `toggleAutocast`, `chatSend` and `surrender` send immediately. Units given a command through `sendAction` count as commanded for the rest of the observation: a proposal from another commander is dropped unless it strictly outranks the sender (higher priority, or at equal priority a lower rank); the sender's own follow-ups still go out.
+`sendAction`, `toggleAutocast`, `chatSend` and `surrender` send immediately. Units given a command through `sendAction` count as commanded for the rest of the observation: a proposal from another commander is dropped unless it strictly outranks the sender (higher priority, or at equal priority a lower rank); the sender's own follow-ups still go out.
 
 `actions.queueAction(command | command[])` proposes raw `ActionRawUnitCommand`s under the current commander; it throws `ActionManagerError` for a command without `unitTags`. `actions.flushQueuedActions()` decides and sends early, `actions.clearQueuedActions()` discards the proposals, and `actions.unitTagsReceivedAction()` returns the tags that were proposed or sent for the current observation, by any commander.
 
@@ -865,6 +876,8 @@ The `map` resource covers the map layout: start locations, expansions, ramps, gr
 **Expansions.** `getExpansions(alliance?)` returns every expansion, ordered by distance from your start location (or from the enemy's with `Alliance.ENEMY`). Shortcuts: `getMain()`, `getNatural()`, `getThirds()`, `getEnemyMain()`, `getEnemyNatural()`, `getEnemyThirds()`, `getClosestExpansion(point)`, `getAvailableExpansions()`, `getOccupiedExpansions(alliance?)`. `getThirds()` returns up to two expansions (fewer on small maps). An `Expansion` has `townhallPosition`, `zPosition`, `centroid`, `cluster` (`mineralFields`, `vespeneGeysers`), `areas` (`areaFill`, `placementGrid`, `mineralLine`, `behindMineralLine`, `wall`), `pathFromMain`, `pathFromEnemy`, `getBase()`, `getAlliance()` and `getWall()`.
 
 `getExpansionLocations()` returns every possible townhall position, computed with python-sc2's algorithm.
+
+**The grid follows lift and land.** When a structure lifts off (or a flying one lands), the map system frees (or blocks) its footprint cells in the placement and pathing grids in the same step, so `isPlaceable`, `isPlaceableAt`, `path` and [`placement`](#placement) see the building's real position.
 
 **Locations.** `getLocations()` returns `{ self, enemy }`, where `enemy` is an array of possible enemy start points. `getCombatRally()` is a gathering point on the path from your natural towards the map center, 5% further along per base you own (the map center on a map without expansions). `getCenter(pathable?)`, `getSize()`.
 
@@ -1101,7 +1114,7 @@ Each step, before agent code, `roles` drops units that died and gives each new f
 | `mayCommand(owner, tag)` | Whether that commander may command the unit: `false` only when the unit's role is exclusive and the owner isn't that role |
 | `configure({ defaultRole?, exclusive? })` | `defaultRole(unit)` returns the role for a new unit, or `undefined`; `exclusive` defaults to `[]`. Settings survive a new game on the same engine; roles don't. |
 
-**Exclusive roles.** With `configure({ exclusive: [ATTACKING] })`, only `'role:ATTACKING'` may command units in that role: every other commander's proposal for them is dropped with `reason: 'not-owner'` (see [Command arbitration](#command-arbitration)). Make a role exclusive only once everything that commands its units does so inside `roles.as`. The immediate `sendAction`, `swapBuildings` and `toggleAutocast` aren't filtered. A `sendAction` from another commander also takes the unit for the rest of the observation, so the role's own commands only get it back in that step when they strictly outrank the sender; pass `roles.as` a higher `priority` if that matters.
+**Exclusive roles.** With `configure({ exclusive: [ATTACKING] })`, only `'role:ATTACKING'` may command units in that role: every other commander's proposal for them is dropped with `reason: 'not-owner'` (see [Command arbitration](#command-arbitration)). Make a role exclusive only once everything that commands its units does so inside `roles.as`. The immediate `sendAction` and `toggleAutocast` aren't filtered. A `sendAction` from another commander also takes the unit for the rest of the observation, so the role's own commands only get it back in that step when they strictly outrank the sender; pass `roles.as` a higher `priority` if that matters.
 
 ```ts
 import type { World } from '@sc-bot/core';
@@ -1200,6 +1213,170 @@ const bot = createAgent({
         if (threat && intel.has('rushed')) await actions.attackMove(units.getCombatUnits(), threat.townhall.pos);
     },
 });
+```
+
+### placement
+
+Precomputed building spots for Terran and Protoss, with reservations. The first step in which the map's expansions, your race and the first map state are known, `placement` solves every base once and then answers `request` from that list without asking SC2. For Zerg nothing is solved: `request` returns `undefined` and `getPlacements` is empty (`canPlace` still works).
+
+**What gets solved.** Terran: per base, 3x3 spots on a lattice that always leave room for an add-on (a 5x3 kernel), then 2x2 depot spots, with mineral lines kept free; at the main, the ramp wall (the barracks spot and the two corner depots, flag `wall`); at the natural, a bunker spot (flag `bunker`). Protoss: the wall pylon and wall buildings at the main ramp (flag `wall`), then per base 2x2 pylon spots (flag `productionPylon`), 3x3 spots and more 2x2 spots, with one pylon per base flagged `optimalPylon` (the one with the most 3x3 spots in power range; the last on a tie, as in ares). Scanned spots on a different terrain height than their base, or within 6 of the main ramp's top, are dropped. The solver only sets the flags `wall`, `bunker`, `productionPylon`, `optimalPylon` and `custom`; the other `PlacementFlag` values (`supplyDepot`, `production`, ...) exist for your own placements.
+
+A spot is `available`, `reserved` or `taken`. It becomes `taken` when a grounded structure stands on it and `available` again when that structure is gone (a lifted-off building frees it). A reservation that nothing builds on is released after `reservationTimeout` seconds of game time; the check runs every 16 game loops.
+
+| Member | What it does |
+|---|---|
+| `request(unitType, opts?)` | A spot for a 2x2 or 3x3 structure, or `undefined`. `opts`: `base` (default your main townhall; the solved base closest to it is used), `closestTo`, `flags`, `findAlternative = true`, `reserve = true`, `powered = false`, `pylonBuildProgress = 1`. |
+| `reserve(pos)` | Reserves an `available` spot; `false` when it isn't one |
+| `release(pos)` | Makes a `reserved` spot `available` again |
+| `canPlace(unitType, pos, { includeAddon }?)` | Whether the cells are free on the live placement and pathing grids (and off creep, unless Zerg or a hatchery or nydus canal), without a query to SC2. Barracks, factory and starport include their add-on's cells unless `includeAddon: false`. A gas building is placeable when no gas building is within 3.5. |
+| `getPlacements({ base?, size?, state?, flag? }?)` | Frozen copies of the spots matching every given field: `{ pos, size, base, flags, state, tag?, reservedAt? }` |
+| `add(placements)` | Adds `{ pos, size?, unitType?, flags? }` spots flagged `custom`. Before the solve they are queued; a spot that can't be placed, overlaps another or is 5x5 is skipped. |
+| `configure({ reservationTimeout = 60 })` | Game seconds. Settings survive a new game on the same engine; spots don't. |
+| `drawDebug()` | Draws the spots through `debug`: green available, yellow reserved, red taken, aqua wall, purple custom |
+
+**How `request` picks.** Candidates are the `available` spots of the chosen size at that base that are free on the live grid right now (`canPlace`, add-on room included), powered when `powered` is set (a Protoss pylon at least `pylonBuildProgress` built, at the same height, within 6.5), and, for a pylon, not a spot meant for static defence. When there are none and `findAlternative` isn't `false`, the same is tried at your other occupied bases, nearest to `base` (default your main) first. The fallback only tries bases you own; an explicit `base` is used as given. Then:
+
+- With the flag `wall`, wall spots that also carry another requested flag go first, then any wall spot, then non-wall spots, each closest to `closestTo` (default: the main ramp's top when the base is your main, else the base).
+- Otherwise each flag in `flags` is tried in order and the first one with a candidate wins (closest to `closestTo`, default the base); a flag no candidate carries is skipped. With none left, the closest candidate that isn't `custom`, and `custom` ones only when nothing else exists.
+
+The picked spot is reserved unless `reserve: false`. You own the reservation: build on it, or `release` it.
+
+**Per-map spots.** Set `placer.placements` (next to `placer.place`, see [Build systems](#build-systems)) to return `UserPlacement[]`; they are added at solve time. Use `placement.add` when you learn about spots later.
+
+```ts
+import type { World } from '@sc-bot/core';
+import { SUPPLYDEPOT } from '@sc-bot/core/constants/unit-type';
+
+export async function onStep({ agent, resources }: World) {
+    const { actions, placement } = resources.get();
+    if (agent.supplyLeft >= 4 || agent.alreadyPending(SUPPLYDEPOT) > 0) return;
+
+    const spot = placement.request(SUPPLYDEPOT, { flags: ['wall'] });
+    if (!spot) return;
+    try {
+        await actions.build(SUPPLYDEPOT, spot);
+    } catch (error) {
+        placement.release(spot);
+        throw error;
+    }
+}
+```
+
+### buildings
+
+The building tracker: one call picks the spot and the worker, walks the worker there, sends the build command, retries it and watches the structure until it is done. Nothing runs until you call `build` or `buildGas`.
+
+```text
+status: 'moving' -> 'ordered' -> 'constructing' -> 'done'      or 'failed' (failure: reason)
+```
+
+| Member | What it does |
+|---|---|
+| `build(unitType, { at?, placement?, worker?, earmark? }?)` | Starts a tracked build and returns it, or `undefined` when there is no spot or no worker. `at` is a position, or a geyser for a gas building; without it `placement.request(unitType, placement)` picks (and reserves) a spot. `worker` forces the builder. `earmark` is an earmark name whose money is kept until the command is sent. |
+| `buildGas({ geyser?, max = 1 }?)` | A gas building of your race on `geyser`, or on the free geyser closest to one of your townhalls. `undefined` when the tracked and unfinished gas buildings already number `max`, or no geyser is free. |
+| `cancel(target)` | A tracked build or a unit: cancels the structure if it is unfinished and fails the build with `'cancelled'` |
+| `pending(unitType?)` | Number of active builds you started (resumed builds don't count), of that type if given |
+| `getTracked()` | The `TrackedBuild`s: `{ id, unitType, target, geyserTag?, workerTag?, status, requestedAt, attempts, structureTag?, failure? }`. A build that finishes or fails stays listed for that step only. |
+| `configure({ priority = 10, timeout = 120, maxAttempts = 5, cancelLowHp = 'tracked' })` | `timeout` in game seconds. Settings survive a new game; builds don't. |
+
+`failure` is `'timeout'`, `'cancelled'`, `'noWorker'`, `'noPlacement'` or `'blocked'`. There are no tracker events; poll `getTracked()`.
+
+**Workers.** With [`mining`](#mining) enabled the builder comes from `mining.selectWorker(target, { forceClose: true })`, and `build` returns `undefined` when it returns nothing (`'noWorker'` is only set when a dead builder can't be replaced mid-build). Otherwise it is the closest mineral worker without a `command` label that isn't on another build, else any such worker. The worker gets the `BUILDING` role and goes back to `GATHERING` (and to `mining`) when the build ends. A dead builder is replaced.
+
+**Each step.** The worker moves to the target (within 1, or 3.2 for gas; a worker carrying resources returns them first), then the tracker waits for tech and money (minus other earmarks) and sends the build command. If that command is dropped or rejected the build goes back to `'moving'` and `attempts` goes up; after `maxAttempts` the building is re-placed by the placement solver (`'noPlacement'` when there is no spot; a build started with `placement` repeats that request, one started with `at` gets a default one), or, for gas, it keeps trying the same geyser. A spot that has become unplaceable before the command is re-placed too. An enemy gas building within 4.5 of the geyser moves the build to the next free geyser (`'blocked'` when none is left), and a townhall whose spot is blocked moves to an available expansion. Terran builds are done at `buildProgress` 1 and an SCV that isn't building is sent back to the structure; Protoss and Zerg builds are done once the structure exists, and fail with `'timeout'` after `timeout` seconds if it never does (gas builds of every race have the timeout too). A reservation the build owns is refreshed every step, so a long wait doesn't lose the spot.
+
+Commands go out as the `BUILDING` role at `priority` (10), so they beat your agent's default priority 0 and `mining`'s -10.
+
+**Resuming.** Once a `build` or `buildGas` call has returned a `TrackedBuild` in a game, the tracker adopts an own, unfinished Terran structure that has no builder and isn't a tracked build (an add-on, or an orbital or planetary fortress morph, is skipped): it sends a worker to finish it, one structure per step. Before the first call it leaves your workers alone. Adopted builds appear in `getTracked()` but not in `pending()`.
+
+**Cancelling at low health.** An unfinished structure that lost health since the previous step and is below `max(50, 9% of its max health)` is cancelled with `CANCEL_BUILDINPROGRESS`, which refunds most of its cost. `cancelLowHp: 'tracked'` (default) covers the builds you started, Protoss and Zerg ones included after they count as done, but not adopted ones; `'all'` covers every unfinished structure; `'off'` turns it off.
+
+```ts
+import type { World } from '@sc-bot/core';
+import { BARRACKS, SUPPLYDEPOT } from '@sc-bot/core/constants/unit-type';
+
+export async function onStep({ agent, resources }: World) {
+    const { buildings, units } = resources.get();
+
+    if (agent.supplyLeft < 4 && agent.alreadyPending(SUPPLYDEPOT) + buildings.pending(SUPPLYDEPOT) === 0) {
+        buildings.build(SUPPLYDEPOT, { placement: { flags: ['wall'] } });
+    }
+    if (units.getById(BARRACKS).length + buildings.pending(BARRACKS) < 3) {
+        buildings.build(BARRACKS, { placement: { flags: ['production'] } });
+    }
+    buildings.buildGas();
+}
+```
+
+### mining
+
+A worker-saturation manager with speed mining, danger avoidance and self-defence, after ares' mining. It is off by default and manages only workers in the `GATHERING` role (every worker but MULEs starts there) that aren't `command`-labelled or constructing. Turn it on with `mining.configure({ enabled: true })`; until then it assigns and commands nothing.
+
+Each step it drops assignments to dead, mined-out or orphaned resources (no own townhall within 10 of a mineral field or 12 of a gas building), assigns gas first (up to `workersPerGas` for each ready gas building, one new gas worker per step, one worker released per step from an overfull one), then minerals (up to two workers per field of a townhall more than 85% built; the very first assignment is the opening split over the fields closest to your main). Its commands (`HARVEST_GATHER`, `HARVEST_RETURN`, `MOVE`, `SMART`, `ATTACK`) are proposed as the `GATHERING` role at `priority` -10, so a bot command for a worker (priority 0) wins and a worker you pull is simply not managed that step.
+
+| Member | What it does |
+|---|---|
+| `selectWorker(near, { forceClose = false, minHealth = 0, role = BUILDING }?)` | Takes a worker for your own use, or `undefined`. It is unassigned and given `role`. Without `forceClose` the closest unassigned worker is preferred; otherwise (and when none is unassigned) a mining worker not carrying resources, preferring ones at the base closest to `near`. `minHealth` is a fraction of max health. Nothing is assigned while mining is disabled, so `forceClose` then finds no one. |
+| `release(worker)` | Unassigns the worker and puts it back in `GATHERING` |
+| `getAssignment(worker)` | `{ kind: 'mineral' \| 'gas', resourceTag, townhallTag }` or `undefined` |
+| `getWorkersOn(resource)` | Tags of the workers assigned to a mineral field or gas building |
+| `getMineralTarget(mineral)` | The point speed mining steps to for that field, or `undefined` |
+| `isEnabled()` | Whether `enabled` is set |
+| `configure(settings)` | See below. `workersPerGas` must be an integer from 0 to 3, else `RangeError`. Settings survive a new game; assignments don't. |
+
+Settings and defaults: `enabled = false`, `priority = -10`, `workersPerGas = 3`, `speedMining = true`, `townhallDistanceFactor = 1.08`, `keepSafe = true`, `fleeAtHealth = 0.5`, `weightSafetyLimit = 12`, `selfDefence = true`, `longDistanceMine = true`.
+
+- **Speed mining** (`speedMining`, minerals only): when a worker is near the field's mining point, or the townhall's return point (`townhallDistanceFactor` scales its distance from the townhall's centre), it is sent to that point and then queued onto the field or the townhall, so it skips the slow turn-around. Gas workers use plain gather and return commands. It is weaker at the default step size of 4 game loops than at 2 or 1.
+- **Safety** (`keepSafe`): a worker moves to the closest safe spot when its position is in the ground-avoidance layer, when it is not on a safe ground cell and its health (plus shield, for Protoss) is at or below `fleeAtHealth`, or when the ground cost at its position is over `weightSafetyLimit`. These use [`pathing`](#pathing) and [`influence`](#influence). With no safe spot it gets no command.
+- **Self-defence** (`selfDefence`): while an enemy ground unit threatens one of your bases (`intel.getMainThreat('ground')`) and the worker's cell is not safe, a worker with its weapon ready attacks the weakest enemy in its range instead of fleeing, unless it is collecting and within 1 of its resource.
+- **Long-distance mining** (`longDistanceMine`): a worker without an assigned resource (its base is gone, or all fields are full) mines at an unassigned field that is safe, close to the natural early on, or at the fields of a townhall under construction, and returns its cargo to the closest ready townhall. With no ready townhall it does nothing.
+
+Use `mining` or `agent.distributeWorkers()`, not both: they send competing gather commands for the same workers.
+
+```ts
+import { createAgent } from '@sc-bot/core';
+import type { World } from '@sc-bot/core';
+import { ATTACKING } from '@sc-bot/core/constants/unit-role';
+
+const bot = createAgent({
+    async onGameStart({ resources }: World) {
+        resources.get().mining.configure({ enabled: true, workersPerGas: 2 });
+    },
+    async onStep({ resources }: World) {
+        const { actions, intel, mining } = resources.get();
+        const threat = intel.getMainThreat('ground');
+        if (!threat) return;
+        const worker = mining.selectWorker(threat.townhall.pos, { minHealth: 0.5, role: ATTACKING });
+        if (worker) await actions.attack([worker], threat.ground.closestTo(worker));
+    },
+});
+```
+
+### flying
+
+Lifts Terran structures, flies them and lands them, one plan per structure, advanced a step at a time. A structure is only commanded while it has a plan.
+
+| Member | What it does |
+|---|---|
+| `move(structure, destination, { land = true }?)` | Plans a flight, replacing any plan for that structure |
+| `swap(a, b)` | Each structure plans a landing on the other's current position |
+| `addonSwap(structure, addon)` | Plans a swap so the structure gets an add-on. `structure` is a unit, or a unit type (the first finished one without an add-on). `addon` is `REACTOR` or `TECHLAB` (any of their variants), or a specific add-on type. The add-on is the closest finished idle one; the structure it belongs to flies to the host's position, and the host lands at the add-on. Returns `false`, planning nothing, when there is no finished host or no such add-on. |
+| `cancel(structure)` | Drops the plan (a unit or its tag) |
+| `getPlans()` | `{ tag, destination, land, state, startedAt }`, with `state` `'lifting'`, `'flying'` or `'landing'` |
+| `configure({ priority = 10 })` | Settings survive a new game; plans don't |
+
+Each step, for every plan: a grounded structure is lifted (a `LIFT` replaces its queue first when it has other orders); a flying one moves towards the destination until it is within 5.5, then, when `land` is set, lands. A plan ends when the structure is gone or has landed within 0.5 of its destination. Two things it doesn't do for you: a plan whose destination never accepts a landing is re-proposed every step until you call `flying.cancel`, and a plan with `land: false` also lasts until you cancel it.
+
+Flying commands are proposed as owner `'flying'` at priority 10, so your own commands for a structure in transit (priority 0) are dropped as outranked until the plan ends or you cancel it. `actions.swapBuildings(a, b)` is `flying.swap` after a check that both can lift and are finished (rejecting with `ActionManagerError` otherwise); it resolves with no value once the plans are made, not when the buildings have landed.
+
+```ts
+import type { World } from '@sc-bot/core';
+import { BARRACKS, REACTOR } from '@sc-bot/core/constants/unit-type';
+
+export async function onStep({ resources }: World) {
+    const { flying } = resources.get();
+    if (flying.getPlans().length === 0) flying.addonSwap(BARRACKS, REACTOR);
+}
 ```
 
 ### Custom resources
@@ -1372,6 +1549,15 @@ Where ares-sc2 does something this library deliberately doesn't:
 - **Squad merges.** When two squads merge, the smaller joins the larger (the newer the older on a tie), so the main squad keeps its id, and ids are counters (`'ATTACKING-3'`). ares doesn't order the merge by size, and its ids aren't deterministic.
 - **Rush flags by unit type.** Intel's rush rules check for the unit types involved, not the enemy race, since only one race has those types.
 - **`greedy`.** ares declares the flag but never sets it. Here it is set from townhall start times, with thresholds of our own choosing (`greedyTwoBaseBefore`, `greedyThreeHatchBefore`).
+- **Terran spots avoid mineral lines.** The solver marks each base's mineral-line cells as unbuildable before it scans; ares doesn't.
+- **Natural bunker kernel.** The bunker spot reserves a 5x3 area (ares 3x3), so a barracks that takes the bunker's place still has room for an add-on. The Protoss wall fallback is measured from the ramp's top (ares: its bottom).
+- **Flag filters.** `placement.request` takes a list of flags tried in order, with `wall` special-cased; it generalises ares' selection by flag.
+- **Alternatives only at your bases.** When the requested base is full, `request` falls back to your other occupied expansions only.
+- **No tracker events.** The building tracker is polled through `getTracked()` and `pending()`; it writes no events.
+- **Resuming untracked structures is opt-in.** ares always sends a worker to an unfinished Terran structure without a builder. The tracker does it only after a `buildings.build` or `buildGas` call has returned a build in that game, so a bot that never uses it keeps its workers.
+- **Low-HP cancel needs damage.** A structure is cancelled only on a step in which its health dropped (ares' `on_structure_took_damage`), below `max(50, 9% of max health)`; an unfinished structure that starts below the threshold isn't cancelled for it. The default `'tracked'` mode leaves out builds the tracker adopted.
+- **`buildGas` geyser pick.** It takes the free geyser closest to one of your townhalls.
+- **Mining details.** Workers that are `command`-labelled or constructing are never selected or commanded; assignments are recomputed every step (ares: every fourth); long-distance mining judges a field's safety at the worker's speed-mining stand point (the mineral's own cell is never safe) and recomputes the safe fields each step (ares caches them); a fleeing worker with no safe spot gets no command; gather and return use `HARVEST_GATHER`/`HARVEST_RETURN` (like ares), while `actions.gather` sends `SMART`.
 - **Roles aren't labels.** Roles live in the `roles` resource. Unit systems give labelled units special handling, so storing roles as labels would change how every unit with a default role is dispatched.
 
 ## Changes compared to node-sc2
@@ -1381,7 +1567,7 @@ Bug fixes that changed a signature or a failure mode:
 - `units.getByTag(tag)` returns `undefined` for an unknown tag (it used to return the tag string). The array form leaves unknown tags out and returns `Units`.
 - Every `units.*` getter, including `getClosest` and `getByTag(tags)`, returns `Units` instead of a plain array. See the [testing note](#the-units-collection).
 - The unit command methods of `actions` (`attack`, `move`, `build`, `train`, `do` and the rest, and the `Unit` shortcuts such as `useAbility`, `burrow` and `inject`) resolve with no value once the command is proposed, instead of with SC2's `ResponseAction`, and no longer reject when SC2 refuses the command; that arrives the next step through `onCommandResults` (see [Command arbitration](#command-arbitration)). Commands go out after all systems have run instead of during the step, conflicting commands for one unit resolve by priority and `use()` order instead of last-write-wins, and repeating a unit's current order is a no-op. Precondition errors still reject.
-- `actions.swapBuildings` awaits the whole lift-move-land sequence, resolves with the responses of both land commands (`ResponseAction[]`), and rejects on failure. It used to swallow errors.
+- `actions.swapBuildings` delegates to `flying.swap` and resolves with no value once both plans are made; it rejects with `ActionManagerError` when either building can't lift or isn't finished. It used to send the lift, move and land commands itself, step by step, and swallow errors.
 - `actions.attack` rejects with `ActionManagerError` when the target is missing, and `actions.attackMove` when no position is given and no enemy start location is known, instead of throwing a `TypeError`. Missing units are not an error: the command methods resolve without proposing anything for an empty unit list (`do` used to reject with a `TypeError`). Only the raw `actions.queueAction` throws `ActionManagerError` for a command without units.
 - `actions.gather` rejects with `GatherError` when there is no completed own base to mine at, instead of crashing.
 - `actions.warpIn` rejects with `ActionManagerError` when there is no free warp-in point.
@@ -1396,7 +1582,7 @@ Bug fixes that changed a signature or a failure mode:
   - `debug.createUnit` takes `{ unitType, quantity?, pos?, playerId? }` or an array of them; the proto `owner` field is `playerId`, and arrays of arrays are gone.
   - `createSystem` types its blueprint as `UnitSystemObject | BuildSystemObject | GeneralSystemObject`, so a `type: 'unit'` or `type: 'build'` blueprint gets its own `onStep` signature; a value typed `EventReader<SystemObject>` is still accepted.
   - The `opts.near` of a build task is a unit type (it was declared `boolean`), and `BuildHelper` is the union of the task functions instead of `(...args: any[]) => BuildTaskI`.
-  - `actions.patrol` takes a `[from, to]` pair or a single point (it was declared as an array of pairs); `actions.swapBuildings` resolves with `ResponseAction[]`.
+  - `actions.patrol` takes a `[from, to]` pair or a single point (it was declared as an array of pairs); `actions.swapBuildings` resolves with `void`.
   - `data.getEarmarkTotals` returns a `Cost`, `engine.createGame` may resolve `undefined`, and the `frame._previous`, `_observation`, `_gameInfo`, `_score`, `_render` and `_feature` fields can be `null`.
 - Requests that SC2 answers with an error, and requests still pending when the connection closes, now reject. They used to never settle, which hung the game loop.
 - `agent.hasTechFor` (and with it `actions.build` and `actions.train`) now requires a ghost academy for ghosts, an armory for thors and a fusion core for battlecruisers, which 4.10's data leaves out. Before, they were treated as having no requirement.
@@ -1463,6 +1649,8 @@ The test helpers live inside the package and aren't part of its exports, so they
 
 - Influence has no climber, air-vs-ground, ground-to-air, tactical or priority grids, and ignores KD8 charges, parasitic bombs and force fields (see [Where this library differs from ares-sc2](#where-this-library-differs-from-ares-sc2)).
 - The fight simulation (`simulateFight`, `canWinFight`) doesn't model splash, healing (medivacs, transfuse, repair), spells, terrain, chokes or high ground, bunker passengers, or micro; units don't move apart from the `timingAdjust` start delay. A sieged tank's minimum range is judged on the starting positions, so a unit that would walk inside it still gets shelled. As in the rest of the combat math, upgrade-dependent bonuses (range, attack speed, ...) count for your own units only.
+- Placement does no burrowed-unit or blocked-spot detection beyond the placement grid, and Zerg has no precomputed spots.
+- Mining has no vespene boost, and speed mining is weaker at the default step of 4 game loops than at 2 or 1.
 - The launcher waits for a freshly started SC2 to listen on its port without a timeout.
 - SC2 under WSL is not discovered.
 

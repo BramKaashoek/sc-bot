@@ -1,5 +1,6 @@
 import { createAgent, createEngine } from '@sc-bot/core';
 import { GameResultId, PlayerType, Race } from '@sc-bot/core/constants/enums';
+import { ATTACKING } from '@sc-bot/core/constants/unit-role';
 
 const MAP = process.env.MAP ?? 'Melee/Simple64';
 const gameTimeLimit = process.env.GAME_TIME_LIMIT ? Number(process.env.GAME_TIME_LIMIT) : undefined;
@@ -8,8 +9,10 @@ const workerRusher = (race: number) =>
     createAgent({
         settings: { race },
         async onGameStart({ resources }) {
-            const { units, map, actions } = resources.get();
-            return actions.attackMove(units.getWorkers(true), map.getLocations().enemy[0]);
+            const { units, map, actions, roles } = resources.get();
+            const workers = units.getWorkers(true);
+            roles.assign(workers, ATTACKING);
+            return roles.as(ATTACKING, () => actions.attackMove(workers, map.getLocations().enemy[0]));
         },
     });
 

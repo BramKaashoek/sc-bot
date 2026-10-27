@@ -778,7 +778,7 @@ Command one or more units to move and attack to a position. Without `p`, the fir
 
 #### *`actions.build(unitType: number, target?: Unit, worker?: Unit) => Promise<void>`*
 #### *`actions.build(unitType: number, pos?: Point2D | null, worker?: Unit) => Promise<void>`*
-Command a given worker to build a `unitType` on either a position or a target unit. If no worker is given, the least busy, closest worker is selected. The worker gets the `command` label right away; if the build is dropped or SC2 rejects it, the label is removed again during the flush. A gas building is followed by a queued `gather` from the same commander. Nothing is refunded for a build that isn't sent.
+Command a given worker to build a `unitType` on either a position or a target unit. If no worker is given and `mining` is enabled, `mining.selectWorker(position, { forceClose: true, role: GATHERING })` picks a mining worker near the site; otherwise the least busy, closest worker is selected. The worker gets the `command` label right away; if the build is dropped or SC2 rejects it, the label is removed again during the flush. A gas building is followed by a queued `gather` from the same commander. Nothing is refunded for a build that isn't sent.
 
 Rejects with `BuildError` (with `err.data`) if the player is missing the necessary tech, can not afford it, gave a target the build ability doesn't accept (or none where one is required), or no builder is found.
 
@@ -820,8 +820,8 @@ If no research facility is given, it looks up a facility that is both capable of
 #### *`actions.warpIn(unitType: number, opts?: WarpInOptions) => Promise<void>`*
 Warps in up to `maxQty` units at distinct free points of a power field near `nearPosition` (`opts = { nearPosition?, maxQty?, highground? }`). Rejects with `ActionManagerError` when nothing is affordable, no warp gate is ready, or no point is free.
 
-#### *`actions.swapBuildings(unitA: Unit, unitB: Unit) => Promise<SC2APIProtocol.ResponseAction[]>`*
-Lifts, swaps and lands two Terran buildings, sending each step immediately (not through arbitration). Resolves with both land responses; rejects if either building can't lift or isn't finished, or SC2 refuses a step.
+#### *`actions.swapBuildings(unitA: Unit, unitB: Unit) => Promise<void>`*
+Rejects with `ActionManagerError` if either building can't lift or isn't finished; otherwise calls [`flying.swap(unitA, unitB)`](#flying) and resolves with no value. The lifting, flying and landing happen over the following steps under the `flying` commander; nothing is sent by this call.
 
 #### *`actions.toggleAutocast(units: Unit | Unit[], abilityId: number) => Promise<SC2APIProtocol.ResponseAction>`*
 Sent immediately.
@@ -833,9 +833,11 @@ Sent immediately. `teamOnly = false`.
 Leaves the game and resolves with the leave-game response; `runGame` resolves with `DEFEAT`.
 
 #### *`actions.canPlace(unitType: number, positions: Point2D[]) => Promise<Point2D | false>`*
+For a grid-only check of one position without a query, see [`placement.canPlace`](#placement).
 Given a `unitType` and an array of positions, queries the game to check placability (of at most 10 positions, sampled randomly from longer lists). Returns either *a random position which returned a success*, or false.
 
 #### *`actions.findPlacement(unitType: number, near: Point2D, options?: FindPlacementOptions) => Promise<Point2D | false>`*
+For Terran and Protoss, [`placement.request`](#placement) returns precomputed spots with flags and reservations.
 Returns `near` itself when `unitType` can be placed there, otherwise searches outward in square rings `placementStep` apart and returns a position from the first ring with valid spots, or false.
 ```js
 options = {
@@ -980,7 +982,7 @@ The tags with that role, units in transports included.
 `actions.as({ owner: 'role:<ROLE>', priority }, fn)`. `priority` defaults to the current commander's.
 
 #### *`roles.mayCommand(owner: string, tag: string) => boolean`*
-`false` only when the unit's role is in `exclusive` and `owner` isn't `'role:<ROLE>'`. The flush drops such proposals with `reason: 'not-owner'`. `sendAction`, `swapBuildings` and `toggleAutocast` aren't filtered, and a `sendAction` commits the unit to its sender for the rest of the observation.
+`false` only when the unit's role is in `exclusive` and `owner` isn't `'role:<ROLE>'`. The flush drops such proposals with `reason: 'not-owner'`. `sendAction` and `toggleAutocast` aren't filtered, and a `sendAction` commits the unit to its sender for the rest of the observation.
 
 #### *`roles.configure(settings: Partial<RoleSettings>) => void`*
 ```ts
@@ -1031,6 +1033,140 @@ IntelSettings = {
 }
 ```
 Settings survive a new game on the same engine; flags and threats don't.
+
+### placement
+Precomputed Terran and Protoss building spots with reservations; see the readme for the layout. Solved once per game in the first `onStep` that has the expansions, the race and the first map state. For Zerg nothing is solved. Types: `BuildingSize = '2x2' | '3x3' | '5x5'`, `PlacementState = 'available' | 'reserved' | 'taken'`, `PlacementFlag = 'wall' | 'reaperWall' | 'bunker' | 'supplyDepot' | 'production' | 'upgradeStructure' | 'missileTurret' | 'sensorTower' | 'staticDefence' | 'productionPylon' | 'optimalPylon' | 'custom'` (the solver sets `wall`, `bunker`, `productionPylon`, `optimalPylon` and `custom`; the rest are for your own placements), `Placement = { readonly pos: Point2D; readonly size: BuildingSize; readonly base: Point2D; readonly flags: ReadonlySet<PlacementFlag>; readonly state: PlacementState; readonly tag?: string; readonly reservedAt?: number }`, `UserPlacement = { pos: Point2D; size?: BuildingSize; unitType?: number; flags?: PlacementFlag[] }`.
+
+#### *`placement.request(unitType: number, opts?: PlacementRequest) => Point2D | undefined`*
+```ts
+PlacementRequest = {
+    base?: Point2D, // default: map.getMain().townhallPosition; the solved base closest to it is used
+    closestTo?: Point2D, // default: the base (for `wall` at your main: the ramp's top)
+    flags?: PlacementFlag[], // tried in order; a flag no candidate carries is skipped
+    findAlternative: true, // false: only the chosen base, instead of your other occupied bases
+    reserve: true,
+    powered: false, // Protoss: only spots in range of a pylon
+    pylonBuildProgress: 1, // minimum build progress of that pylon
+}
+```
+Returns a spot of the unit type's size (2x2 or 3x3, from its footprint) that is `available` and free on the live grids, or `undefined` (also for Zerg, before the solve, and for other sizes). `reserve` marks it `reserved` until built on, released, or `reservationTimeout` seconds pass.
+
+#### *`placement.reserve(pos: Point2D) => boolean`*
+Reserves the `available` spot at `pos`; `false` when there is none.
+
+#### *`placement.release(pos: Point2D) => void`*
+Makes the `reserved` spot at `pos` `available`. Does nothing otherwise.
+
+#### *`placement.canPlace(unitType: number, pos: Point2D, opts?: { includeAddon?: boolean }) => boolean`*
+Grid check against the live placement and pathing grids, and creep (except for Zerg, hatcheries and nydus canals). `includeAddon` defaults to `true` for barracks, factory and starport. A gas building is placeable when no gas building is within 3.5.
+
+#### *`placement.getPlacements(filter?: { base?: Point2D; size?: BuildingSize; state?: PlacementState; flag?: PlacementFlag }) => Placement[]`*
+Frozen copies of the spots that match every given field.
+
+#### *`placement.add(placements: UserPlacement[]) => void`*
+Adds spots flagged `custom` (plus their own `flags`). `size` defaults to that of `unitType`, else `'3x3'`. Queued until the solve; a spot that can't be placed, overlaps another or is `5x5` is skipped. `Placer.placements?: (world) => UserPlacement[] | undefined`, set through `resources.set({ placer })`, is added the same way at solve time.
+
+#### *`placement.configure(settings: Partial<PlacementSettings>) => void`*
+```ts
+PlacementSettings = { reservationTimeout: 60 } // game seconds
+```
+Settings survive a new game on the same engine; spots don't.
+
+#### *`placement.drawDebug() => void`*
+Draws the spots as the debug cell layer `'placement'`.
+
+### buildings
+The building tracker; nothing happens until `build` or `buildGas` is called. A build is `{ id, unitType, target, geyserTag?, workerTag?, status, requestedAt, attempts, structureTag?, failure? }` (`TrackedBuild`), with `status` `'moving' | 'ordered' | 'constructing' | 'done' | 'failed'` and `failure` `'timeout' | 'cancelled' | 'noWorker' | 'noPlacement' | 'blocked'`. Commands go out as the `BUILDING` role at `priority`.
+
+#### *`buildings.build(unitType: number, opts?: BuildOptions) => TrackedBuild | undefined`*
+```ts
+BuildOptions = {
+    at?: Point2D | Unit, // a position, or a geyser for a gas building; default: placement.request(unitType, placement)
+    placement?: PlacementRequest,
+    worker?: Unit, // default: mining.selectWorker(target, { forceClose: true }), else (mining disabled) the closest free mineral worker
+    earmark?: string, // earmark kept until the build command is sent
+}
+```
+Returns `undefined` when there is no spot or no worker (a reservation it made is released). The builder gets the `BUILDING` role. A dropped or rejected command puts the build back to `'moving'` and counts an attempt; at `maxAttempts` the spot is re-placed by the placement solver (a build started with `placement` repeats that request; gas keeps its geyser). `timeout` applies to non-Terran builds and gas builds. A Terran build is done at `buildProgress` 1, a Protoss or Zerg build once the structure exists.
+
+#### *`buildings.buildGas(opts?: { geyser?: Unit; max?: number }) => TrackedBuild | undefined`*
+`max = 1`. Builds your race's gas building on `geyser`, or on the free geyser closest to one of your townhalls (within 15 of a townhall that is at least 98% built, 55% after 5:00). `undefined` when tracked plus unfinished gas buildings number `max` or more, or no geyser is free. An enemy gas building within 4.5 moves the build to another geyser.
+
+#### *`buildings.cancel(target: Unit | TrackedBuild) => void`*
+Cancels the unfinished structure (`CANCEL_BUILDINPROGRESS`) and fails the active build with `'cancelled'`.
+
+#### *`buildings.pending(unitType?: number) => number`*
+Active builds started through `build` or `buildGas`; resumed (adopted) builds aren't counted.
+
+#### *`buildings.getTracked() => readonly TrackedBuild[]`*
+Active builds, resumed ones included, and those that finished or failed this step.
+
+#### *`buildings.configure(settings: Partial<BuildingSettings>) => void`*
+```ts
+BuildingSettings = {
+    priority: 10, // of the BUILDING-role commands
+    timeout: 120, // game seconds
+    maxAttempts: 5,
+    cancelLowHp: 'tracked', // 'tracked' | 'all' | 'off'
+}
+```
+After the first `build` or `buildGas` call of a game that returns a `TrackedBuild`, an unfinished Terran structure with no builder (add-ons and orbital or planetary morphs excepted) is resumed by a worker. A structure whose health dropped since the previous step and is below `max(50, 9% of max health)` is cancelled: with `'tracked'` only builds you started (Protoss and Zerg ones too after they count as done, not resumed ones), with `'all'` any. Settings survive a new game on the same engine; builds don't.
+
+### mining
+Off by default. Manages the workers in the `GATHERING` role (not `command`-labelled or constructing) once `enabled` is set; commands are proposed as that role at `priority`. `MiningAssignment = { kind: 'mineral' | 'gas'; resourceTag: string; townhallTag: string }`.
+
+#### *`mining.selectWorker(near: Point2D, opts?: { forceClose?: boolean; minHealth?: number; role?: UnitRole }) => Unit | undefined`*
+`forceClose = false`, `minHealth = 0` (fraction of max health), `role = BUILDING`. Takes the closest unassigned worker, or, with `forceClose` or when all are assigned, a mining worker that carries nothing, preferring the base closest to `near`. The worker is unassigned and given `role`. While mining is disabled nobody is assigned, so `forceClose` returns `undefined`.
+
+#### *`mining.release(worker: Unit | string) => void`*
+Unassigns the worker and sets its role to `GATHERING`.
+
+#### *`mining.getAssignment(worker: Unit | string) => MiningAssignment | undefined`*
+
+#### *`mining.getWorkersOn(resource: Unit | string) => string[]`*
+Tags of the workers on a mineral field or gas building.
+
+#### *`mining.getMineralTarget(mineral: Unit | string) => Point2D | undefined`*
+The speed-mining point of a field.
+
+#### *`mining.isEnabled() => boolean`*
+
+#### *`mining.configure(settings: Partial<MiningSettings>) => void`*
+```ts
+MiningSettings = {
+    enabled: false,
+    priority: -10,
+    workersPerGas: 3, // integer 0-3, else RangeError
+    speedMining: true,
+    townhallDistanceFactor: 1.08,
+    keepSafe: true,
+    fleeAtHealth: 0.5, // fraction of health (plus shield for Protoss)
+    weightSafetyLimit: 12, // ground cost above which a worker flees
+    selfDefence: true,
+    longDistanceMine: true,
+}
+```
+Settings survive a new game on the same engine; assignments don't.
+
+### flying
+Per-structure flight plans for Terran buildings, advanced in `onStep` under the commander `{ owner: 'flying', priority }`. A grounded structure is lifted; a flying one moves towards the destination and, within 5.5 of it, lands when the plan says so. A plan ends when the structure is gone or has landed within 0.5 of the destination. A destination that never accepts a landing keeps the plan alive, re-proposing every step, until `cancel`; so does `land: false`. Your own commands for a structure in transit are dropped as outranked at the default priority.
+
+#### *`flying.move(structure: Unit, destination: Point2D, opts?: { land?: boolean }) => void`*
+`land = true`. Replaces the structure's plan.
+
+#### *`flying.swap(a: Unit, b: Unit) => void`*
+Plans each structure to land at the other's current position. No checks; `actions.swapBuildings` checks first.
+
+#### *`flying.addonSwap(structure: Unit | number, addon: number) => boolean`*
+`structure` is a unit, or a unit type (the first finished one without an add-on). `addon` is `REACTOR` or `TECHLAB` (matching any variant of it) or a specific add-on type. Picks the closest finished idle add-on; if another structure has it, that one flies to the host's position, and the host lands where the add-on attaches. `false` (and no plan) when there is no finished host or add-on.
+
+#### *`flying.cancel(structure: Unit | string) => void`*
+
+#### *`flying.getPlans() => readonly FlightPlan[]`*
+`FlightPlan = { tag: string; destination: Point2D; land: boolean; state: 'lifting' | 'flying' | 'landing'; startedAt: number }` (`startedAt` is a game loop).
+
+#### *`flying.configure(settings: Partial<{ priority: number }>) => void`*
+`priority = 10`. Settings survive a new game on the same engine; plans don't.
 
 ### events
 TBD

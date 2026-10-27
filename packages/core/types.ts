@@ -69,7 +69,7 @@ export interface SystemObject {
     type?: SystemType;
     setup?: (world: World) => void;
     defaultOptions?: SystemOptions;
-    buildOrder?: Array<BuildTask>;
+    buildOrder?: Array<BuildTask | BuildOrderStep>;
     openings?: Record<string, OpeningDefinition> | 'config';
     opening?: string | ((world: World) => string);
     switchOpening?: (name: string, opts?: { removeCompleted?: boolean }) => void;
@@ -77,6 +77,7 @@ export interface SystemObject {
     buildOptions?: {
         paused?: boolean;
         earmarks: null | number;
+        fillWorkers?: boolean;
     };
     pauseBuild?: () => void;
     resumeBuild?: () => void;
@@ -124,6 +125,8 @@ export type TaskFunctions = {
     build: (id: number, qty?: number, opts?: BuildTaskOptions) => BuildTaskI;
     train: (id: number | number[], qty?: number, opts?: BuildTaskOptions) => BuildTaskI;
     upgrade: (id: number) => BuildTaskI;
+    scout: (kind: 'worker' | 'overlord', waypoints?: BuildTarget[]) => BuildTaskI;
+    addonSwap: (host: number, addon: number) => BuildTaskI;
 };
 
 export type BuildHelper = TaskFunctions[keyof TaskFunctions];

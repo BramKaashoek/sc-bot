@@ -1,7 +1,8 @@
 import { createAgent, createEngine, createPlayer } from '@sc-bot/core';
 import type { Point2D, World } from '@sc-bot/core';
+import { buildWorkers } from '@sc-bot/core/behaviors';
 import { Difficulty, Race } from '@sc-bot/core/constants/enums';
-import { FORGE, NEXUS, PHOTONCANNON, PROBE, PYLON } from '@sc-bot/core/constants/unit-type';
+import { FORGE, NEXUS, PHOTONCANNON, PYLON } from '@sc-bot/core/constants/unit-type';
 
 const MAP = process.env.MAP ?? 'Melee/Simple64';
 const gameTimeLimit = process.env.GAME_TIME_LIMIT ? Number(process.env.GAME_TIME_LIMIT) : undefined;
@@ -23,15 +24,18 @@ const randomOnDistance = (center: Point2D, distance: number): Point2D => {
 const bot = createAgent({
     settings: { race: Race.PROTOSS },
     async onGameStart({ resources }: World) {
-        return resources.get().actions.chatSend('(probe)(pylon)(cannon)(cannon)(gg)');
+        const { actions, mining } = resources.get();
+        mining.configure({ enabled: true });
+        return actions.chatSend('(probe)(pylon)(cannon)(cannon)(gg)');
     },
     async onStep({ agent, resources }: World) {
-        const { units, map, actions } = resources.get();
+        const { units, map, actions, buildings, behaviors } = resources.get();
         const enemyStart = map.getLocations().enemy[0];
 
+        // the placement solver only covers own bases
         const buildNear = async (unitType: number, near: Point2D) => {
             const placement = await actions.findPlacement(unitType, near);
-            if (placement) await actions.build(unitType, placement);
+            if (placement) buildings.build(unitType, { at: placement });
         };
 
         const nexuses = units.getById(NEXUS);
@@ -39,29 +43,29 @@ const bot = createAgent({
             return actions.attackMove(units.getWorkers(true), enemyStart);
         }
 
+        await behaviors.run(buildWorkers({ toCount: WORKER_TARGET }));
+
         const nexus = nexuses.random;
         const pylons = units.getById(PYLON);
         const readyPylons = pylons.ready;
 
-        if (agent.supplyWorkers < WORKER_TARGET && nexus.isIdle()) {
-            if (agent.canAfford(PROBE)) await actions.train(PROBE, nexus);
-        } else if (pylons.empty && agent.alreadyPending(PYLON) === 0) {
-            if (agent.canAfford(PYLON)) await buildNear(PYLON, nexus.pos);
+        if (pylons.empty) {
+            if (buildings.pending(PYLON) === 0) buildings.build(PYLON, { placement: { closestTo: nexus.pos } });
         } else if (units.getById(FORGE).empty) {
-            if (readyPylons.exists && agent.canAfford(FORGE)) {
-                await buildNear(FORGE, readyPylons.closestTo(nexus).pos);
+            if (readyPylons.exists && buildings.pending(FORGE) === 0) {
+                buildings.build(FORGE, { placement: { closestTo: readyPylons.closestTo(nexus).pos } });
             }
         } else if (pylons.amount < 2) {
-            if (agent.canAfford(PYLON)) {
+            if (buildings.pending(PYLON) === 0) {
                 const target = towards(enemyStart, map.getCenter(), randomBetween(8, 15));
                 await buildNear(PYLON, target);
             }
         } else if (units.getById(PHOTONCANNON).empty) {
             const nearEnemy = readyPylons.closerThan(20, enemyStart);
-            if (nearEnemy.exists && agent.canAfford(PHOTONCANNON)) {
+            if (nearEnemy.exists && buildings.pending(PHOTONCANNON) === 0) {
                 await buildNear(PHOTONCANNON, nearEnemy.random.pos);
             }
-        } else if (agent.canAfford(PYLON) && agent.canAfford(PHOTONCANNON)) {
+        } else if (buildings.pending() === 0 && agent.canAfford(PYLON) && agent.canAfford(PHOTONCANNON)) {
             const target = randomOnDistance(enemyStart, randomBetween(5, 12));
             const powered = agent.powerSources?.some(
                 (source) => Math.hypot(source.pos!.x! - target.x, source.pos!.y! - target.y) < source.radius!,

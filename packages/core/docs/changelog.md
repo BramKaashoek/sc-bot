@@ -30,7 +30,7 @@ Please note, this project adheres to [Semantic Versioning](https://semver.org/sp
 - An empty unit list is a no-op on every high-level command method (`attack`, `attackMove`, `move`, `smart`, `patrol`, `mine`, `do`, `stop`, `holdPosition`, `repair`, `returnResource`): it resolves without proposing anything. `do` used to throw, and `attack`/`attackMove` sent an empty command. Only the raw `actions.queueAction` throws `ActionManagerError` for a command without units.
 - A build that is dropped or that SC2 rejects removes the worker's `command` label during the flush, so the worker isn't marked stuck later. Nothing is refunded; the next observation restores the money.
 - The macro helpers (`train`, `research`, `distributeWorkers`, `expandNow`) always propose through the queue under the calling commander.
-- `actions.sendAction` still sends immediately; the units it commands count as taken for the rest of the observation: a proposal from another commander is dropped unless it strictly outranks the sender; the sender's own follow-ups still go out. `swapBuildings`, `toggleAutocast` and `chatSend` still send immediately.
+- `actions.sendAction` still sends immediately; the units it commands count as taken for the rest of the observation: a proposal from another commander is dropped unless it strictly outranks the sender; the sender's own follow-ups still go out. `toggleAutocast` and `chatSend` still send immediately.
 - A new game on the same engine resets every registered resource (including step times and proposed commands) through the registry.
 - Importing the package turns on Bluebird's `asyncHooks` for the whole process, so commanders survive Bluebird callbacks. It costs about 0.1 ms per step.
 
@@ -88,6 +88,30 @@ Please note, this project adheres to [Semantic Versioning](https://semver.org/sp
 - Optional: once every system that commands a role's units does so through `roles.as`, list that role in `roles.configure({ exclusive })`.
 - Optional: replace hand-rolled engage checks with `canWinFight(own, enemies) >= VICTORY_CLOSE` (or your own threshold).
 - Optional: read `intel.has(flag)` or handle `onEnemyStrategyDetected` instead of scouting heuristics, and `intel.getMainThreat('ground')` for base defence.
+
+### parity-4: placement, building tracker, mining, flying structures
+
+#### Added
+- `placement` resource: Terran and Protoss building spots solved once per game (add-on room for 3x3 spots, mineral lines avoided, main ramp wall, natural bunker; Protoss wall, pylon and optimal-pylon spots), `request` with flags, reservations and powered requests, `reserve`, `release`, `canPlace`, `getPlacements`, `add`, `configure`, `drawDebug`. Per-map spots through the optional `placer.placements(world)` hook.
+- `buildings` resource, the building tracker: `build`, `buildGas`, `cancel`, `pending`, `getTracked`, `configure`. It picks the spot and worker, retries dropped commands, re-places a failing building, replaces a dead builder, times builds out, resumes unfinished Terran structures (after the first `build` or `buildGas` call of a game that returns a build) and cancels structures that drop below `max(50, 9% of max health)` (`cancelLowHp`: `'tracked'` by default, `'all'`, `'off'`).
+- `mining` resource, off until `mining.configure({ enabled: true })`: worker assignment for `GATHERING` workers, speed mining, danger avoidance, self-defence and long-distance mining. `selectWorker`, `release`, `getAssignment`, `getWorkersOn`, `getMineralTarget`, `isEnabled`, `configure`.
+- `flying` resource: `move`, `swap`, `addonSwap`, `cancel`, `getPlans`, `configure`; per-step lift, fly and land plans.
+- Types: `BuildingSize`, `PlacementFlag`, `PlacementState`, `Placement`, `PlacementRequest`, `UserPlacement`, `PlacementSettings`, `PlacementResource`, `TrackedBuild`, `TrackedBuildStatus`, `BuildOptions`, `BuildingSettings`, `BuildingTracker`, `MiningSettings`, `MiningAssignment`, `MiningResource`, `FlightPlan`, `FlyingStructures`, `Placer.placements`.
+
+#### Changed
+- `actions.swapBuildings(a, b)` delegates to `flying.swap` and resolves with `void` once both plans are made; it used to send the lift, move and land commands itself and resolve with `ResponseAction[]`. It still rejects with `ActionManagerError` when either building can't lift or isn't finished. This supersedes core-arch Q7, which kept it on the raw immediate path.
+- Build-system `build` tasks for Terran and Protoss structures (add-ons excepted) go through `buildings.build` with a placement request, and gas tasks through `buildings.buildGas`. Spots differ from the old ring search: add-on room is always kept and mineral lines are avoided. A `placer.place` result still wins and is built on as a tracked build. When the tracker can't start the build (and for Zerg) the old `findPlacement` path runs.
+- A build task whose command was sent is only reset after 250 game loops when the tracker has no build of that type pending.
+- With `mining` enabled, `actions.build` and the macro helpers' builder pick (when no worker is given) take a mining worker from `mining.selectWorker`.
+- The map placement and pathing grids free a structure's footprint when it lifts off and block the cells where it lands.
+
+#### Migrating bot/
+- Everything is additive and opt-in. The only compile-time change is `actions.swapBuildings`, which resolves with no value (nothing in `bot/` calls it).
+- Build-system Terran and Protoss structure tasks now use precomputed spots and the tracker. Spots differ from the ring search; a `placer.place` hook still wins.
+- The map placement grid now frees cells when a structure lifts off.
+- Optional: replace `findPlacement` for depots and production with `placement.request` or `buildings.build`; `wall.ts` can use the spots flagged `wall`; supply hand-tuned spots through `placer.placements`.
+- Optional: enable mining with `mining.configure({ enabled: true })` instead of relying on SC2's auto-mining, and then stop calling `distributeWorkers`, which competes with it. Worker pulls from the bot's systems keep working: they run at priority 0 against mining's -10.
+- Optional: use `flying.addonSwap` instead of hand-rolled add-on swaps. Note that flying commands run at priority 10, so commands from the bot to a structure in transit are dropped as outranked until its plan ends or you call `flying.cancel`; a plan whose destination never accepts a landing is re-proposed every step until then.
 
 ## v0.8.2 - 2019-01-11
 ## Highlights:

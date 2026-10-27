@@ -7,8 +7,13 @@ import * as ability from '../constants/ability.ts';
 import { WorkerRace } from '../constants/race-map.ts';
 import { gasMineTypes, townhallTypes, addonTypes } from '../constants/groups.ts';
 import { Upgrade, UnitType, UnitTypeId, AbilityId, UpgradeId, Color } from '../constants/index.ts';
+import { ENEMY_NAT_VISION, ENEMY_SPAWN } from '../constants/build-target.ts';
+import { BUILD_RUNNER_SCOUT } from '../constants/unit-role.ts';
+import { parseBuildOrder } from '../utils/build-order/parse.ts';
+import { resolveTarget, scoutWaypoints, structurePlacement } from '../utils/build-order/targets.ts';
 import type {
     BuildOptions,
+    BuildOrderStep,
     BuildSystemObject,
     BuildTask,
     BuildTaskI,
@@ -26,8 +31,8 @@ const debugBuild = createDebug('sc2:debug:build');
 const debugDraw = createDebug('sc2:DrawDebug');
 const debugBuildSilly = createDebug('sc2:silly:build');
 
-const { BUILD_REACTOR, BUILD_TECHLAB } = ability;
-const { PYLON, BARRACKS, FACTORY, STARPORT, SUPPLYDEPOT } = UnitType;
+const { BUILD_REACTOR, BUILD_TECHLAB, HARVEST_RETURN, MOVE } = ability;
+const { PYLON, BARRACKS, FACTORY, STARPORT, SUPPLYDEPOT, OVERLORD } = UnitType;
 const addonHostTypes = [BARRACKS, FACTORY, STARPORT];
 
 const NOOP = () => {};
@@ -51,6 +56,12 @@ const taskFunctions: TaskFunctions = {
     build: (id, qty = 1, opts = {}) => ({ type: 'build', id, qty, opts }),
     train: (id, qty = 1, opts = {}) => ({ type: 'train', id, qty, opts }),
     upgrade: (id) => ({ type: 'upgrade', id, qty: 1 }),
+    scout: (scout, waypoints = [scout === 'worker' ? ENEMY_SPAWN : ENEMY_NAT_VISION]) => ({
+        type: 'scout',
+        qty: 1,
+        opts: { scout, waypoints },
+    }),
+    addonSwap: (host, addon) => ({ type: 'addonSwap', id: host, qty: 1, opts: { addon } }),
 };
 
 function builderPlugin(system: EventReader<System>): void {
@@ -82,6 +93,8 @@ function builderPlugin(system: EventReader<System>): void {
         upgrade: Symbol('upgrade'),
         attack: Symbol('attack'),
         worker: Symbol('worker'),
+        scout: Symbol('scout'),
+        addonSwap: Symbol('addonSwap'),
     };
 
     const buildFns: Record<symbol, BuildFn> = {};
@@ -93,6 +106,7 @@ function builderPlugin(system: EventReader<System>): void {
 
     function createTask(taskData: object, index: number, supply?: number) {
         return {
+            qty: 1,
             ...taskData,
             index,
             touched: false,
@@ -125,14 +139,19 @@ function builderPlugin(system: EventReader<System>): void {
         }
     }
 
-    function normalizeBuildOrder(world: World, bo: BuildTask[]) {
+    function normalizeBuildOrder(world: World, steps: Array<BuildTask | BuildOrderStep>) {
+        const bo = parseBuildOrder(steps, world.agent.race!);
+        if (system.buildOptions!.fillWorkers === false) {
+            return bo.map((step, i) => (Array.isArray(step) ? createTask(step[1], i, step[0]) : createTask(step, i)));
+        }
         if (Array.isArray(bo[0])) {
-            return (bo as Array<[number, BuildTaskI]>).reduce<{
+            return bo.reduce<{
                 supply: number;
                 buildOrder: object[];
                 reducerIndex: number;
             }>(
-                (acc, [supply, task]) => {
+                (acc, step) => {
+                    const [supply, task] = Array.isArray(step) ? step : [acc.supply, step];
                     if (acc.supply >= supply) {
                         acc.buildOrder.push(createTask(task, acc.reducerIndex));
                         calculateSupply(world, acc, supply, task);
@@ -190,6 +209,21 @@ function builderPlugin(system: EventReader<System>): void {
         }
 
         const buildTask: BuildTaskRuntime = this.state[buildSym][task.index];
+
+        if (buildTask.status === BuildOrder.COMMAND_GIVEN) {
+            if (gameLoop - buildTask.commanded! >= 250 && world.resources.get().buildings.pending(buildTask.id) === 0) {
+                buildTask.status = BuildOrder.NOT_STARTED;
+            }
+        }
+
+        if (
+            system.buildOptions!.fillWorkers === false &&
+            buildTask.status === BuildOrder.NOT_STARTED &&
+            buildTask.supply &&
+            world.agent.supplyUsed < buildTask.supply
+        ) {
+            return systemOnStep(world, gameLoop, buildTask, BuildResult.CANNOT_SATISFY);
+        }
 
         if (task.opts && task.opts.skip) {
             if (system.state[task.opts.skip]) {
@@ -267,12 +301,6 @@ function builderPlugin(system: EventReader<System>): void {
                     });
                     buildTask.earmarked = true;
                 }
-            }
-        }
-
-        if (buildTask.status === BuildOrder.COMMAND_GIVEN) {
-            if (gameLoop - buildTask.commanded! >= 250 && world.resources.get().buildings.pending(buildTask.id) === 0) {
-                buildTask.status = BuildOrder.NOT_STARTED;
             }
         }
 
@@ -437,6 +465,23 @@ function builderPlugin(system: EventReader<System>): void {
 
         const { actions, map, placer } = resources.get();
 
+        const targeted = task.opts?.at === undefined ? undefined : structurePlacement(world, task.id, task.opts.at);
+        if (targeted) {
+            const at =
+                'placement' in targeted
+                    ? undefined
+                    : 'at' in targeted
+                      ? targeted.at
+                      : await actions.findPlacement(task.id, targeted.near);
+            if (at === false || !affordable(world, task)) return BuildResult.CANNOT_SATISFY;
+            const tracked = trackBuild(world, task, 'placement' in targeted ? targeted : { at });
+            if (tracked) return tracked;
+            if (at) {
+                settle();
+                return buildAt(world, task, at);
+            }
+        }
+
         if (gasMineTypes.includes(task.id)) {
             settle();
             // build-order gas steps are explicit, so don't cap simultaneous builds like buildGas' default
@@ -480,10 +525,16 @@ function builderPlugin(system: EventReader<System>): void {
         }
     };
 
-    buildFns[buildFnSyms.train] = async function ({ agent, resources }: World, task: TrainTask) {
+    buildFns[buildFnSyms.train] = async function (world: World, task: TrainTask) {
+        const { agent, resources } = world;
         const { actions } = resources.get();
 
         const id = Array.isArray(task.id) ? getRandom(task.id) : task.id;
+
+        if (task.opts?.at) {
+            const trained = await agent.train(id, 1, resolveTarget(world, task.opts.at));
+            return trained > 0 ? BuildResult.SUCCESS : BuildResult.CANNOT_SATISFY;
+        }
 
         try {
             if (agent.upgradeIds!.includes(Upgrade.WARPGATERESEARCH)) {
@@ -542,7 +593,9 @@ function builderPlugin(system: EventReader<System>): void {
         const { actions, units } = resources.get();
 
         const canDo = data.findUnitTypesWithAbility(task.id);
-        let unitsCanDo = units.getByType(canDo).filter((unit) => unit.abilityAvailable(task.id));
+        let unitsCanDo = units
+            .getByType(task.opts?.on ? [task.opts.on] : canDo)
+            .filter((unit) => unit.abilityAvailable(task.id));
 
         if ([BUILD_REACTOR, BUILD_TECHLAB].includes(task.id)) {
             unitsCanDo = unitsCanDo.filter((unit) => unit.addOnTag === '0' && unit.noQueue);
@@ -563,6 +616,50 @@ function builderPlugin(system: EventReader<System>): void {
             debugBuild('BUILD ABILITY ERR:', e);
             return BuildResult.ERROR;
         }
+    };
+
+    const workerScout = (world: World): Unit | undefined => {
+        const { map, mining, roles, units } = world.resources.get();
+        const main = map.getMain().townhallPosition;
+        if (mining.isEnabled()) return mining.selectWorker(main, { role: BUILD_RUNNER_SCOUT });
+        const [worker] = units.getClosest(main, units.getMineralWorkers());
+        if (worker) roles.assign(worker, BUILD_RUNNER_SCOUT);
+        return worker;
+    };
+
+    const overlordScout = (world: World): Unit | undefined => {
+        const { roles, units } = world.resources.get();
+        const overlord = units.getById(OVERLORD).find((unit) => roles.roleOf(unit) !== BUILD_RUNNER_SCOUT);
+        if (overlord) roles.assign(overlord, BUILD_RUNNER_SCOUT);
+        return overlord;
+    };
+
+    buildFns[buildFnSyms.scout] = async function (world: World, task: BuildTaskRuntime) {
+        const { actions, roles } = world.resources.get();
+        const scout = task.opts?.scout === 'overlord' ? overlordScout(world) : workerScout(world);
+        if (!scout) return BuildResult.CANNOT_SATISFY;
+
+        const waypoints = scoutWaypoints(world, task.opts?.waypoints ?? []);
+        const returning = scout.isWorker() && scout.isCarryingResource();
+        const unitTags = [scout.tag!];
+        roles.as(BUILD_RUNNER_SCOUT, () =>
+            actions.queueAction([
+                ...(returning ? [{ abilityId: HARVEST_RETURN, unitTags }] : []),
+                ...waypoints.map((targetWorldSpacePos, i) => ({
+                    abilityId: MOVE,
+                    unitTags,
+                    targetWorldSpacePos,
+                    queueCommand: returning || i > 0,
+                })),
+            ]),
+        );
+        return BuildResult.SUCCESS;
+    };
+
+    buildFns[buildFnSyms.addonSwap] = async function (world: World, task: BuildTaskRuntime) {
+        return world.resources.get().flying.addonSwap(task.id, task.opts!.addon!)
+            ? BuildResult.SUCCESS
+            : BuildResult.CANNOT_SATISFY;
     };
 }
 
