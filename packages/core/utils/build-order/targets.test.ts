@@ -58,6 +58,7 @@ describe('build targets', () => {
         expect(distance(vision, map.getCenter(true))).toBeLessThan(
             distance(map.getEnemyNatural()!.townhallPosition, map.getCenter(true)),
         );
+        expect(() => resolveTarget(world, T.ENEMY_NAT_HG_SPOT)).toThrow('not implemented: ENEMY_NAT_HG_SPOT');
     });
 
     it('turns structure targets into placement requests, townhall spots, proxies or nothing', async () => {

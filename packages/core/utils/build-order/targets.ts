@@ -1,6 +1,7 @@
 import * as BuildTargets from '../../constants/build-target.ts';
 import { Alliance } from '../../constants/enums.ts';
 import { gasMineTypes, townhallTypes } from '../../constants/groups.ts';
+import { NodeSC2Error } from '../../engine/errors.ts';
 import { distance, towards } from '../geometry/point.ts';
 import type { BuildTarget, Expansion, PlacementFlag, PlacementRequest, Point2D, World } from '../../types.ts';
 
@@ -76,6 +77,8 @@ export function resolveTarget(world: World, target: BuildTarget): Point2D {
             );
         case BuildTargets.NAT_WALL:
             return resolveTarget(world, BuildTargets.NAT);
+        case BuildTargets.ENEMY_NAT_HG_SPOT:
+            throw new NodeSC2Error('not implemented: ENEMY_NAT_HG_SPOT');
         default:
             return start;
     }

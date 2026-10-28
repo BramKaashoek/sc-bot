@@ -171,4 +171,7 @@ Audits done (.agent-work/audits/); architect writing consolidation.md. Gate: no 
 | R2-T28a | approved (faithful port; matches reviewer port 0/14/50) | senior-backend-r228b |
 | R2-T36 | approved | junior-backend-r236 |
 | CS-D09 | approved | junior-backend-csd09, junior-backend-d09b |
-| R2-T19 scaffolding C | done; in review | junior-backend-r219 |
+| R2-T19 scaffolding C | approved | junior-backend-r219, senior-backend-r213c |
+| LIVE-1 canAfford vs build/train throw | root cause: bot check-then-act race; awaiting user choice | senior-backend-bug-afford |
+| LIVE-2 unpowered cyber core stuck + LIVE-3 refinery spam | approved (tests mutation-checked; not live-confirmed) | senior-backend-bug-build, bug-build2 |
+| R2-T13 | approved (guard covers all active statuses) | senior-backend-r213c |

@@ -195,7 +195,7 @@ bot.use(reaperExpand);
 
 | Target | The point | A structure with this target |
 |---|---|---|
-| `RAMP` | Top of your main ramp | A [`placement`](macro.md#placement) request for the main base with the `wall` flag. When an enemy unit is within 10 of the ramp top the flag is dropped, so the builder isn't sent into them. |
+| `RAMP` | Top of your main ramp | A [`placement`](macro.md#placement) request for the main base with the `wall` flag (Protoss: `powered`, except for a pylon). When an enemy unit is within 10 of the ramp top the flag is dropped, so the builder isn't sent into them. |
 | `NAT_WALL` | Your natural's townhall position | The same request for the natural. Unlike ares, it keeps the `wall` flag when enemies are at the main ramp. |
 | `REAPER_WALL`, `SUPPLY`, `PRODUCTION`, `UPGRADE`, `BUNKER` | Your start location | A request with the flag `reaperWall`, `supplyDepot`, `production`, `upgradeStructure` or `bunker` |
 | `SPAWN`, `NAT`, `THIRD`, `FOURTH`, `FIFTH`, `SIXTH` | The townhall position of your 1st to 6th expansion, in `map.getExpansions()` order | A request for that base; a townhall goes on that base's townhall position |

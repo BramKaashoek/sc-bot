@@ -501,6 +501,16 @@ describe('builderPlugin', () => {
             [UnitType.SUPPLYDEPOT, { flags: ['supplyDepot'] }],
             [UnitType.GATEWAY, { powered: true }],
         ]);
+
+        request.mockClear();
+        await run(build(UnitType.CYBERNETICSCORE, 1, { at: 'RAMP' }));
+        const core = request.mock.calls.filter(([unitType]) => unitType === UnitType.CYBERNETICSCORE);
+        expect([core.length > 0, core.every(([, opts]) => opts?.powered)]).toEqual([true, true]);
+
+        request.mockClear();
+        await run(build(UnitType.PYLON, 1, { at: 'RAMP' }));
+        const pylon = request.mock.calls.filter(([unitType]) => unitType === UnitType.PYLON);
+        expect([pylon.length > 0, pylon.some(([, opts]) => opts?.powered)]).toEqual([true, false]);
     });
 
     it('without fillWorkers holds an unstarted step until supply used reaches its supply, adding no worker tasks, while a started step still completes or resets after 250 loops when supply drops', async () => {

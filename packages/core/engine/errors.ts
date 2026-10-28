@@ -46,7 +46,12 @@ function triageError(err: unknown, label: string, sinks: TriageSinks): void {
     else sinks.unexpected(label, err as Error);
 }
 
+const stub = (name: string) => (): never => {
+    throw new NodeSC2Error(`not implemented: ${name}`);
+};
+
 export {
+    stub,
     isFatalGameError,
     triageError,
     GameEndedError,

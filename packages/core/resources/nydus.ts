@@ -1,9 +1,5 @@
-import { NodeSC2Error } from '../engine/errors.ts';
+import { stub } from '../engine/errors.ts';
 import type { ResourceDefinition } from '../types.ts';
-
-const stub = (name: string) => (): never => {
-    throw new NodeSC2Error(`not implemented: ${name}`);
-};
 
 export const nydusResource: ResourceDefinition<'nydus'> = {
     name: 'nydus',

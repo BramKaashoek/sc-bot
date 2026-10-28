@@ -356,13 +356,15 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
             debug('Trying to expandNow() but bot is out of locations to expand to');
             return;
         }
-        // money is only spent once BUILD is ordered, so canAfford keeps passing while the worker walks to a spot the
-        // picker no longer skips once targeted; only the 'moving' window can double-spend
+        // SC2 charges at placement, so canAfford keeps passing while the worker walks and a second call would pick
+        // another spot
         const tracked = buildings
             .getTracked()
             .some(
                 ({ unitType, target: at, status }) =>
-                    unitType === building && status === 'moving' && (!location || distance(at, target) < 1),
+                    unitType === building &&
+                    (status === 'moving' || status === 'ordered' || status === 'constructing') &&
+                    (!location || distance(at, target) < 1),
             );
         if (tracked || !this.canAfford(building)) return;
         buildings.build(building, { at: target });

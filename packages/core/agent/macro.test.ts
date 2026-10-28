@@ -218,21 +218,52 @@ describe('agent macro helpers', () => {
         expect(await agent.getNextExpansion()).not.toEqual({ x: first.x + 0.5, y: first.y + 0.5 });
     });
 
-    it('allows a second expandNow once the first townhall build has sent BUILD', async () => {
+    it('sends one townhall build at a time, with or without a location, from the first order until it is done', async () => {
         const world = await createTestWorld('blueshift', { loop: 224, onQuery: straightLinePathing });
-        const { agent } = world;
+        const { agent, client } = world;
         const { buildings } = world.resources.get();
+        const snapshot = () => buildings.getTracked().map(({ target, status }) => ({ target, status }));
+        const expandTwice = async (build: { target: Point2D }) => {
+            await agent.expandNow();
+            await agent.expandNow(undefined, build.target);
+        };
+        const stepWith = async (gameLoop: number, edit: (units: SC2APIProtocol.Unit[]) => SC2APIProtocol.Unit[]) => {
+            const next = structuredClone(client.fixture.observations[224]);
+            next.observation!.gameLoop = gameLoop;
+            next.observation!.rawData!.units = edit(next.observation!.rawData!.units!);
+            await stepTo(world, next);
+        };
 
         await agent.expandNow();
-        const [first] = buildings.getTracked();
-        (first as { status: string }).status = 'constructing';
-        await agent.expandNow();
+        const [build] = buildings.getTracked();
+        const { target, workerTag } = build;
+        expect(snapshot()).toEqual([{ target, status: 'moving' }]);
 
-        expect(buildings.getTracked().map(({ target, status }) => ({ target, status }))).toEqual([
-            { target: first.target, status: 'constructing' },
-            { target: buildings.getTracked()[1].target, status: 'moving' },
+        const building = [{ abilityId: Ability.BUILD_COMMANDCENTER, targetWorldSpacePos: target }];
+        await stepWith(226, (units) =>
+            units.map((raw) => (raw.tag === workerTag ? { ...raw, orders: building } : raw)),
+        );
+        expect(snapshot()).toEqual([{ target, status: 'ordered' }]);
+        await expandTwice(build);
+        expect(snapshot()).toEqual([{ target, status: 'ordered' }]);
+
+        const structure = rawUnit({
+            unitType: UnitType.COMMANDCENTER,
+            pos: { x: target.x, y: target.y, z: 12 },
+            buildProgress: 0.5,
+        });
+        await stepWith(228, (units) => [...units, structure]);
+        expect(snapshot()).toEqual([{ target, status: 'constructing' }]);
+        await expandTwice(build);
+        expect(snapshot()).toEqual([{ target, status: 'constructing' }]);
+
+        await stepWith(230, (units) => [...units, { ...structure, buildProgress: 1 }]);
+        expect(snapshot()).toEqual([{ target, status: 'done' }]);
+        await agent.expandNow();
+        expect(snapshot()).toEqual([
+            { target, status: 'done' },
+            { target: expect.not.objectContaining(target), status: 'moving' },
         ]);
-        expect(buildings.getTracked()[1].target).not.toEqual(first.target);
     });
 
     it('does not expand below the townhall cost', async () => {

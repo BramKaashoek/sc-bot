@@ -582,6 +582,48 @@ describe('building tracker', () => {
         expect([gas.status, gas.geyserTag !== geyser]).toEqual(['moving', true]);
     });
 
+    it('fails a refinery blocked once SC2 rejects it maxAttempts times and keeps its geyser off buildGas and the enemy-gas retarget for 60 s, unless buildGas gets that geyser explicitly', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { buildings, units } = world.resources.get();
+        const [nearest, other] = ['4327473153', '4319346689'];
+        const freed = { [REFINERY]: null };
+        await step(world, 897, { edits: freed });
+        const gas = buildings.buildGas()!;
+        expect(gas.geyserTag).toBe(nearest);
+        const ACTION_ERROR = 3 as SC2APIProtocol.ActionResult;
+        const action = world.client.action;
+        world.client.action = async (request) => ({ result: (request.actions ?? []).map(() => ACTION_ERROR) });
+
+        for (let loop = 900; loop < 900 + 4 * 12; loop += 4) {
+            await step(world, loop, { edits: { ...freed, [gas.workerTag!]: { ...at(gas.target), orders: [] } } });
+        }
+        world.client.action = action;
+        expect([gas.status, gas.failure]).toEqual(['failed', 'blocked']);
+
+        const next = buildings.buildGas()!;
+        expect(next.geyserTag).toBe(other);
+        const enemyRefinery = rawUnit({
+            alliance: Alliance.ENEMY,
+            owner: 2,
+            unitType: UnitType.REFINERY,
+            ...at(next.target),
+        });
+        const enemyStep = {
+            edits: { ...freed, [next.workerTag!]: { ...at(next.target), orders: [] } },
+            extra: [enemyRefinery],
+        };
+        await step(world, 1000, enemyStep);
+        expect([next.status, next.failure]).toEqual(['failed', 'blocked']);
+
+        expect(buildings.buildGas({ max: 2 })).toBeUndefined();
+        const explicit = buildings.buildGas({ geyser: units.getByTag(nearest)! })!;
+        expect(explicit.geyserTag).toBe(nearest);
+        buildings.cancel(explicit);
+
+        await step(world, 900 + 60 * 22.4 + 100, { ...enemyStep, edits: freed });
+        expect(buildings.buildGas()!.geyserTag).toBe(nearest);
+    });
+
     it('cancels a damaged unfinished structure below max(50, 9%) per cancelLowHp, never a creep tumour', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
         const { buildings } = world.resources.get();

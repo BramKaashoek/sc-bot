@@ -386,3 +386,5 @@ parity-r2.md: 18 tickets, RQ1–RQ10 for the user (morning). Running now: T01 sc
 
 - 2026-10-28 (lead): R2-T21a correction — the isValidTumorSpot ares defect is banker-round bounds vs truncated lookup (rejects outer half of last cell on even widths), not an out-of-range read. Floor-both fix kept.
 - 2026-10-28 (lead): batch 9 pushed 73b77f2 (unreviewed: R2-T19, R2-T13 rework; reviews stopped at user request). Resume: re-review T19 + T13, then CS-I06, T19 feature tickets per parity-r2.md runnable order; RQ11' awaits user; live-hardening report pending (junior-backend-live2).
+
+- 2026-10-28 (lead, correction): R2-T13 pending guard — my "moving-only" call was wrong: SC2 charges at placement, so the guard must cover every active status (moving/ordered/constructing) for both the no-location and explicit-location paths. Restores the changelog guarantee "calling every step sends one worker". Also: programmatic at: ENEMY_NAT_HG_SPOT must throw not-implemented until R2-T28 (not silently resolve to own start).

@@ -63,7 +63,7 @@ Workers whose orders are the build ability for `unitType`, not counting orders t
 
 #### `agent.getNextExpansion() => Promise<Point2D | null>`
 
-The townhall center of the spot `buildings.getNextExpansion()` picks: the first of `map.getAvailableExpansions()` that isn't blocked, targeted by a pending townhall build or unsafe (see [buildings](#buildings)); `null` when none is left. No pathing query is made. `buildings.getNextExpansion` returns the floored cell, this adds `0.5` to each axis.
+The townhall center of the spot `buildings.getNextExpansion()` picks: the first of `map.getAvailableExpansions()` that isn't blocked, targeted by a pending townhall build, unreachable or unsafe (see [buildings](#buildings)); `null` when none is left. No pathing query is made. `buildings.getNextExpansion` returns the floored cell, this adds `0.5` to each axis.
 
 #### `agent.ownedExpansions() => Array<{ location: Point2D, townhall: Unit }>`
 
@@ -71,7 +71,7 @@ Your occupied expansions with their townhalls.
 
 #### `agent.expandNow(unitType?: number, location?: Point2D) => Promise<void>`
 
-Builds a townhall (`unitType`, default your race's first townhall type) at `location` (default `getNextExpansion()`) through [`buildings.build`](#buildings) with `at`, so it is tracked. Without a `location` it builds at the spot `buildings.getNextExpansion()` picks (corner coordinates, not the `getNextExpansion()` centre). Does nothing when there is no location, when a townhall build of that type is still `moving` (BUILD not sent yet; with a `location`, only one within 1 of it), or when the townhall is unaffordable.
+Builds a townhall (`unitType`, default your race's first townhall type) at `location` (default `getNextExpansion()`) through [`buildings.build`](#buildings) with `at`, so it is tracked. Without a `location` it builds at the spot `buildings.getNextExpansion()` picks (corner coordinates, not the `getNextExpansion()` centre). Does nothing when there is no location, while an active townhall build of that type exists (`moving`, `ordered` or `constructing`; with a `location`, only one within 1 of it), or when the townhall is unaffordable.
 
 #### `agent.train(unitType: number, amount = 1, closestTo?: Point2D, trainOnlyIdleBuildings = true) => Promise<number>`
 
@@ -239,7 +239,7 @@ type BuildOptions = {
 
 #### `buildings.buildGas(opts?: { geyser?: Unit; max = 1 }) => TrackedBuild | undefined`
 
-Builds your race's gas building on `geyser`, or on the free geyser closest to one of your townhalls (within 15 of a townhall that is at least 98% built, or 55% after 5:00 of game time). `undefined` when the tracked and unfinished gas buildings already number `max` or more, or no geyser is free. An enemy gas building within 4.5 of the geyser moves the build to the next free geyser.
+Builds your race's gas building on `geyser`, or on the free geyser closest to one of your townhalls (within 15 of a townhall that is at least 98% built, or 55% after 5:00 of game time). `undefined` when the tracked and unfinished gas buildings already number `max` or more, or no geyser is free. An enemy gas building within 4.5 of the geyser moves the build to the next free geyser. A geyser whose gas build SC2 rejected `maxAttempts` times is skipped, here and in that retarget, for 60 s; an explicit `geyser` ignores this.
 
 #### `buildings.cancel(target: Unit | TrackedBuild) => void`
 
@@ -255,7 +255,7 @@ The active builds, resumed ones included, plus those that finished or failed thi
 
 #### `buildings.getNextExpansion(opts?: { checkSafe = true }) => Point2D | undefined`
 
-The townhall position of the first available expansion (`map.getAvailableExpansions()` order) that isn't blocked (see `isExpansionBlocked`), isn't the target of another active tracked townhall build (within the same distance as the blocked check, so a worker still walking there counts) and, with `checkSafe`, is safe on `pathing.isPositionSafe`. `expansionController` passes its `checkLocationIsSafe` to the pick.
+The townhall position of the first available expansion (`map.getAvailableExpansions()` order) that isn't blocked (see `isExpansionBlocked`), isn't the target of another active tracked townhall build (within the same distance as the blocked check, so a worker still walking there counts) and, with `checkSafe`, is safe on `pathing.isPositionSafe`; expansions with no ground path from the main are skipped too. `expansionController` passes its `checkLocationIsSafe` to the pick.
 
 #### `buildings.isExpansionBlocked(pos: Point2D) => boolean`
 
@@ -294,7 +294,7 @@ A moving worker that stands still for 10 s away from the target has stalled: the
 
 ### Each step
 
-The worker moves to the target (within 1, or 3.2 for gas; a worker carrying resources returns them first), then the tracker waits for tech and money (minus other earmarks) and sends the build command. If that command is dropped or rejected the build goes back to `'moving'` and `attempts` goes up. After `maxAttempts` the building is re-placed by the placement solver (`'noPlacement'` when there is no spot; a build started with `placement` repeats that request), or, for gas, it keeps trying the same geyser. A spot that has become unplaceable before the command is re-placed too. A build started with `at` is never re-placed by the solver: where it would be, it fails `'blocked'` (the gas and townhall moves below still apply).
+The worker moves to the target (within 1, or 3.2 for gas; a worker carrying resources returns them first), then the tracker waits for tech and money (minus other earmarks) and sends the build command. If that command is dropped or rejected the build goes back to `'moving'` and `attempts` goes up. After `maxAttempts` the building is re-placed by the placement solver (`'noPlacement'` when there is no spot; a build started with `placement` repeats that request), or, for gas, it fails `'blocked'` and puts its geyser on a 60 s cooldown (see `buildGas`). A spot that has become unplaceable before the command is re-placed too. A build started with `at` is never re-placed by the solver: where it would be, it fails `'blocked'` (the gas and townhall moves below still apply).
 
 A townhall is moved to the next available expansion that can hold it (`getNextExpansion()` with the default `checkSafe: true`, plus `placement.canPlace`) when SC2 rejects the location (which puts the spot on the blocked list), the spot is on that list, or the spot can't be placed; it fails `'blocked'` when there is none. An enemy unit, rock or tower near the spot doesn't move it. An enemy gas building within 4.5 of the geyser moves a gas build to the next free geyser (`'blocked'` when none is left).
 

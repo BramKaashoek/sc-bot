@@ -1,4 +1,3 @@
-import { UNREACHABLE_PATH_LENGTH } from '../constants/pathing.ts';
 import createDebug from 'debug';
 import flat from 'array.prototype.flat';
 import hullJs from 'hull.js';
@@ -34,6 +33,7 @@ import {
 import { Alliance } from '../constants/enums.ts';
 import Color from '../constants/color.ts';
 import { UnitType, UnitTypeId } from '../constants/index.ts';
+import { UNREACHABLE_PATH_LENGTH } from '../constants/pathing.ts';
 import {
     flyingStructureTypes,
     vespeneGeyserTypes,

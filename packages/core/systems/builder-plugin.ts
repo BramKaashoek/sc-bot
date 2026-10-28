@@ -625,6 +625,10 @@ function builderPlugin(system: EventReader<System>): void {
         );
     };
 
+    // a @RAMP/@NAT_WALL request would otherwise pick a spot no pylon powers, which the engine rejects forever
+    const powered = (world: World, task: BuildTaskRuntime, request: PlacementRequest): PlacementRequest =>
+        world.agent.race === Race.PROTOSS && task.id !== PYLON ? { ...request, powered: true } : request;
+
     const placementRequest = (world: World, task: BuildTaskRuntime): PlacementRequest => {
         const { units } = world.resources.get();
         const [nearUnit] = task.opts?.near ? units.getById(task.opts.near) : [];
@@ -720,7 +724,11 @@ function builderPlugin(system: EventReader<System>): void {
                       ? targeted.at
                       : await actions.findPlacement(task.id, targeted.near);
             if (at === false || !affordsTask(world, task)) return BuildResult.CANNOT_SATISFY;
-            const tracked = trackBuild(world, task, 'placement' in targeted ? targeted : { at });
+            const tracked = trackBuild(
+                world,
+                task,
+                'placement' in targeted ? { placement: powered(world, task, targeted.placement) } : { at },
+            );
             if (tracked) return tracked;
             if (at) {
                 settle();

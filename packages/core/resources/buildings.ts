@@ -62,6 +62,7 @@ type State = {
     healthByTag: Map<string, number>;
     unfinishedDone: Set<string>;
     stalledWorkers: Map<string, { unitType: number; until: number }>;
+    rejectedGeysers: Map<string, number>;
     optedIn: boolean;
     blocked: Point2D[];
 };
@@ -77,9 +78,18 @@ const freshState = (settings: BuildingSettings): State => ({
     healthByTag: new Map(),
     unfinishedDone: new Set(),
     stalledWorkers: new Map(),
+    rejectedGeysers: new Map(),
     optedIn: false,
     blocked: [],
 });
+
+function rejectedGeysers(world: World, state: State): Set<string> {
+    const loop = context(world).frame.getGameLoop();
+    state.rejectedGeysers.forEach((until, tag) => {
+        if (until <= loop) state.rejectedGeysers.delete(tag);
+    });
+    return new Set(state.rejectedGeysers.keys());
+}
 
 const isGas = (unitType: number) => gasMineTypes.includes(unitType);
 
@@ -219,7 +229,10 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
                     );
                 if (pendingGas.length + unfinished.length >= max) return undefined;
 
-                const pendingGeysers = new Set(pendingGas.map((build) => build.geyserTag!));
+                const pendingGeysers = new Set([
+                    ...pendingGas.map((build) => build.geyserTag!),
+                    ...rejectedGeysers(world, state),
+                ]);
                 const target = geyser ?? freeGeysers(world, pendingGeysers)[0];
                 if (!target) return undefined;
                 return tracker.build(gasType, { at: target });
@@ -345,7 +358,16 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
                 }
                 build.status = 'moving';
                 build.attempts += 1;
-                if (build.attempts >= state.settings.maxAttempts && !build.geyserTag) replan(build);
+                if (build.attempts < state.settings.maxAttempts) return;
+                if (!build.geyserTag) replan(build);
+                else {
+                    // a geyser the engine keeps refusing would be re-picked as the nearest free one forever
+                    state.rejectedGeysers.set(
+                        build.geyserTag,
+                        context(world).frame.getGameLoop() + STALL_COOLDOWN_LOOPS,
+                    );
+                    finish(build, 'failed', 'blocked');
+                }
             });
         }
 
@@ -554,6 +576,7 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
                             .map((other) => other.geyserTag!),
                     );
                     taken.add(build.geyserTag!);
+                    rejectedGeysers(world, state).forEach((tag) => taken.add(tag));
                     const next = freeGeysers(world, taken)[0];
                     if (!next) {
                         finish(build, 'failed', 'blocked');
