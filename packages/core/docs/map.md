@@ -13,9 +13,9 @@ Coordinates are `Point2D` (`{ x, y }`); a cell is addressed by its floored coord
 
 ## `map` resource
 
-#### `map.getLocations() => { self: Point2D; enemy: Point2D[] }`
+#### `map.getLocations() => { self: Point2D | undefined; enemy: Point2D[] }`
 
-Your start location and the possible enemy start locations.
+Your start location (`undefined` before the game starts) and the possible enemy start locations.
 
 #### `map.getExpansions(alliance?: Alliance) => Expansion[]`
 
@@ -33,19 +33,24 @@ export async function onGameStart({ resources }: World) {
 }
 ```
 
-#### `map.getMain() => Expansion`
+#### `map.getMain() => Expansion | undefined`
 
-#### `map.getNatural() => Expansion`
+#### `map.getNatural() => Expansion | undefined`
 
 #### `map.getThirds() => Expansion[]`
 
-#### `map.getEnemyMain() => Expansion`
+#### `map.getEnemyMain() => Expansion | undefined`
 
-#### `map.getEnemyNatural() => Expansion`
+#### `map.getEnemyNatural() => Expansion | undefined`
 
 #### `map.getEnemyThirds() => Expansion[]`
 
-Shortcuts into `getExpansions()` (and `getExpansions(Alliance.ENEMY)`): the first, the second, and the third and fourth. `getThirds` and `getEnemyThirds` return up to two expansions, fewer on maps with fewer than four bases; on most maps the third and fourth are interchangeable, and the closer one comes first.
+Shortcuts into `getExpansions()` (and `getExpansions(Alliance.ENEMY)`): the first, the second, and the third and fourth. The single-expansion getters are `undefined` when the list is too short, as on some custom maps. `getThirds` and `getEnemyThirds` return up to two expansions, fewer on maps with fewer than four bases; on most maps the third and fourth are interchangeable, and the closer one comes first.
+
+```ts
+const natural = map.getNatural();
+if (!natural) return;
+```
 
 #### `map.getClosestExpansion(point: Point2D) => Expansion`
 
@@ -53,7 +58,7 @@ The expansion with the shortest `map.path` from `point` to a cell 3 off its town
 
 #### `map.getAvailableExpansions() => Expansion[]`
 
-Expansions with no known base (or whose base is labelled `dead`), in `getExpansions()` order.
+Expansions with no known base (or whose base is labelled `dead`), in `getExpansions()` order. A spot a pending townhall build is heading to still counts as available here; `buildings.getNextExpansion` skips it (see [macro.md](macro.md#buildings)).
 
 #### `map.getOccupiedExpansions(alliance: Alliance = Alliance.SELF) => Expansion[]`
 
@@ -179,7 +184,7 @@ export async function onGameStart({ resources }: World) {
     const pylonSpot = ramp.protossWallPylon;
     if (pylonSpot) await actions.build(PYLON, pylonSpot);
 
-    const natural = map.getNatural();
+    const natural = map.getNatural()!;
     const [worker] = units.getWorkers();
     const groundDistance = await map.queryPathing(worker, natural.townhallPosition);
     const localPath = map.path(worker.pos, natural.townhallPosition);
@@ -216,11 +221,17 @@ pathFromEnemy: number[][]       // map.path from this expansion (+3 on x) to the
 labels: Map<string, any>
 ```
 
-`cluster.mineralFields` and `cluster.vespeneGeysers` are filled once at game start from the units seen then and never refreshed. The `Unit` objects in them update in place, but a depleted field stays in the array, labelled `dead` (`isCurrent()` is `false`), so filter with `isCurrent()` if you need what is left. A `pathFrom*` that has no path, or no known start to path to (no enemy start location, say), is a placeholder array of length 999 with no cells.
+`cluster.mineralFields` and `cluster.vespeneGeysers` are a snapshot: filled once at game start from the units seen then and never refreshed. The `Unit` objects in them update in place, but a depleted field stays in the array, labelled `dead` (`isCurrent()` is `false`); use `expansion.getMineralFields()` and `getVespeneGeysers()` for what is left. A `pathFrom*` that has no path, or no known start to path to (no enemy start location, say), is a placeholder array of length 999 with no cells.
 
 #### `expansion.getBase() => Unit | undefined`
 
 The townhall currently occupying the expansion, if any.
+
+#### `expansion.getMineralFields() => Units`
+
+#### `expansion.getVespeneGeysers() => Units`
+
+The expansion's mineral fields and geysers that are still current, so a mined-out field drops out. Unlike `cluster.mineralFields` and `cluster.vespeneGeysers`, these are not the game-start snapshot.
 
 #### `expansion.getAlliance() => Alliance`
 
@@ -248,7 +259,7 @@ As in python-sc2, `barracksCanFitAddon` throws on a ramp without the standard sh
 
 ## `PixelMap`
 
-`PixelMap` is exported from `@sc-bot/core`. It wraps an SC2 image, `new PixelMap({ bitsPerPixel, size: { x, y }, data })` with a 1-bit or 8-bit `data: Uint8Array`, the fields of an `ImageData` such as `startRaw.pathingGrid`. The constructor throws when `size` doesn't match the data length.
+`PixelMap` is exported from `@sc-bot/core`. It wraps an SC2 image: `new PixelMap(imageData)` takes an `ImageData` such as `startRaw.pathingGrid` as it is, with a 1-bit or 8-bit `data: Uint8Array`. The constructor throws a `TypeError` when `bitsPerPixel`, `size.x`, `size.y` or `data` is missing, and an `Error` when `size` doesn't match the data length.
 
 #### `pixelMap.get(point: Point2D) => number`
 
@@ -274,9 +285,8 @@ import type { World } from '@sc-bot/core';
 
 export async function onGameStart({ resources }: World) {
     const { frame, map } = resources.get();
-    const { bitsPerPixel, size, data } = frame.getGameInfo().startRaw!.pathingGrid!;
-    const pathing = new PixelMap({ bitsPerPixel: bitsPerPixel!, size: { x: size!.x!, y: size!.y! }, data: data! });
-    const main = map.getLocations().self;
+    const pathing = new PixelMap(frame.getGameInfo().startRaw!.pathingGrid!);
+    const main = map.getLocations().self!;
     const start = { x: Math.floor(main.x), y: Math.floor(main.y) };
     const island = pathing.floodFill(start, (value) => value !== 0);
     console.log(`${island.length} walkable cells connected to the main`);
@@ -364,7 +374,7 @@ import { Alliance } from '@sc-bot/core/constants/enums';
 export async function onStep({ resources }: World) {
     const { map, mapAnalysis, units, actions } = resources.get();
 
-    const defence = mapAnalysis.getDefensivePosition(map.getNatural());
+    const defence = mapAnalysis.getDefensivePosition(map.getNatural()!);
     if (!defence) return;
 
     const outside = units.getAlive(Alliance.ENEMY).filter(enemy => !mapAnalysis.getRegion(enemy.pos));
@@ -420,9 +430,9 @@ import type { World } from '@sc-bot/core';
 
 export async function onStep({ resources }: World) {
     const { influence, map } = resources.get();
-    influence.addCost('ground', map.getEnemyNatural().townhallPosition, 8, 50);
+    influence.addCost('ground', map.getEnemyNatural()!.townhallPosition, 8, 50);
     const grid = influence.getGrid('ground');
-    console.log('natural is safe:', grid.get(map.getNatural().townhallPosition) <= 1);
+    console.log('natural is safe:', grid.get(map.getNatural()!.townhallPosition) <= 1);
 }
 ```
 
@@ -492,7 +502,7 @@ import { MARINE } from '@sc-bot/core/constants/unit-type';
 
 export async function onStep({ resources }: World) {
     const { actions, map, pathing, units } = resources.get();
-    const target = map.getEnemyNatural().townhallPosition;
+    const target = map.getEnemyNatural()!.townhallPosition;
     for (const marine of units.getById(MARINE)) {
         if (!pathing.isPositionSafe(marine.pos)) {
             const spot = pathing.closestSafeSpot(marine.pos);
@@ -522,7 +532,7 @@ The point `step` from `from` in the direction of `to`; a copy of `from` when the
 
 The mean of the points; `NaN` coordinates for an empty list.
 
-#### `closestPoint(pos: Point2D, points: Point2D[]) => Point2D`
+#### `closestPoint(pos: Point2D, points: Point2D[]) => Point2D | undefined`
 
 The point nearest `pos`; `undefined` for an empty list.
 
@@ -534,7 +544,7 @@ export async function onStep({ resources }: World) {
     const { map } = resources.get();
     const bases = map.getExpansionLocations();
     const center = avgPoints(bases);
-    const nearest = closestPoint(center, bases);
+    const nearest = closestPoint(center, bases)!;
     console.log(distance(center, nearest), towards(nearest, center, 4));
 }
 ```

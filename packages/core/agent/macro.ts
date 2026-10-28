@@ -350,22 +350,19 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
     },
     async expandNow(unitType, location) {
         const building = unitType ?? TownhallRace[this.race!]?.[0];
-        const target = location ?? (await this.getNextExpansion());
+        const { buildings } = this._world.resources.get();
+        const target = location ?? buildings.getNextExpansion();
         if (!target) {
             debug('Trying to expandNow() but bot is out of locations to expand to');
             return;
         }
-        const { buildings } = this._world.resources.get();
-        // money is only spent once BUILD is ordered, so canAfford keeps passing while the worker walks; the picker skips
-        // a targeted spot, so without a location the pending build itself has to stop a second one
+        // money is only spent once BUILD is ordered, so canAfford keeps passing while the worker walks to a spot the
+        // picker no longer skips once targeted; only the 'moving' window can double-spend
         const tracked = buildings
             .getTracked()
             .some(
                 ({ unitType, target: at, status }) =>
-                    unitType === building &&
-                    status !== 'done' &&
-                    status !== 'failed' &&
-                    (!location || distance(at, target) < 1),
+                    unitType === building && status === 'moving' && (!location || distance(at, target) < 1),
             );
         if (tracked || !this.canAfford(building)) return;
         buildings.build(building, { at: target });

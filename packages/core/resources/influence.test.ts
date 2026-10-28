@@ -95,6 +95,22 @@ describe('InfluenceResource', () => {
             changeling: [1, 1, 1, 1],
         });
         for (const layer of LAYERS) expect(influence.getGrid(layer).data.every((cost) => cost >= 1)).toBe(true);
+
+        const groundBase = [...influence.getCleanGrid('ground').data];
+        const airBase = [...influence.getCleanGrid('air').data];
+        expect({
+            climber: [...influence.getGrid('climber').data],
+            priorityGroundAvoidance: [...influence.getGrid('priorityGroundAvoidance').data],
+            airVsGround: [...influence.getGrid('airVsGround').data],
+            groundToAir: [...influence.getGrid('groundToAir').data],
+            tacticalGround: [...influence.getGrid('tacticalGround').data],
+        }).toEqual({
+            climber: groundBase,
+            priorityGroundAvoidance: groundBase,
+            airVsGround: airBase,
+            groundToAir: airBase,
+            tacticalGround: airBase,
+        });
     });
 
     it('stamps a baneling on ground with the range buffer and on ground avoidance without it', async () => {

@@ -71,7 +71,7 @@ Your occupied expansions with their townhalls.
 
 #### `agent.expandNow(unitType?: number, location?: Point2D) => Promise<void>`
 
-Builds a townhall (`unitType`, default your race's first townhall type) at `location` (default `getNextExpansion()`) through [`buildings.build`](#buildings) with `at`, so it is tracked. Does nothing when there is no location, when an active tracked townhall build is already within 1 of the spot, or when the townhall is unaffordable.
+Builds a townhall (`unitType`, default your race's first townhall type) at `location` (default `getNextExpansion()`) through [`buildings.build`](#buildings) with `at`, so it is tracked. Without a `location` it builds at the spot `buildings.getNextExpansion()` picks (corner coordinates, not the `getNextExpansion()` centre). Does nothing when there is no location, when a townhall build of that type is still `moving` (BUILD not sent yet; with a `location`, only one within 1 of it), or when the townhall is unaffordable.
 
 #### `agent.train(unitType: number, amount = 1, closestTo?: Point2D, trainOnlyIdleBuildings = true) => Promise<number>`
 
@@ -255,7 +255,7 @@ The active builds, resumed ones included, plus those that finished or failed thi
 
 #### `buildings.getNextExpansion(opts?: { checkSafe = true }) => Point2D | undefined`
 
-The townhall position of the first available expansion (`map.getAvailableExpansions()` order) that isn't blocked (see `isExpansionBlocked`) and, with `checkSafe`, is safe on `pathing.isPositionSafe`. `expansionController` passes its `checkLocationIsSafe` to the pick.
+The townhall position of the first available expansion (`map.getAvailableExpansions()` order) that isn't blocked (see `isExpansionBlocked`), isn't the target of another active tracked townhall build (within the same distance as the blocked check, so a worker still walking there counts) and, with `checkSafe`, is safe on `pathing.isPositionSafe`. `expansionController` passes its `checkLocationIsSafe` to the pick.
 
 #### `buildings.isExpansionBlocked(pos: Point2D) => boolean`
 
@@ -278,7 +278,7 @@ Commands go out as the `BUILDING` role at `priority`, so they beat your agent's 
 
 `buildings.build` and `actions.build` pick the worker the same way, from `selectBuilder` (`utils/workers/select-builder.ts`), unless a worker is forced.
 
-1. A forced `worker` (`buildings.build` option, or the third argument of `actions.build`) is used as given.
+1. A forced `worker` (`buildings.build` option, or the `worker` option of `actions.build`) is used as given.
 2. With [`mining`](#mining) enabled, `mining.selectWorker(site, { forceClose: true, exclude })`: a mining worker near the site. The tracker takes it with the `BUILDING` role and, when this finds nobody, returns `undefined`. `actions.build` asks for `role: GATHERING`, so the worker stays in `GATHERING`, and falls through to the next step when this finds nobody. With mining disabled this step is skipped.
 3. `selectBuilder`, for Protoss in `actions.build` (`reuseConstructing`) first: a worker that is already constructing (and otherwise a candidate) within 20 of the site is reused, with the new build queued behind its current one.
 4. `selectBuilder`: candidates are workers with no role or the `GATHERING` role, without the `stuck` label, not in the exclusion set, not already constructing (an order of a build ability), and that have not received a command this observation. Workers that are idle, or whose only order is gathering, are preferred; when there are none, any candidate. The closest to the site wins.

@@ -105,6 +105,12 @@ function createUnits(world: World): UnitResource {
         getWatchtowers() {
             return this.getAlive(Alliance.NEUTRAL).filter((unit) => unit.unitType === UnitType.XELNAGATOWER);
         },
+        getPreviousArmy() {
+            throw new NodeSC2Error('not implemented: getPreviousArmy');
+        },
+        getMorphedEnemyTags() {
+            throw new NodeSC2Error('not implemented: getMorphedEnemyTags');
+        },
         getLarva() {
             return this.getAlive(Alliance.SELF).filter((unit) => unit.unitType === UnitType.LARVA);
         },

@@ -14,6 +14,7 @@ export const ENEMY_THIRD = 'ENEMY_THIRD';
 export const ENEMY_FOURTH = 'ENEMY_FOURTH';
 export const ENEMY_RAMP = 'ENEMY_RAMP';
 export const ENEMY_NAT_VISION = 'ENEMY_NAT_VISION';
+export const ENEMY_NAT_HG_SPOT = 'ENEMY_NAT_HG_SPOT';
 export const SUPPLY = 'SUPPLY';
 export const PRODUCTION = 'PRODUCTION';
 export const UPGRADE = 'UPGRADE';

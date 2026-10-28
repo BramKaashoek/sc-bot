@@ -38,6 +38,8 @@ type IntelState = {
     threats: Map<string, Record<Kind, Set<string>>>;
     detected: Map<IntelFlag, number>;
     townhallStarts: Map<string, number>;
+    detectorCache: Map<number, { loop: number; detectors: Detector[] }>;
+    ownInRange?: { loop: number; tags: Set<string> };
 };
 
 export const stateByIntel = new WeakMap<IntelResource, IntelState>();
@@ -47,6 +49,7 @@ const freshState = (settings: IntelSettings): IntelState => ({
     threats: new Map(),
     detected: new Map(),
     townhallStarts: new Map(),
+    detectorCache: new Map(),
 });
 
 type Places = { ownStart?: Point2D; ownNatural?: Point2D; enemyStart?: Point2D; enemyNatural?: Point2D };
@@ -205,12 +208,11 @@ export const intelResource: ResourceDefinition<'intel'> = {
         const supplyOf = (group: Unit[]) =>
             group.reduce((sum, unit) => sum + (unit.isStructure() ? 0 : (unit.data().foodRequired ?? 0)), 0);
 
-        const cache = new Map<number, { loop: number; detectors: Detector[] }>();
-        let ownInRange: { loop: number; tags: Set<string> } | undefined;
         const detectorsFor = (alliance: number): Detector[] => {
             const { frame, memory, units, map } = world.resources.get();
             const loop = frame.getGameLoop();
-            const cached = cache.get(alliance);
+            const { detectorCache } = stateByIntel.get(intel)!;
+            const cached = detectorCache.get(alliance);
             if (cached?.loop === loop) return cached.detectors;
             const detectors: Detector[] = [];
             for (const effect of map.getEffects() as OwnedEffect[]) {
@@ -226,7 +228,7 @@ export const intelResource: ResourceDefinition<'intel'> = {
                 const range = DETECTOR_RANGES[unit.unitType];
                 if (range !== undefined) detectors.push({ pos: unit.pos, range });
             }
-            cache.set(alliance, { loop, detectors });
+            detectorCache.set(alliance, { loop, detectors });
             return detectors;
         };
 
@@ -273,14 +275,15 @@ export const intelResource: ResourceDefinition<'intel'> = {
             getOwnUnitsInDetectorRange() {
                 const { frame, spatial } = world.resources.get();
                 const loop = frame.getGameLoop();
-                if (ownInRange?.loop !== loop) {
+                const state = stateByIntel.get(intel)!;
+                if (state.ownInRange?.loop !== loop) {
                     const tags = new Set<string>();
                     for (const detector of detectorsFor(Alliance.ENEMY))
                         for (const unit of spatial.unitsInRange(detector.pos, detector.range, 'own'))
                             tags.add(unit.tag!);
-                    ownInRange = { loop, tags };
+                    state.ownInRange = { loop, tags };
                 }
-                return ownInRange.tags;
+                return state.ownInRange.tags;
             },
             configure(settings) {
                 Object.assign(stateByIntel.get(intel)!.settings, settings);

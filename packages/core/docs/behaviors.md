@@ -275,7 +275,7 @@ export async function onStep({ resources }: World) {
 
     const position = squads.getMainSquadPosition(ATTACKING);
     const enemies = [...spatial.unitsInRange(position, 14, 'enemyGround')];
-    const target = map.getEnemyNatural().townhallPosition;
+    const target = map.getEnemyNatural()!.townhallPosition;
 
     const winning = enemies.length === 0 || canWinFight(group, enemies) >= VICTORY_CLOSE;
     await behaviors.run(
@@ -315,7 +315,7 @@ export const bot = createAgent({
     settings: { race: Race.TERRAN },
     async onStep({ resources }: World) {
         const { behaviors, map } = resources.get();
-        const base = map.getMain().townhallPosition;
+        const base = map.getMain()!.townhallPosition;
         await behaviors.run(
             plan(
                 autoSupply({ base }),

@@ -10,7 +10,7 @@ import { GasMineRace } from '../constants/race-map.ts';
 import { GATHERING } from '../constants/unit-role.ts';
 import UnitAbilites from '../constants/unit-ability-map.ts';
 import createClient from '../engine/create-client.ts';
-import { ActionManagerError, BuildError, TrainError, GatherError } from '../engine/errors.ts';
+import { ActionManagerError, BuildError, NodeSC2Error, TrainError, GatherError } from '../engine/errors.ts';
 import { researchAbilityOf, spend } from '../agent/macro.ts';
 import { selectBuilder } from '../utils/workers/select-builder.ts';
 import { stalledWorkers } from './buildings.ts';
@@ -668,6 +668,9 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
             }));
 
             this.queueAction(commands);
+        },
+        unloadByTag() {
+            throw new NodeSC2Error('not implemented: unloadByTag');
         },
         async stop(units: Unit | Unit[], { queue = false }: CommandOptions = {}) {
             return this.do(units, Ability.STOP, { queue });

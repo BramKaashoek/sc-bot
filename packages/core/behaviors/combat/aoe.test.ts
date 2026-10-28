@@ -12,6 +12,7 @@ import { PSISTORMPERSISTENT } from '../../constants/effect.ts';
 import { Race } from '../../constants/enums.ts';
 import { runBehavior } from '../../test/behavior-helpers.ts';
 import { createTestWorld, stepTo } from '../../test/create-test-world.ts';
+import type { TestWorld } from '../../test/create-test-world.ts';
 import { autoUseAOEAbility, useAOEAbility } from './aoe.ts';
 import type { Point2D, Unit } from '../../types.ts';
 
@@ -20,10 +21,14 @@ const SCV = '4345823233';
 const LINGS = ['4354473985', '4354736129'];
 const MID = { x: 41, y: 40 };
 
-async function fixture(abilities: number[], scv: { pos: Point2D; isFlying?: boolean } = { pos: { x: 5, y: 5 } }) {
-    const world = await createTestWorld('blueshift', { loop: 896 });
+async function fixture(
+    abilities: number[],
+    scv: { pos: Point2D; isFlying?: boolean } = { pos: { x: 5, y: 5 } },
+    reuse?: TestWorld,
+) {
+    const world = reuse ?? (await createTestWorld('blueshift', { loop: 896 }));
     const next = structuredClone(world.client.fixture.observations[896]);
-    next.observation!.gameLoop = 900;
+    next.observation!.gameLoop = world.resources.get().frame.getGameLoop() + 4;
     const place: Record<string, Partial<SC2APIProtocol.Unit>> = {
         [MARINE]: { pos: { x: 38, y: 40, z: 0 } },
         [LINGS[0]]: { pos: { x: 40, y: 40, z: 0 } },
@@ -181,8 +186,9 @@ describe('autoUseAOEAbility', () => {
 
     it('storm avoids own ground and flying units, KD8 own ground units but not its caster', async () => {
         const stormers = [0, 1, 2, 3].map((i) => ({ tag: `s${i}`, pos: { x: 41 + i * 0.2, y: 40, z: 0 } }) as Unit);
+        const { world } = await fixture([]);
         const storm = (scv: Parameters<typeof fixture>[1]) =>
-            fixture([EFFECT_PSISTORM], scv).then(({ world, caster }) =>
+            fixture([EFFECT_PSISTORM], scv, world).then(({ caster }) =>
                 runBehavior(world, autoUseAOEAbility({ unit: caster, targets: stormers })).then(([cast]) => cast),
             );
         const nearby = { x: 41, y: 41 };
@@ -191,7 +197,7 @@ describe('autoUseAOEAbility', () => {
         expect(await storm({ pos: nearby, isFlying: true })).toBe(false);
 
         const kd8 = (scv: Parameters<typeof fixture>[1]) =>
-            fixture([EFFECT_KD8CHARGE], scv).then(({ world, caster, lings }) =>
+            fixture([EFFECT_KD8CHARGE], scv, world).then(({ caster, lings }) =>
                 runBehavior(world, autoUseAOEAbility({ unit: caster, targets: [lings[0]] })),
             );
         expect(await kd8(undefined)).toEqual([true, [{ abilityId: EFFECT_KD8CHARGE, pos: { x: 40, y: 40 } }]]);

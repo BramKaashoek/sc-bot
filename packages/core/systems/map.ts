@@ -1,3 +1,4 @@
+import { UNREACHABLE_PATH_LENGTH } from '../constants/pathing.ts';
 import createDebug from 'debug';
 import flat from 'array.prototype.flat';
 import hullJs from 'hull.js';
@@ -477,10 +478,9 @@ function calculateExpansions(world: World) {
         return target;
     });
 
-    const UNREACHABLE = 999;
     const pathTo = (start: Point2D, target?: Point2D) => {
         const path = target ? map.path(start, target) : [];
-        if (path.length === 0) path.length = UNREACHABLE;
+        if (path.length === 0) path.length = UNREACHABLE_PATH_LENGTH;
         return path;
     };
 

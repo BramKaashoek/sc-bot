@@ -160,7 +160,7 @@ Idle gateways train zealots from `onStep`. `getById` takes a filter object in pl
 
 ### A timing attack
 
-When Charge finishes, send everything at the enemy natural, then the main (`true` queues the command):
+When Charge finishes, send everything at the enemy natural, then the main (`{ queue: true }` queues the command):
 
 ```text
     async onUpgradeComplete({ resources }: World, upgrade: number) {
@@ -172,7 +172,7 @@ When Charge finishes, send everything at the enemy natural, then the main (`true
 
             return Promise.all(
                 [enemyNat, enemyMain].map((expansion) => {
-                    return actions.attackMove(combatUnits, expansion.townhallPosition, true);
+                    return actions.attackMove(combatUnits, expansion.townhallPosition, { queue: true });
                 }),
             );
         }
@@ -204,7 +204,7 @@ With the flag set, `onStep` attacks in waves, each two units larger than the las
 
                 return Promise.all(
                     [enemyNat, enemyMain].map((expansion) => {
-                        return actions.attackMove(idleCombatUnits, expansion.townhallPosition, true);
+                        return actions.attackMove(idleCombatUnits, expansion.townhallPosition, { queue: true });
                     }),
                 );
             }

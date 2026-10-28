@@ -4,45 +4,45 @@ The `actions` resource sends commands and queries. The unit command methods (`at
 
 A method still rejects at once when its preconditions fail (`BuildError`, `TrainError`, `GatherError`, `ActionManagerError`, see [Errors](#errors)); what happened to the command itself arrives the next step as an `onCommandResults` event (see [`CommandResult`](#commandresult)).
 
-`queue` is the SC2 "shift-queue" flag: `false` replaces the unit's orders, `true` appends. Its default differs per method and is listed on each.
+`queue` is the SC2 "shift-queue" flag: `false` replaces the unit's orders, `true` appends. The unit command methods above, plus `do`, `gather` and `mine`, take it in a last options object, `{ queue }` (`CommandOptions`), and its default differs per method and is listed on each. `build` takes `{ worker }` instead; `buildGasMine`, `train`, `upgrade`, `warpIn` and `toggleAutocast` take no `queue`. Where a method takes `units`, a single `Unit` works as well as an array.
 
 ## actions
 
-#### `actions.attack(units?: Unit[], target?: Unit, queue = false) => Promise<void>`
+#### `actions.attack(units?: Unit | Unit[], target?: Unit, opts?: { queue = false }) => Promise<void>`
 
 Attack a unit. Rejects (`ActionManagerError`) without a target unit; an empty unit list proposes nothing.
 
-#### `actions.attackMove(units?: Unit[], position?: Point2D, queue = false) => Promise<void>`
+#### `actions.attackMove(units?: Unit | Unit[], position?: Point2D, opts?: { queue = false }) => Promise<void>`
 
 Attack-move. Without a position, the first possible enemy start location is used; rejects (`ActionManagerError`) when neither is available.
 
-#### `actions.move(units: Unit | Unit[], target: Point2D | Unit, queue = false) => Promise<void>`
+#### `actions.move(units: Unit | Unit[], target: Point2D | Unit, opts?: { queue = false }) => Promise<void>`
 
-#### `actions.smart(units: Unit[], target: Point2D | Unit, queue = false) => Promise<void>`
+#### `actions.smart(units: Unit | Unit[], target: Point2D | Unit, opts?: { queue = false }) => Promise<void>`
 
 Move to / right-click a position or unit.
 
-#### `actions.patrol(units: Unit | Unit[], positions: [from: Point2D, to: Point2D] | Point2D, queue = false) => Promise<void>`
+#### `actions.patrol(units: Unit | Unit[], positions: [from: Point2D, to: Point2D] | Point2D, opts?: { queue = false }) => Promise<void>`
 
 Proposes a move to `from` (default: the first unit's position), then a queued patrol to `to`, from the same commander.
 
-#### `actions.stop`, `actions.holdPosition`, `actions.returnResource` `(units: Unit | Unit[], queue = false) => Promise<void>`
+#### `actions.stop`, `actions.holdPosition`, `actions.returnResource` `(units: Unit | Unit[], opts?: { queue = false }) => Promise<void>`
 
-#### `actions.repair(units: Unit | Unit[], target: Unit, queue = false) => Promise<void>`
+#### `actions.repair(units: Unit | Unit[], target: Unit, opts?: { queue = false }) => Promise<void>`
 
 Shortcuts for `do` with the matching ability.
 
-#### `actions.gather(worker: Unit, mineralField?: Unit, queue = true) => Promise<void>`
+#### `actions.gather(worker: Unit, mineralField?: Unit, opts?: { queue = true }) => Promise<void>`
 
 Mine. Without a field, picks the closest finished own base that is below its ideal harvester count (or the closest base), and of that base's three nearest mineral fields the one closest to the worker. Rejects (`GatherError`) for a unit that isn't a worker or MULE, or when there is nothing to mine. A worker with the `command` label is always queued, whatever `queue` says.
 
-#### `actions.mine(workers: Unit[], gasBuilding: Unit, queue = true) => Promise<void>`
+#### `actions.mine(workers: Unit | Unit[], gasMine: Unit, opts?: { queue = true }) => Promise<void>`
 
-Like `gather`, for gas. Must be given the target gas building.
+Like `gather`, for gas. Must be given the target gas mine.
 
-#### `actions.build(unitType: number, target?: Unit | Point2D | null, worker?: Unit) => Promise<void>`
+#### `actions.build(unitType: number, target?: Unit | Point2D | null, opts?: { worker?: Unit }) => Promise<void>`
 
-Build `unitType` on a position or on a target unit (a geyser). Pass `null` as the target and the worker third for abilities that take no target. Picks a worker when none is given (through [`mining.selectWorker`](./macro.md#mining) when mining is enabled, otherwise the rule in [macro.md](./macro.md#builder-pick); a busy worker is taken instead of rejecting; the same fallback applies when `mining.selectWorker` returns nothing). The worker gets the `command` label right away; if the build is dropped or SC2 rejects it, the label is removed again during the flush. A gas building is followed by a queued `gather` from the same commander. Nothing is refunded for a build that isn't sent.
+Build `unitType` on a position or on a target unit (a geyser). Pass `null` as the target and `{ worker }` third for abilities that take no target. Picks a worker when none is given (through [`mining.selectWorker`](./macro.md#mining) when mining is enabled, otherwise the rule in [macro.md](./macro.md#builder-pick); a busy worker is taken instead of rejecting; the same fallback applies when `mining.selectWorker` returns nothing). The worker gets the `command` label right away; if the build is dropped or SC2 rejects it, the label is removed again during the flush. A gas building is followed by a queued `gather` from the same commander. Nothing is refunded for a build that isn't sent.
 
 Rejects with `BuildError` for each of: missing tech, not affordable, a target the build ability doesn't accept (or none where one is required), no builder found.
 
@@ -66,9 +66,9 @@ Warp in up to `maxQty = 1` units at distinct free points of a power field near `
 
 Lift two Terran buildings and land each in the other's spot. Delegates to [`flying.swap`](./macro.md#flying): resolves with no value once the plans are made, not when the buildings have landed. Rejects (`ActionManagerError`) if either can't lift or isn't finished.
 
-#### `actions.do(abilityId: number, tags: string | string[] | Unit[], opts?: AbilityOptions) => Promise<void>`
+#### `actions.do(units: Unit | string | Array<Unit | string>, abilityId: number, opts?: AbilityOptions) => Promise<void>`
 
-Any ability. `opts = { target?: Unit | Point2D, queue = false }`; any other `target` value is ignored.
+Any ability, on units or unit tags. `opts = { target?: Unit | Point2D, queue = false }`; any other `target` value is ignored.
 
 #### `actions.toggleAutocast(units: Unit | Unit[], abilityId: number) => Promise<ResponseAction>`
 
@@ -131,7 +131,7 @@ export async function onStep({ resources }: World) {
         if (!(err instanceof TrainError)) throw err;
     }
 
-    const spot = await actions.findPlacement(BARRACKS, map.getMain().townhallPosition, { addonPlace: true });
+    const spot = await actions.findPlacement(BARRACKS, map.getMain()!.townhallPosition, { addonPlace: true });
     if (spot) await actions.build(BARRACKS, spot);
 
     const army = units.getById(MARINE).idle;
@@ -139,7 +139,7 @@ export async function onStep({ resources }: World) {
         actions.queueAction({
             abilityId: ATTACK,
             unitTags: army.map(marine => marine.tag!),
-            targetWorldSpacePos: map.getEnemyNatural().townhallPosition,
+            targetWorldSpacePos: map.getEnemyNatural()!.townhallPosition,
         });
     }
 
@@ -257,6 +257,7 @@ Notable throw sites, not an exhaustive list. The `Units` collection throws are i
 | `NodeSC2Error` | `parseBuildOrder` and build systems with a string step that doesn't parse (see [build-orders.md](./build-orders.md#string-steps)) | |
 | | A build system with an unknown or unpickable opening at game start, and `switchOpening` with an unknown name | |
 | | `createEngine` config: missing explicit config file, malformed JSON or not an object, `gameStep` not a positive integer, a non-boolean feature, `STEP_COUNT` not a positive integer (see [running-games.md](./running-games.md#config-file)) | |
+| | A request the client can't complete: SC2 answers with an `error` (`data.err` holds it) or the websocket isn't open (`SC2 connection not open for <name> request`) | `{ err }` for the first |
 | | `resources.register` of a name that is already registered | |
 | | `units.getArmyValue` with an alliance other than `SELF` or `ENEMY` | |
 | | `spawnController` composition: a priority outside the integers 0-10, or proportions that don't sum to 1 | |
@@ -272,7 +273,7 @@ An event handler that throws or rejects does not stop the game. The engine and `
 | Error | Agent handlers | System handlers, resource `onStep` |
 |---|---|---|
 | `GameEndedError`, `ConnectionClosedError` | Rethrown | Rethrown |
-| `NodeSC2Error` and subclasses | Dropped (logged only on `sc2:silly:engine`) | Dropped (logged only on `sc2:silly:system`; resources: `sc2:debug:resources`) |
+| `NodeSC2Error` and subclasses | Dropped (logged only on `sc2:silly:engine`) | Dropped (logged on `sc2:debug:system`; resources: `sc2:debug:resources`) |
 | Anything else | `console.warn` | Logged on `sc2:debug:system` (resources: `sc2:debug:resources` plus `console.warn`) |
 
 So a `BuildError` you don't catch silently ends that handler; catch the error classes you care about (see the example above) or you won't see them. A failed flush request is logged on `sc2:debug:engine` and the step goes on, except for the two fatal classes.

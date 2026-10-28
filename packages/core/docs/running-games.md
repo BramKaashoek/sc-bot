@@ -236,8 +236,8 @@ Logging goes through the `debug` package, enabled with the `DEBUG` environment v
 | `sc2:debug:launcher` | SC2 discovery, an existing client on the port, launching |
 | `sc2:debug:client` | Responses that arrive out of order or with no pending request |
 | `sc2:debug:resources` | Errors thrown by a resource's `onStep` (also a `console.warn` unless a `NodeSC2Error`) or `onGameEnd` hook |
-| `sc2:debug:system` | Errors thrown by a system's `onStep` and event handlers |
-| `sc2:silly:system` | `NodeSC2Error`s thrown by those handlers, and agent systems skipped by their `stepIncrement` |
+| `sc2:debug:system` | Errors thrown by a system's `onStep` and event handlers, `NodeSC2Error`s included |
+| `sc2:silly:system` | Agent systems skipped by their `stepIncrement` |
 | `sc2:debug:state` | Each system's state after a `setState` |
 | `sc2:debug:Bot` | The blueprint of a new agent |
 | `sc2:debug:Macro` | Agent macro helpers that skip something: an unknown creation ability, no expansion left |

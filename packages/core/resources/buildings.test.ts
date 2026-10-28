@@ -434,6 +434,24 @@ describe('building tracker', () => {
         expect(buildings.getNextExpansion()).toEqual(second);
     });
 
+    it('skips expansions with no ground path from the main', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { buildings, map } = world.resources.get();
+        const expansions = map.getAvailableExpansions();
+        const [first, second] = expansions.map((expansion) => expansion.townhallPosition);
+        const island = Object.assign([], { length: 999 });
+        spyOn(map, 'getAvailableExpansions').mockReturnValue([
+            { ...expansions[0], pathFromMain: island },
+            ...expansions.slice(1),
+        ]);
+
+        expect([buildings.getNextExpansion(), buildings.getNextExpansion({ checkSafe: false })]).toEqual([
+            second,
+            second,
+        ]);
+        expect(first).not.toEqual(second);
+    });
+
     it('skips spots another active tracked townhall build targets, including when retargeting', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
         const { buildings, map, placement } = world.resources.get();

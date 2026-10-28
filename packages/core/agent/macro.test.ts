@@ -193,11 +193,46 @@ describe('agent macro helpers', () => {
         await agent.expandNow();
         await agent.expandNow();
         expect(buildings.getTracked().map(({ unitType, target, status }) => ({ unitType, target, status }))).toEqual([
-            { unitType: UnitType.COMMANDCENTER, target: center(first), status: 'moving' },
+            { unitType: UnitType.COMMANDCENTER, target: first, status: 'moving' },
         ]);
         expect(await agent.getNextExpansion()).toEqual(center(buildings.getNextExpansion()!));
         expect(await agent.getNextExpansion()).not.toEqual(center(first));
         expect(queries.filter((query) => query.pathing?.length)).toEqual([]);
+    });
+
+    it('blocks the floored spot expandNow built at after its worker gets CantBuildLocationInvalid, so the next expansion skips it', async () => {
+        const world = await createTestWorld('blueshift', { loop: 224, onQuery: straightLinePathing });
+        const { agent, client } = world;
+        const { buildings } = world.resources.get();
+        const first = buildings.getNextExpansion()!;
+
+        await agent.expandNow();
+        const rejected = structuredClone(client.fixture.observations[224]);
+        rejected.observation!.gameLoop = 226;
+        rejected.actionErrors = [
+            { unitTag: buildings.getTracked()[0].workerTag, result: 44 as SC2APIProtocol.ActionResult },
+        ];
+        await stepTo(world, rejected);
+
+        expect(buildings.isExpansionBlocked(first)).toBe(true);
+        expect(await agent.getNextExpansion()).not.toEqual({ x: first.x + 0.5, y: first.y + 0.5 });
+    });
+
+    it('allows a second expandNow once the first townhall build has sent BUILD', async () => {
+        const world = await createTestWorld('blueshift', { loop: 224, onQuery: straightLinePathing });
+        const { agent } = world;
+        const { buildings } = world.resources.get();
+
+        await agent.expandNow();
+        const [first] = buildings.getTracked();
+        (first as { status: string }).status = 'constructing';
+        await agent.expandNow();
+
+        expect(buildings.getTracked().map(({ target, status }) => ({ target, status }))).toEqual([
+            { target: first.target, status: 'constructing' },
+            { target: buildings.getTracked()[1].target, status: 'moving' },
+        ]);
+        expect(buildings.getTracked()[1].target).not.toEqual(first.target);
     });
 
     it('does not expand below the townhall cost', async () => {
@@ -394,7 +429,7 @@ describe('agent macro helpers', () => {
                 tag: '4343463937',
                 abilityId: Ability.MOVE,
                 targetUnitTag: undefined,
-                targetWorldSpacePos: { x: 14.5, y: 43.5 },
+                targetWorldSpacePos: { x: 14, y: 43 },
                 queueCommand: false,
             },
         ]);

@@ -417,6 +417,9 @@ function createMapManager(world: World): MapManager {
         getRamps() {
             return ramps.slice();
         },
+        isArcade() {
+            throw new NodeSC2Error('not implemented: isArcade');
+        },
         getMainBaseRamp() {
             if (mainBaseRamp) return mainBaseRamp;
 

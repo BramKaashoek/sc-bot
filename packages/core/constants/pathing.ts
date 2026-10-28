@@ -1,0 +1,1 @@
+export const UNREACHABLE_PATH_LENGTH = 999;

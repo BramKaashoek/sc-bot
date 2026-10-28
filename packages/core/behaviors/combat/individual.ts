@@ -9,6 +9,7 @@ import type { Behavior, InfluenceGrid, InfluenceLayer, Point2D, Unit } from '../
 type PathOptions = {
     layer?: InfluenceLayer | InfluenceGrid;
     sensitivity?: number;
+    smoothing?: boolean;
     senseDanger?: boolean;
     dangerDistance?: number;
     dangerThreshold?: number;

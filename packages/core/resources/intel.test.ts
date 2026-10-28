@@ -312,6 +312,29 @@ describe('intel detection', () => {
         ]);
     });
 
+    it('drops cached detectors and own units in range on a game reset, even at the same loop', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { intel } = world.resources.get();
+        const marine = ownUnit(UnitType.MARINE, { x: 62, y: 60 });
+        const [observer] = enemies(UnitType.OBSERVER, { x: 60, y: 60 });
+        const query = () => [
+            intel.getEnemyDetectors().length,
+            intel.isDetected({ x: 62, y: 60 }),
+            [...intel.getOwnUnitsInDetectorRange()],
+        ];
+
+        await stepTo(world, observation(world, 100, [observer], { own: [marine] }));
+        const first = query();
+        world.client.setObservation(world.client.fixture.observations[896]);
+        await world.engine.setupGame();
+        await stepTo(world, observation(world, 100, [], { own: [marine] }));
+
+        expect([first, query()]).toEqual([
+            [1, true, [marine.tag]],
+            [0, false, []],
+        ]);
+    });
+
     it('is detected by revelation at any range, and by a strict range for points', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
         const { intel, units } = world.resources.get();

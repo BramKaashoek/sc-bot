@@ -29,7 +29,8 @@ export { canWinFight, simulateFight } from './utils/combat/combat-sim.ts';
 export { avgPoints, closestPoint, distance, distanceSquared, towards } from './utils/geometry/point.ts';
 export { parseBuildOrder } from './utils/build-order/parse.ts';
 export { parseAresBuilds, parseAresPlacements } from './utils/config/ares-yaml.ts';
-export { createPlacer } from './utils/placement/placer.ts';
+export { createPlacer, loadAresProtossPlacements } from './utils/placement/placer.ts';
+export { totalSupply } from './utils/units/supply.ts';
 export {
     DEFAULT_EFFECT_COSTS,
     EFFECT_INFLUENCE,

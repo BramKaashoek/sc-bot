@@ -17,21 +17,21 @@ A **structure** is a unit with the `STRUCTURE` attribute, and "structure" is the
 
 ## Gas geyser and gas mine
 
-A **gas geyser** is the neutral vespene geyser on the map: `units.getGasGeysers`, `map.freeGasGeysers` (geysers within 15 of your townhalls with no mine on them), `TrackedBuild.geyserTag`, the `geyser` option of `buildings.buildGas`. A **gas mine** is your own extractor, refinery or assimilator on a geyser: `units.getGasMines`, `unit.isGasMine`, `actions.buildGasMine`. A worker mines it with `actions.mine(workers, gasBuilding)`. See [units](docs/units.md#units-resource) and [map](docs/map.md#map-resource).
+A **gas geyser** is the neutral vespene geyser on the map: `units.getGasGeysers`, `map.freeGasGeysers`, `TrackedBuild.geyserTag`, the `geyser` option of `buildings.buildGas`. A **gas mine** is your own extractor, refinery or assimilator on a geyser: `units.getGasMines`, `unit.isGasMine()`, `actions.buildGasMine`. A worker mines it with `actions.mine(workers, gasMine)`. See [units](docs/units.md#units-resource) and [map](docs/map.md#map-resource).
 
 ## Townhall, base and expansion
 
-A **townhall** is a unit of a townhall type (Command Center, Nexus, Hatchery and their upgrades): `unit.isTownhall`, `OwnedExpansion.townhall`, `BaseThreat.townhall`, `townhallPosition`. A **base** is a townhall used as a place or as a unit: `units.getBases`, `expansion.getBase`, the `base` option of controllers and `mapAnalysis.getBaseChokes`. An **expansion** is a location where a townhall can stand, with or without one built: the `Expansion` type, `map.getExpansions`, `map.getAvailableExpansions`, `map.getOccupiedExpansions`, `buildings.getNextExpansion`, `expansionController`. See [map](docs/map.md#expansion).
+A **townhall** is a unit of a townhall type (Command Center, Nexus, Hatchery and their upgrades): `unit.isTownhall()`, `OwnedExpansion.townhall`, `BaseThreat.townhall`, `townhallPosition`. A **base** is a townhall used as a place or as a unit: `units.getBases`, `expansion.getBase`, the `base` option of controllers and `mapAnalysis.getBaseChokes`. An **expansion** is a location where a townhall can stand, with or without one built: the `Expansion` type, `map.getExpansions`, `map.getAvailableExpansions`, `map.getOccupiedExpansions`, `buildings.getNextExpansion`, `expansionController`. See [map](docs/map.md#expansion).
 
 ## Unfinished, pending and in progress
 
 **Unfinished** is a unit with `buildProgress < 1`: `units.getUnfinished`. **In progress** is the same, restricted to your units of one type: `units.inProgress`. **Pending** is wider: something ordered or tracked that may not exist as a unit yet.
 
-- `agent.alreadyPending` counts orders, unfinished units and tracked builds whose worker has no build order yet.
-- `buildings.pending` counts active tracked builds not adopted from an existing unit.
-- `units.getPendingAt` returns unfinished units plus workers ordered to build near a point.
-- `includePending` (`units.getArmyValue`) adds units still in production orders.
-- `maxPending` caps the pending count: `expansionController` reads `agent.alreadyPending`, `gasBuildingController` reads `buildings.pending`.
+- `agent.alreadyPending`: orders, unfinished units and tracked builds not yet ordered.
+- `buildings.pending`: active tracked builds not adopted from a unit.
+- `units.getPendingAt`: unfinished units plus workers ordered to build near a point.
+- `includePending` (`units.getArmyValue`): units still in production orders.
+- `maxPending`: a cap, on `agent.alreadyPending` in `expansionController` and on `buildings.pending` in `gasBuildingController`.
 
 See [macro](docs/macro.md#agent-macro-helpers) and [units](docs/units.md#units-resource).
 
@@ -65,7 +65,7 @@ A **target** is what a command or step is aimed at, and its type depends on wher
 No renames; these are where the names above disagree.
 
 - Structure and building: `actions.swapBuildings` handles structures but says "buildings"; the `BUILDING` role is a worker that is building; `buildStructure` takes `structureType` while `buildings.build` takes `unitType`.
-- Gas: `buildings.buildGas`, `actions.buildGasMine` and `gasBuildingController` name the same thing three ways; `map.freeGasGeysers` and `units.getGasGeysers` carry "Gas", while the `vespeneGeysers` field and `vespeneGeyserTypes` carry "vespene"; `actions.mine` calls the mine `gasBuilding`; `MiningAssignment.kind` is `'gas'`.
+- Gas: `buildings.buildGas`, `actions.buildGasMine` and `gasBuildingController` name the same thing three ways; `map.freeGasGeysers` and `units.getGasGeysers` carry "Gas", while the `vespeneGeysers` field and `vespeneGeyserTypes` carry "vespene"; `MiningAssignment.kind` is `'gas'`.
 - Townhall, base and expansion: `units.getBases` is townhalls; `expansion.getBase` returns a townhall; `townhallPosition` is the expansion's location; `upgradeCCs` names the Command Center; `townhallTag` on `MiningAssignment`.
 - Pending: the five meanings above; `maxPending` means a different count in each controller.
 - Near: `near` is a position in `findPlacement` and `selectWorker` but a unit type in `opts.near`; `getPendingAt` takes `maxDistance` instead of a near anchor.

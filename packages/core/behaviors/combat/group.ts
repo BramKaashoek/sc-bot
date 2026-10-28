@@ -113,6 +113,7 @@ export function pathGroupToTarget({
     distanceCheckSquared?: number;
     successAtDistance?: number;
     sensitivity?: number;
+    smoothing?: boolean;
     senseDanger?: boolean;
     dangerDistance?: number;
     dangerThreshold?: number;

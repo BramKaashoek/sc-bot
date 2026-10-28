@@ -2,6 +2,7 @@ import createSystem from './create-system.ts';
 import createUnit from '../engine/create-unit.ts';
 import { perWorld } from '../engine/per-world.ts';
 import { Alliance } from '../constants/enums.ts';
+import { UnitType } from '../constants/index.ts';
 import { setAvailableAbilities, storeUnit } from '../resources/units.ts';
 import type { Unit, UnitSystem, World } from '../types.ts';
 
@@ -9,6 +10,12 @@ import type { Unit, UnitSystem, World } from '../types.ts';
 const seenUnitTags = perWorld(() => new Set<string>());
 // forgotten ghosts leave the units store, so a re-seen enemy would otherwise look new
 const seenEnemyTags = perWorld(() => new Set<string>());
+
+const isSpentTumor = (unit: Unit) =>
+    unit.unitType === UnitType.CREEPTUMORBURROWED &&
+    unit.buildProgress! >= 1 &&
+    unit._availableAbilitiesLoop !== undefined &&
+    unit._availableAbilities.length === 0;
 
 const unitSystem: UnitSystem = {
     name: 'UnitSystem',
@@ -281,7 +288,9 @@ const unitSystem: UnitSystem = {
             return;
         }
 
-        const ownUnitTags = Array.from(units._units[Alliance.SELF].keys());
+        const ownUnitTags = Array.from(units._units[Alliance.SELF].values())
+            .filter((unit) => !isSpentTumor(unit))
+            .map((unit) => unit.tag!);
         return actions
             .sendQuery({
                 abilities: ownUnitTags.map((tag) => ({

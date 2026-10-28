@@ -1,5 +1,5 @@
 import createDebug from 'debug';
-import { MapDecompositionError } from '../engine/errors.ts';
+import { MapDecompositionError, NodeSC2Error } from '../engine/errors.ts';
 import { analyzeChokes } from '../utils/map/chokes.ts';
 import { cellCentre } from '../utils/grid/cell.ts';
 import { createDistanceField } from '../utils/map/distance-field.ts';
@@ -289,6 +289,15 @@ function createMapAnalysis(world: World): MapAnalysisResource {
                     (best, third) => (!best || pathLength(third) > pathLength(best) ? third : best),
                     undefined,
                 );
+        },
+        getRegionCells() {
+            throw new NodeSC2Error('not implemented: getRegionCells');
+        },
+        getOverlordSpots() {
+            throw new NodeSC2Error('not implemented: getOverlordSpots');
+        },
+        takeOverlordSpot() {
+            throw new NodeSC2Error('not implemented: takeOverlordSpot');
         },
         getPerimeter(region) {
             const analysis = getAnalysis();

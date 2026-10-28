@@ -65,7 +65,7 @@ const bot = createAgent({
 
 ### Player data
 
-The agent is updated every step with the player fields from the observation: `playerId`, `minerals`, `vespene`, `foodCap`, `foodUsed`, `foodArmy`, `foodWorkers`, `idleWorkerCount`, `armyCount`, `warpGateCount`, `larvaCount`, `powerSources`, `upgradeIds` and `camera`.
+The agent is updated every step with the player fields from the observation: `playerId`, `minerals`, `vespene`, `foodCap`, `foodUsed`, `foodArmy`, `foodWorkers`, `idleWorkerCount`, `armyCount`, `warpGateCount`, `larvaCount`, `powerSources`, `upgradeIds` and `camera`. The `food*` fields are the raw API values; [`supply*`](#cost-supply-and-affordability) are the accessors to read.
 
 `agent.race` is the race you actually got (useful with random). `agent.opponent` holds `{ race, id }` as far as they are known:
 
@@ -77,7 +77,7 @@ The agent is updated every step with the player fields from the observation: `pl
 
 #### `agent.supplyCap`, `supplyUsed`, `supplyLeft`, `supplyArmy`, `supplyWorkers`
 
-Number getters. For Zerg, `supplyUsed` and `supplyArmy` correct the API's rounding of an odd count of half-supply units (zerglings, banelings and their burrowed or cocoon forms).
+Number getters over the raw `foodCap`, `foodUsed`, `foodArmy` and `foodWorkers` proto fields (see [Player data](#player-data)); use the `supply*` ones. `supplyCap` and `supplyWorkers` equal their `food*` field. `supplyLeft` is `supplyCap - supplyUsed`. For Zerg, `supplyUsed` and `supplyArmy` are the `food*` value plus 1 when you have an odd number of half-supply units (zerglings, banelings and their burrowed or cocoon forms), correcting the API's rounding down; for Terran and Protoss they equal `foodUsed` and `foodArmy`. `foodUsed` and `foodArmy` are never corrected, so on Zerg they can be 1 below the real count. Assigning to a `supply*` property replaces the getter with that value.
 
 #### `agent.calculateCost(unitType: number) => Cost`
 
@@ -273,7 +273,7 @@ const marines = createSystem({
     },
     async onStep({ resources }: World, { all, unlabeled, labeled }: UnitSystemUnits) {
         const { actions, map } = resources.get();
-        await actions.attackMove(unlabeled[MARINE] ?? [], map.getEnemyNatural().townhallPosition);
+        await actions.attackMove(unlabeled[MARINE] ?? [], map.getEnemyNatural()!.townhallPosition);
     },
 });
 ```

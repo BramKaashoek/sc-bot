@@ -3,6 +3,7 @@ import { Alliance, Race } from '../constants/enums.ts';
 import { SCANNERSWEEP } from '../constants/effect.ts';
 import { DETECTOR_RANGES } from '../constants/detection.ts';
 import { addonTypes, creepTumorTypes, gasMineTypes, townhallTypes } from '../constants/groups.ts';
+import { UNREACHABLE_PATH_LENGTH } from '../constants/pathing.ts';
 import { GasMineRace } from '../constants/race-map.ts';
 import { BUILDING } from '../constants/unit-role.ts';
 import * as UnitType from '../constants/unit-type.ts';
@@ -385,6 +386,7 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
             const { map, pathing } = context(world);
             return map
                 .getAvailableExpansions()
+                .filter((expansion) => expansion.pathFromMain?.length !== UNREACHABLE_PATH_LENGTH)
                 .map((expansion) => expansion.townhallPosition)
                 .find(
                     (pos) =>

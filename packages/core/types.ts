@@ -335,6 +335,8 @@ export interface UnitResource {
     getDestructables: () => Units;
     getWatchtowers: () => Units;
     getLarva: () => Units;
+    getPreviousArmy(): Units;
+    getMorphedEnemyTags(): ReadonlySet<string>;
     getStructures: (filter?: UnitFilter) => Units;
     getWorkers: (includeBusy?: boolean) => Units;
     getIdle: () => Units;
@@ -470,6 +472,7 @@ export interface MapResource {
     setStartRaw: (startRaw: SC2APIProtocol.StartRaw) => void;
     getRamps: () => Ramp[];
     getMainBaseRamp: () => Ramp | undefined;
+    isArcade(): boolean;
     getVisionBlockers: () => Point2D[];
     getExpansionLocations: () => Point2D[];
     getTerrainHeight: (point: Point2D) => number;
@@ -532,6 +535,7 @@ export interface ActionManager {
     warpIn(unitTypeId: number, opts: WarpInOptions): Promise<void>;
     canPlace: (unitTypeId: number, positions: Point2D[]) => Promise<Point2D | false>;
     findPlacement: (unitTypeId: number, near: Point2D, opts?: FindPlacementOptions) => Promise<Point2D | false>;
+    unloadByTag(container: Unit, passengerTag: string): void;
     sendAction(unitCommand: SC2APIProtocol.ActionRawUnitCommand): Promise<SC2APIProtocol.ResponseAction>;
     sendAction(unitCommand: SC2APIProtocol.ActionRawUnitCommand[]): Promise<SC2APIProtocol.ResponseAction>;
     sendQuery: (query: SC2APIProtocol.RequestQuery) => Promise<SC2APIProtocol.ResponseQuery>;
@@ -846,6 +850,7 @@ export type SpatialKind = 'enemy' | 'enemyGround' | 'enemyAir' | 'own' | 'ownGro
 export interface SpatialIndex {
     unitsInRange(from: Point2D | Unit, distance: number, kind: SpatialKind): Units;
     anyInRange(from: Point2D | Unit, distance: number, kind: SpatialKind): boolean;
+    anyInRangeBatch(points: Point2D[], distance: number, kind: SpatialKind): boolean[];
     closest(from: Point2D | Unit, kind: SpatialKind, maxDistance?: number): Unit | undefined;
 }
 
@@ -897,7 +902,12 @@ export interface InfluenceResource {
     getForcefieldPositions(): Point2D[];
 }
 
-export type PathOptions = { layer?: InfluenceLayer | InfluenceGrid; sensitivity?: number; maxExpanded?: number };
+export type PathOptions = {
+    layer?: InfluenceLayer | InfluenceGrid;
+    sensitivity?: number;
+    maxExpanded?: number;
+    smoothing?: boolean;
+};
 
 export interface PathingResource {
     findPath(start: Point2D, goal: Point2D, opts?: PathOptions): Point2D[];
@@ -1125,7 +1135,13 @@ export type MiningAssignment = { kind: 'mineral' | 'gas'; resourceTag: string; t
 export interface MiningResource {
     selectWorker(
         near: Point2D,
-        opts?: { forceClose?: boolean; minHealth?: number; role?: UnitRole; exclude?: ReadonlySet<string> },
+        opts?: {
+            forceClose?: boolean;
+            minHealth?: number;
+            minShield?: number;
+            role?: UnitRole;
+            exclude?: ReadonlySet<string>;
+        },
     ): Unit | undefined;
     release(worker: Unit | string): void;
     getAssignment(worker: Unit | string): MiningAssignment | undefined;
@@ -1188,9 +1204,71 @@ export interface MapAnalysisResource {
     ): DefensivePosition | undefined;
     getDefensiveThird(): Expansion | undefined;
     getPerimeter(region: Region): Point2D[];
+    getRegionCells(region: Region): Point2D[];
+    getOverlordSpots(): Point2D[];
+    takeOverlordSpot(near: Point2D): Point2D;
     getEnemyMainRamp(): Ramp | undefined;
     configure(settings: Partial<MapAnalysisSettings>): void;
     drawDebug(): void;
+}
+
+export interface CreepResource {
+    getTiles(): Point2D[];
+    getEdges(): Point2D[];
+    getCoverage(): number;
+    closestTile(near: Point2D): Point2D | undefined;
+    findEdgePosition(
+        near: Point2D,
+        opts?: { radius?: number; closest?: boolean; spreadDistance?: number; unitTag?: string; cache?: boolean },
+    ): Point2D | undefined;
+    nextTumorOnPath(
+        from: Point2D,
+        to: Point2D,
+        opts?: {
+            layer?: InfluenceLayer | InfluenceGrid;
+            maxDistance?: number;
+            minDistance?: number;
+            minSeparation?: number;
+            findAlternative?: boolean;
+        },
+    ): Point2D | undefined;
+    randomPosition(near: Point2D, attempts?: number): Point2D | undefined;
+    tumorLowestCostPosition(near: Point2D): Point2D | undefined;
+    shouldSpreadTumors(): boolean;
+    overlordSpotterPositions(overlords: Unit[] | Units, target: Point2D): Map<string, Point2D>;
+    blocksExpansion(point: Point2D): boolean;
+}
+
+export type NydusTraveller = {
+    entry: string;
+    exit: string;
+    exitTowards: Point2D;
+    unitType?: number;
+};
+
+export interface NydusResource {
+    findNydusAtLocation(
+        base: Point2D,
+        opts?: { minBaseDistance?: number; maxNydusDistance?: number; maxCost?: number },
+    ): Point2D | undefined;
+    getEnemyMainNydusPoints(): Point2D[];
+    getOwnMainNydusPoints(): Point2D[];
+    nextPoint(
+        start: Point2D,
+        target: Point2D,
+        opts?: PathOptions & { large?: boolean },
+    ): { point: Point2D; exitTowards?: Point2D; nydusTags?: [string, string] };
+    addTraveller(unit: Unit, entryTag: string, exitTag: string, exitTowards: Point2D): void;
+    removeTraveller(tag: string): void;
+    getTravellers(): ReadonlyMap<string, NydusTraveller>;
+    isBanned(tag: string): boolean;
+}
+
+export interface AbilityTracker {
+    used(unit: Unit | string, abilityId: number): void;
+    ready(unit: Unit | string, abilityId: number): boolean;
+    readyAt(unit: Unit | string, abilityId: number): number | undefined;
+    setCooldown(abilityId: number, loops: number): void;
 }
 
 export type BehaviorContext = {
@@ -1251,6 +1329,7 @@ export interface ResourceContainer {
     memory: EnemyMemory;
     spatial: SpatialIndex;
     influence: InfluenceResource;
+    creep: CreepResource;
     pathing: PathingResource;
     roles: RolesResource;
     squads: SquadsResource;
@@ -1260,8 +1339,10 @@ export interface ResourceContainer {
     mining: MiningResource;
     flying: FlyingStructures;
     mapAnalysis: MapAnalysisResource;
+    nydus: NydusResource;
     behaviors: BehaviorsResource;
     openings: OpeningsResource;
+    abilityTracker: AbilityTracker;
     debug?: Debugger;
     placer?: Placer;
 }

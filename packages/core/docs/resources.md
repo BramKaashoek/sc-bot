@@ -162,9 +162,9 @@ Game seconds (the game loop divided by [`GAME_LOOPS_PER_SECOND`](constants.md#co
 
 The raw `SC2APIProtocol.Observation`, `ResponseGameInfo`, `MapState` (the `ImageData` for visibility and creep), `ObservationRender` and `ObservationFeatureLayer`. The game info is only read at the start of the game. Render and feature-layer data need them enabled in the agent's `interface`.
 
-#### `frame.getPrevious() => GameFrame`
+#### `frame.getPrevious() => GameFrame | undefined`
 
-The previous step's frame, which holds only its game loop: `{ _gameLoop }`.
+The previous step's frame, which holds only its game loop: `{ _gameLoop }`. `undefined` before the first step.
 
 #### `frame.getScore() => Score | undefined`
 
@@ -201,7 +201,7 @@ export async function onStep({ agent, resources }: World) {
     console.log(`${frame.timeFormatted()} step avg ${avg.toFixed(1)}ms, max ${max.toFixed(1)}ms`);
 
     if (frame.getGameLoop() < 10 && debug) {
-        await debug.createUnit({ unitType: MARINE, quantity: 5, pos: map.getMain().townhallPosition, playerId: agent.playerId });
+        await debug.createUnit({ unitType: MARINE, quantity: 5, pos: map.getMain()!.townhallPosition, playerId: agent.playerId });
         await debug.showMap();
         debug.drawBox({ x: 10, y: 10, z: 12 }, { x: 12, y: 12, z: 14 });
     }
@@ -296,7 +296,7 @@ Stops delivering new events to the reader. Events already written for it stay un
 
 The unit type's data. For a Zerg structure the mineral cost has the 50 of the drone taken off, so it is the net cost. Throws a `TypeError` for an id with no data.
 
-#### `data.getAbilityData(abilityId: number)`, `data.getUpgradeData(upgradeId: number)`, `data.getEffectData(effectId: number)`
+#### `data.getAbilityData(abilityId: number)`, `data.getUpgradeData(upgradeId: number)`, `data.getEffectData(effectId: number)` `=> AbilityData | UpgradeData | EffectData | undefined`
 
 The `AbilityData`, `UpgradeData` and `EffectData` of that id, `undefined` when unknown. `getUpgradeData` and `getEffectData` throw a `TypeError` before the data is loaded.
 

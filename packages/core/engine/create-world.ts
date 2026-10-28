@@ -21,6 +21,9 @@ import { flyingResource } from '../resources/flying.ts';
 import { mapAnalysisResource } from '../resources/map-analysis.ts';
 import { behaviorsResource } from '../resources/behaviors.ts';
 import { openingsResource } from '../resources/openings.ts';
+import { creepResource } from '../resources/creep.ts';
+import { nydusResource } from '../resources/nydus.ts';
+import { abilityTrackerResource } from '../resources/ability-tracker.ts';
 import type { CoreConfig, ResourceContainer, ResourceDefinition, World } from '../types.ts';
 
 type CoreResourceDefinition = { [K in keyof ResourceContainer]-?: ResourceDefinition<K> }[keyof ResourceContainer];
@@ -36,6 +39,7 @@ function coreResources(client?: NodeSC2Proto.ProtoClient): CoreResourceDefinitio
         memoryResource,
         spatialResource,
         influenceResource,
+        creepResource,
         pathingResource,
         rolesResource,
         squadsResource,
@@ -45,8 +49,10 @@ function coreResources(client?: NodeSC2Proto.ProtoClient): CoreResourceDefinitio
         miningResource,
         flyingResource,
         mapAnalysisResource,
+        nydusResource,
         behaviorsResource,
         openingsResource,
+        abilityTrackerResource,
     ];
 }
 

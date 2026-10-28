@@ -158,7 +158,7 @@ export async function onStep({ resources }: World) {
     const enemies = units.getEnemyUnits().visible;
     if (army.empty) return;
 
-    const front = army.closestTo(map.getEnemyMain().townhallPosition);
+    const front = army.closestTo(map.getEnemyMain()!.townhallPosition);
     const threats = enemies.closerThan(12, front).sortedByDistanceTo(front);
     const stragglers = army.idle.furtherThan(15, army.center);
 

@@ -82,7 +82,7 @@ export async function onStep({ resources }: World) {
     const { actions, map, roles } = resources.get();
     const army = roles.get(ATTACKING);
     if (army.length >= 20) {
-        await roles.as(ATTACKING, () => actions.attackMove(army, map.getEnemyNatural().townhallPosition));
+        await roles.as(ATTACKING, () => actions.attackMove(army, map.getEnemyNatural()!.townhallPosition));
     }
 }
 ```
@@ -267,9 +267,9 @@ export async function onStep({ resources }: World) {
 
     const enemies = spatial.unitsInRange(squad.position, 15, 'enemy');
     if (canWinFight(squad.units, enemies) >= VICTORY_CLOSE) {
-        await actions.attackMove(squad.units, enemies.empty ? map.getEnemyNatural().townhallPosition : enemies.first.pos);
+        await actions.attackMove(squad.units, enemies.empty ? map.getEnemyNatural()!.townhallPosition : enemies.first.pos);
     } else {
-        await actions.move(squad.units, map.getNatural().townhallPosition);
+        await actions.move(squad.units, map.getNatural()!.townhallPosition);
     }
 }
 ```
