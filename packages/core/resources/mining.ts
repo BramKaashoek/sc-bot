@@ -4,7 +4,8 @@ import { gasMineTypes, gatheringAbilities, returningAbilities } from '../constan
 import { WorkerRace } from '../constants/race-map.ts';
 import { BUILDING, GATHERING } from '../constants/unit-role.ts';
 import { ASSIMILATORRICH, EXTRACTORRICH, REFINERYRICH } from '../constants/unit-type.ts';
-import { distance, distanceSquared } from '../utils/geometry/point.ts';
+import { toTag } from '../utils/collections.ts';
+import { distance, distanceSquared, pointKey } from '../utils/geometry/point.ts';
 import { mineralTargets, townhallTarget } from '../utils/mining/targets.ts';
 import { Units } from './units-collection.ts';
 import type {
@@ -17,6 +18,18 @@ import type {
     World,
 } from '../types.ts';
 
+const DEFAULT_SETTINGS: MiningSettings = {
+    enabled: false,
+    priority: -10,
+    workersPerGas: 3,
+    speedMining: true,
+    townhallDistanceFactor: 1.08,
+    keepSafe: true,
+    fleeAtHealth: 0.5,
+    weightSafetyLimit: 12,
+    selfDefence: true,
+    longDistanceMine: true,
+};
 const MINERAL_RANGE = 10;
 const GAS_RANGE = 12;
 const ACTION_LOCK_SECONDS = 0.5;
@@ -36,9 +49,17 @@ type MiningState = {
 
 type Step = { townhalls: Units; ready: Units; minerals: Units; threatened: boolean; longDistanceFields?: Units };
 
-const stateByMining = new WeakMap<MiningResource, MiningState>();
+export const stateByMining = new WeakMap<MiningResource, MiningState>();
 
-const tagOf = (unit: Unit | string) => (typeof unit === 'string' ? unit : unit.tag);
+const freshState = (settings: MiningSettings): MiningState => ({
+    settings,
+    minerals: { resourceOf: new Map(), workersOn: new Map() },
+    gas: { resourceOf: new Map(), workersOn: new Map() },
+    townhallOf: new Map(),
+    lockedAt: new Map(),
+    initialSplit: true,
+});
+
 const isAlive = (unit: Unit | undefined): unit is Unit => !!unit && unit.isCurrent() && !unit.labels.has('dead');
 const isBusy = (worker: Unit) => worker.labels.has('command') || worker.isConstructing();
 // python-sc2 semantics: only the current order counts, unlike Unit.isGathering/isReturning
@@ -82,43 +103,22 @@ const countOn = ({ workersOn }: Assignments, resource: string) => workersOn.get(
 export const miningResource: ResourceDefinition<'mining'> = {
     name: 'mining',
     create(world) {
-        const state: MiningState = {
-            settings: {
-                enabled: false,
-                priority: -10,
-                workersPerGas: 3,
-                speedMining: true,
-                townhallDistanceFactor: 1.08,
-                keepSafe: true,
-                fleeAtHealth: 0.5,
-                weightSafetyLimit: 12,
-                selfDefence: true,
-                longDistanceMine: true,
-            },
-            minerals: { resourceOf: new Map(), workersOn: new Map() },
-            gas: { resourceOf: new Map(), workersOn: new Map() },
-            townhallOf: new Map(),
-            lockedAt: new Map(),
-            initialSplit: true,
-        };
-
-        const pick = (near: Point2D, forceClose: boolean, minHealth: number, exclude?: ReadonlySet<string>) =>
-            pickWorker(world, state, near, forceClose, minHealth, exclude);
-
         const mining: MiningResource = {
             selectWorker(near, { forceClose = false, minHealth = 0, role, exclude } = {}) {
-                const worker = pick(near, forceClose, minHealth, exclude);
+                const state = stateByMining.get(mining)!;
+                const worker = pickWorker(world, state, near, forceClose, minHealth, exclude);
                 if (!worker) return undefined;
                 unassign(state, worker.tag);
                 world.resources.get().roles.assign(worker, role ?? BUILDING);
                 return worker;
             },
             release(worker) {
-                unassign(state, tagOf(worker));
+                unassign(stateByMining.get(mining)!, toTag(worker));
                 world.resources.get().roles.assign(worker, GATHERING);
             },
             getAssignment(worker): MiningAssignment | undefined {
-                const tag = tagOf(worker);
+                const state = stateByMining.get(mining)!;
+                const tag = toTag(worker);
                 const townhallTag = state.townhallOf.get(tag)!;
                 const mineral = state.minerals.resourceOf.get(tag);
                 if (mineral !== undefined) return { kind: 'mineral', resourceTag: mineral, townhallTag };
@@ -127,15 +127,16 @@ export const miningResource: ResourceDefinition<'mining'> = {
                 return undefined;
             },
             getWorkersOn(resource) {
-                const tag = tagOf(resource);
+                const state = stateByMining.get(mining)!;
+                const tag = toTag(resource);
                 return [...(state.minerals.workersOn.get(tag) ?? state.gas.workersOn.get(tag) ?? [])];
             },
             getMineralTarget(mineral) {
                 const unit = typeof mineral === 'string' ? world.resources.get().units.getByTag(mineral) : mineral;
-                return unit && targetsOf(world, state).get(positionKey(unit.pos));
+                return unit && targetsOf(world, stateByMining.get(mining)!).get(pointKey(unit.pos));
             },
             isEnabled() {
-                return state.settings.enabled;
+                return stateByMining.get(mining)!.settings.enabled;
             },
             configure(next) {
                 const { workersPerGas } = next;
@@ -145,22 +146,14 @@ export const miningResource: ResourceDefinition<'mining'> = {
                 ) {
                     throw new RangeError(`workersPerGas must be an integer from 0 to 3, got ${workersPerGas}`);
                 }
-                Object.assign(state.settings, next);
+                Object.assign(stateByMining.get(mining)!.settings, next);
             },
         };
-        stateByMining.set(mining, state);
+        stateByMining.set(mining, freshState({ ...DEFAULT_SETTINGS }));
         return mining;
     },
     reset(mining) {
-        const state = stateByMining.get(mining)!;
-        [state.minerals, state.gas].forEach(({ resourceOf, workersOn }) => {
-            resourceOf.clear();
-            workersOn.clear();
-        });
-        state.townhallOf.clear();
-        state.lockedAt.clear();
-        state.initialSplit = true;
-        state.mineralTargets = undefined;
+        stateByMining.set(mining, freshState(stateByMining.get(mining)!.settings));
     },
     onStep(mining, world) {
         const state = stateByMining.get(mining)!;
@@ -344,8 +337,6 @@ function pickMineral(world: World, step: Step, worker: Unit, minerals: Units) {
     return minerals.closerThan(MINERAL_RANGE, closest).closestTo(step.townhalls.closestTo(closest));
 }
 
-const positionKey = ({ x, y }: Point2D) => `${x},${y}`;
-
 function targetsOf(world: World, state: MiningState) {
     if (state.mineralTargets) return state.mineralTargets;
     const { units, map } = world.resources.get();
@@ -353,7 +344,7 @@ function targetsOf(world: World, state: MiningState) {
     const townhalls = map.getExpansions().map(({ townhallPosition }) => townhallPosition);
     if (minerals.length === 0 || townhalls.length === 0) return new Map<string, Point2D>();
     state.mineralTargets = mineralTargets(
-        minerals.map(({ pos }) => ({ tag: positionKey(pos), pos })),
+        minerals.map(({ pos }) => ({ tag: pointKey(pos), pos })),
         townhalls,
     );
     return state.mineralTargets;
@@ -455,7 +446,7 @@ function speedMine(world: World, state: MiningState, step: Step, worker: Unit, m
         return;
     }
 
-    const target = targetsOf(world, state).get(positionKey(mineral.pos));
+    const target = targetsOf(world, state).get(pointKey(mineral.pos));
     if (!target) return;
     const away = distance(worker.pos, target);
     if ((away > 0.75 && away < 2) || worker.isIdle()) {
@@ -498,7 +489,7 @@ function longDistanceFields(world: World, state: MiningState, step: Step) {
     const limit = collectionRate < 300 ? 100 : 6;
     const targets = targetsOf(world, state);
     // the mineral's own cell is unpathable (Infinity), so judge safety where the worker stands
-    const standAt = (mineral: Unit) => targets.get(positionKey(mineral.pos)) ?? mineral.pos;
+    const standAt = (mineral: Unit) => targets.get(pointKey(mineral.pos)) ?? mineral.pos;
     step.longDistanceFields = step.minerals.filter(
         (mineral) =>
             countOn(state.minerals, mineral.tag) === 0 &&

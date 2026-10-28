@@ -26,7 +26,6 @@ function floodFill(
         return filled;
     }
 
-    // console.log(`in floodFill - x: ${x}, y: ${y}, maxReach: ${maxReach}`);
     if (mapData[y][x] !== oldVal || filled.some((pix) => pix.x === x && pix.y === y)) {
         return filled;
     }
@@ -35,19 +34,15 @@ function floodFill(
     filled.push({ y, x });
 
     if (x > 0) {
-        // left
         floodFill(mapData, x - 1, y, oldVal, newVal, maxReach, filled, startPos);
     }
     if (y > 0) {
-        // up
         floodFill(mapData, x, y - 1, oldVal, newVal, maxReach, filled, startPos);
     }
     if (x < mapWidth - 1) {
-        // right
         floodFill(mapData, x + 1, y, oldVal, newVal, maxReach, filled, startPos);
     }
     if (y < mapHeight - 1) {
-        // down
         floodFill(mapData, x, y + 1, oldVal, newVal, maxReach, filled, startPos);
     }
 

@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { describe, expect, test } from 'bun:test';
 import root from '@node-sc2/proto/root';
 import createClient from './create-client.ts';
-import { ConnectionClosedError } from './errors.ts';
+import { ConnectionClosedError, NodeSC2Error } from './errors.ts';
 
 const Request = root.lookupType('Request');
 const Response = root.lookupType('Response');
@@ -61,7 +61,13 @@ describe('createClient', () => {
         ws.respond({ error: ['Game has already ended'], status: 5 });
         ws.respond({ leaveGame: {}, status: 1 });
 
-        expect(await action.catch((err: Error) => err.message)).toContain('Game has already ended');
+        const actionError = await action.catch((err: Error) => err);
+        expect(actionError).toBeInstanceOf(NodeSC2Error);
+        expect(actionError).toMatchObject({
+            name: 'NodeSC2Error',
+            err: ['Game has already ended'],
+            message: `Response Error: ${JSON.stringify(['Game has already ended'], null, 2)}`,
+        });
         expect(await observation).toMatchObject({ observation: { gameLoop: 7 } });
         expect([await leaveGame, leftGame, client.status]).toEqual([{}, true, 1 as SC2APIProtocol.Status]);
     });
@@ -80,5 +86,16 @@ describe('createClient', () => {
         const ping = client.ping();
         ws.respond({ ping: { gameVersion: 'reconnected' } });
         expect(await ping).toMatchObject({ gameVersion: 'reconnected' });
+    });
+
+    test('rejects a send on a socket that is not open with a NodeSC2Error naming the request, not a fatal closed error', async () => {
+        const { client, ws } = await connectedClient();
+        ws.readyState = 0;
+
+        const err = await client.ping().catch((e: Error) => e);
+
+        expect(err).toBeInstanceOf(NodeSC2Error);
+        expect(err).not.toBeInstanceOf(ConnectionClosedError);
+        expect((err as Error).message).toBe('SC2 connection not open for ping request');
     });
 });

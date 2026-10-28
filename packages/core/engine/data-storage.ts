@@ -8,6 +8,9 @@ import type { Cost, DataStorage, Earmark, StorageBlueprint } from '../types.ts';
 
 const debugEarmark = createDebug('sc2:debug:earmark');
 
+export const generalAbility = (data: DataStorage, abilityId: number): number =>
+    data.getAbilityData(abilityId)?.remapsToAbilityId || abilityId;
+
 function createDataManager(): DataStorage {
     const data = new Map<string, any>([
         ['earmarks', []],

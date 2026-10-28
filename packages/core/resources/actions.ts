@@ -1,5 +1,7 @@
 import createDebug from 'debug';
-import getRandom from '../utils/get-random.ts';
+import getRandom, { shuffle } from '../utils/get-random.ts';
+import { asArray, toTags } from '../utils/collections.ts';
+import { generalAbility } from '../engine/data-storage.ts';
 import { distance, nClosestPoint } from '../utils/geometry/point.ts';
 import { gridsInCircle } from '../utils/geometry/angle.ts';
 import { Ability, enums, UnitType, UnitTypeId, WarpUnitAbility } from '../constants/index.ts';
@@ -16,7 +18,18 @@ import { arbitrate } from './command-arbiter.ts';
 import { currentCommander, runAsCommander } from './command-context.ts';
 import type { Committed, Proposal } from './command-arbiter.ts';
 import type { CommandContext } from './command-context.ts';
-import type { AbilityOptions, ActionManager, CommandResult, Point2D, Unit, WarpInOptions, World } from '../types.ts';
+import type {
+    AbilityOptions,
+    ActionManager,
+    BuildCommandOptions,
+    CommandOptions,
+    CommandResult,
+    Point2D,
+    ResourceDefinition,
+    Unit,
+    WarpInOptions,
+    World,
+} from '../types.ts';
 
 const { Alliance, Race, AbilityDataTarget } = enums;
 const debugActionManager = createDebug('sc2:debug:actionManager');
@@ -29,34 +42,28 @@ const isPoint = (target: Target): target is Point2D =>
     typeof target === 'object' && !!target && 'x' in target && typeof target.x === 'number';
 
 function getRandomN<T>(arr: T[], n: number): T[] {
-    return Array.from({ length: n }, () => {
-        return arr[Math.floor(Math.random() * arr.length)];
-    });
-}
-
-function shuffled<T>(arr: T[]): T[] {
-    const copy = arr.slice();
-    for (let index = copy.length - 1; index > 0; index -= 1) {
-        const swap = Math.floor(Math.random() * (index + 1));
-        [copy[index], copy[swap]] = [copy[swap], copy[index]];
-    }
-    return copy;
+    return Array.from({ length: n }, () => getRandom(arr));
 }
 
 const SUCCESS = 1 as SC2APIProtocol.ActionResult;
 
-type ExecutorProposal = Proposal & { onNotSent?: (tags: string[], result: CommandResult) => void };
+type ExecutorProposal = Proposal & {
+    onNotSent?: (tags: string[], result: CommandResult) => void;
+};
 
 const CHAT_BROADCAST = 1 as SC2APIProtocol.ActionChat_Channel;
 const CHAT_TEAM = 2 as SC2APIProtocol.ActionChat_Channel;
-
-const tagsOf = (units: Unit | Unit[]): string[] => (Array.isArray(units) ? units : [units]).map((unit) => unit.tag!);
 
 function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): ActionManager {
     const protoClient = client || createClient();
     let proposals: ExecutorProposal[] = [];
     let seq = 0;
-    let ordered: { gameLoop: number; observation: unknown; tags: Set<string>; committed: Committed } = {
+    let ordered: {
+        gameLoop: number;
+        observation: unknown;
+        tags: Set<string>;
+        committed: Committed;
+    } = {
         gameLoop: -1,
         observation: undefined,
         tags: new Set(),
@@ -68,7 +75,12 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
         const gameLoop = frame.getGameLoop();
         const observation = frame._observation;
         if (ordered.gameLoop !== gameLoop || ordered.observation !== observation)
-            ordered = { gameLoop, observation, tags: new Set(), committed: new Map() };
+            ordered = {
+                gameLoop,
+                observation,
+                tags: new Set(),
+                committed: new Map(),
+            };
         return ordered;
     };
 
@@ -112,7 +124,9 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
     };
 
     const send = (commands: SC2APIProtocol.ActionRawUnitCommand[]) =>
-        protoClient.action({ actions: commands.map((unitCommand) => ({ actionRaw: { unitCommand } })) });
+        protoClient.action({
+            actions: commands.map((unitCommand) => ({ actionRaw: { unitCommand } })),
+        });
 
     const repeatsCurrentOrder = (command: SC2APIProtocol.ActionRawUnitCommand, tag: string): boolean => {
         if (command.queueCommand) return false;
@@ -120,8 +134,8 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
         const [current] = world.resources.get().units.getByTag(tag)?.orders ?? [];
         if (!current) return false;
 
-        const general = (abilityId: number) => world.data.getAbilityData(abilityId)?.remapsToAbilityId || abilityId;
-        if (general(command.abilityId!) !== general(current.abilityId!)) return false;
+        if (generalAbility(world.data, command.abilityId!) !== generalAbility(world.data, current.abilityId!))
+            return false;
 
         if (command.targetUnitTag) return command.targetUnitTag === current.targetUnitTag;
 
@@ -132,10 +146,8 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
 
     return {
         _client: protoClient,
-        async do(abilityId: number, ts: string | string[] | Unit[], opts: AbilityOptions = {}) {
-            const tags = (Array.isArray(ts) ? ts : [ts]).map((entry) =>
-                typeof entry === 'string' ? entry : entry.tag!,
-            );
+        async do(ts: Unit | string | Array<Unit | string>, abilityId: number, opts: AbilityOptions = {}) {
+            const tags = toTags(ts);
             if (tags.length === 0) return;
 
             const doAction: SC2APIProtocol.ActionRawUnitCommand = {
@@ -153,8 +165,8 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
 
             this.queueAction(doAction);
         },
-        async smart(us: Unit[], posOrUnit: Point2D | Unit, queue = false) {
-            const units = Array.isArray(us) ? us : [us];
+        async smart(us: Unit | Unit[], posOrUnit: Point2D | Unit, { queue = false }: CommandOptions = {}) {
+            const units = asArray(us);
             if (units.length === 0) return;
 
             const smartTo: SC2APIProtocol.ActionRawUnitCommand = {
@@ -171,8 +183,8 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
 
             this.queueAction(smartTo);
         },
-        async move(u: Unit | Unit[], target: Point2D | Unit, queue = false) {
-            const units = Array.isArray(u) ? u : [u];
+        async move(u: Unit | Unit[], target: Point2D | Unit, { queue = false }: CommandOptions = {}) {
+            const units = asArray(u);
             if (units.length === 0) return;
 
             const moveTo: SC2APIProtocol.ActionRawUnitCommand = {
@@ -189,8 +201,12 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
 
             this.queueAction(moveTo);
         },
-        async patrol(u: Unit | Unit[], p: [from: Point2D, to: Point2D] | Point2D, queue = false) {
-            const units = Array.isArray(u) ? u : [u];
+        async patrol(
+            u: Unit | Unit[],
+            p: [from: Point2D, to: Point2D] | Point2D,
+            { queue = false }: CommandOptions = {},
+        ) {
+            const units = asArray(u);
             if (units.length === 0) return;
 
             const [from, to] = Array.isArray(p) ? p : [units[0].pos, p];
@@ -202,11 +218,11 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 queueCommand: true,
             };
 
-            await this.move(units, from, queue);
+            await this.move(units, from, { queue });
             this.queueAction(patrolToTo);
         },
-        async attack(us?: Unit[], unit?: Unit, queue = false) {
-            const units = (Array.isArray(us) ? us : [us]).filter((attacker) => attacker !== undefined);
+        async attack(us?: Unit | Unit[], unit?: Unit, { queue = false }: CommandOptions = {}) {
+            const units = asArray(us).filter((attacker) => attacker !== undefined);
             if (!unit?.tag) {
                 throw new ActionManagerError('attack needs a target unit; use attackMove for a position', {
                     data: { units: us, unit },
@@ -221,8 +237,8 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 queueCommand: queue,
             });
         },
-        async attackMove(u?: Unit[], p?: Point2D, queue = false) {
-            const units = (Array.isArray(u) ? u : [u]).filter((attacker) => attacker !== undefined);
+        async attackMove(u?: Unit | Unit[], p?: Point2D, { queue = false }: CommandOptions = {}) {
+            const units = asArray(u).filter((attacker) => attacker !== undefined);
             const position = p ?? world.resources.get().map.getLocations().enemy?.[0];
             if (!position) {
                 throw new ActionManagerError(
@@ -248,16 +264,20 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
             const isComplete = [unitA, unitB].every((unit) => unit.buildProgress! >= 1);
 
             if (!haveAbility || !isComplete) {
-                throw new ActionManagerError('These two units cannot be swapped', { data: { unitA, unitB } });
+                throw new ActionManagerError('These two units cannot be swapped', {
+                    data: { unitA, unitB },
+                });
             }
 
             world.resources.get().flying.swap(unitA, unitB);
         },
-        async gather(unit: Unit, mineralField?: Unit, queue = true) {
+        async gather(unit: Unit, mineralField?: Unit, { queue = true }: CommandOptions = {}) {
             const { units } = world.resources.get();
 
             if (!unit.isWorker() && unit.unitType !== UnitType.MULE) {
-                throw new GatherError('only workers can gather', { data: { unit, mineralField, queue } });
+                throw new GatherError('only workers can gather', {
+                    data: { unit, mineralField, queue },
+                });
             }
 
             if (unit.labels.has('command') && queue === false) {
@@ -297,14 +317,14 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
 
             this.queueAction(sendToGather);
         },
-        async mine(us: Unit[], target: Unit, queue = true) {
-            const units = Array.isArray(us) ? us : [us];
+        async mine(us: Unit | Unit[], gasMine: Unit, { queue = true }: CommandOptions = {}) {
+            const units = asArray(us);
             if (units.length === 0) return;
 
             const sendToMine: SC2APIProtocol.ActionRawUnitCommand = {
                 abilityId: Ability.HARVEST_GATHER,
                 unitTags: units.map((unit) => unit.tag!),
-                targetUnitTag: target.tag,
+                targetUnitTag: gasMine.tag,
                 queueCommand: queue,
             };
 
@@ -321,7 +341,9 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 }))
                 .reverse();
 
-            const query: SC2APIProtocol.ResponseQuery = await protoClient.query({ placements });
+            const query: SC2APIProtocol.ResponseQuery = await protoClient.query({
+                placements,
+            });
 
             const successes = query
                 .placements!.map((placement, index) => ({ placement, index }))
@@ -343,7 +365,10 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
             const placeable = async (ability: number, positions: Point2D[]) => {
                 if (positions.length <= 0) return [];
                 const query = (await protoClient.query({
-                    placements: positions.map((targetPos) => ({ abilityId: ability, targetPos })),
+                    placements: positions.map((targetPos) => ({
+                        abilityId: ability,
+                        targetPos,
+                    })),
                 })) as SC2APIProtocol.ResponseQuery;
                 return positions.filter((_, i) => query.placements![i].result === 1);
             };
@@ -353,7 +378,10 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 if (!addonPlace) return positions;
                 const addonSpots = await placeable(
                     Ability.BUILD_SUPPLYDEPOT,
-                    positions.map((position) => ({ x: position.x + 2.5, y: position.y - 0.5 })),
+                    positions.map((position) => ({
+                        x: position.x + 2.5,
+                        y: position.y - 0.5,
+                    })),
                 );
                 return positions.filter((position) =>
                     addonSpots.some((spot) => spot.x === position.x + 2.5 && spot.y === position.y - 0.5),
@@ -385,7 +413,11 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
 
             return false;
         },
-        async build(unitTypeId: number, pointOrUnitOrNone?: Point2D | Unit | null, worker?: Unit) {
+        async build(
+            unitTypeId: number,
+            pointOrUnitOrNone?: Point2D | Unit | null,
+            { worker }: BuildCommandOptions = {},
+        ) {
             const { units, frame } = world.resources.get();
 
             let queue = false;
@@ -410,9 +442,15 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 pos = pointOrUnitOrNone;
             }
 
-            const abilityId = world.data.getUnitTypeData(unitTypeId).abilityId!;
+            const abilityId = world.data.getUnitTypeData(unitTypeId).abilityId;
+            const abilityData = abilityId === undefined ? undefined : world.data.getAbilityData(abilityId);
+            if (!abilityData) {
+                throw new BuildError(`Unit type ${unitTypeId} has no build ability to build it with`, {
+                    data: { unitTypeId, pointOrUnitOrNone, worker },
+                });
+            }
 
-            const buildAbilityTarget = world.data.getAbilityData(abilityId).target;
+            const buildAbilityTarget = abilityData.target;
             const mustBeNone = buildAbilityTarget === AbilityDataTarget.NONE;
             const canBeNone = mustBeNone || buildAbilityTarget === AbilityDataTarget.POINTORNONE;
 
@@ -425,7 +463,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
 
             if ((target || pos) && mustBeNone) {
                 throw new BuildError(
-                    `Building unit ${unitTypeId} with build ability ${abilityId} must be done without a target, but you gave: ${pointOrUnitOrNone}. Try passing null as the second argument, and your target as the third.`,
+                    `Building unit ${unitTypeId} with build ability ${abilityId} must be done without a target, but you gave: ${pointOrUnitOrNone}. Try passing null as the target.`,
                     { data: { unitTypeId, pointOrUnitOrNone, worker } },
                 );
             }
@@ -436,10 +474,17 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
             let builder: Unit | undefined =
                 worker ??
                 (near && mining.isEnabled()
-                    ? mining.selectWorker(near, { forceClose: true, role: GATHERING, exclude })
+                    ? mining.selectWorker(near, {
+                          forceClose: true,
+                          role: GATHERING,
+                          exclude,
+                      })
                     : undefined);
             if (!builder && near) {
-                builder = selectBuilder(world, near, { exclude, reuseConstructing: world.agent.race === Race.PROTOSS });
+                builder = selectBuilder(world, near, {
+                    exclude,
+                    reuseConstructing: world.agent.race === Race.PROTOSS,
+                });
                 if (builder?.isConstructing()) {
                     queue = true;
                 } else if (builder?.isCarryingResource()) {
@@ -474,7 +519,9 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 unitCommand.targetWorldSpacePos = pos;
             }
 
-            this.queueAction(unitCommand, { onNotSent: () => builder.labels.delete('command') });
+            this.queueAction(unitCommand, {
+                onNotSent: () => builder.labels.delete('command'),
+            });
 
             if (unitTypeId === GasMineRace[world.agent.race!]) {
                 await this.gather(builder);
@@ -531,13 +578,17 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
             let unitCommand: SC2APIProtocol.ActionRawUnitCommand;
             if (trainer.unitType === UnitType.WARPGATE) {
                 const abilityId = WarpUnitAbility[unitTypeId];
-                const [point] = shuffled(warpInPoints({}));
+                const [point] = shuffle(warpInPoints({}));
                 if (!trainer.abilityAvailable(abilityId) || !point) {
                     throw new TrainError(`warp gate cannot warp in type ${unitTypeId}: on cooldown or no free point`, {
                         data: { unitTypeId, productionUnit },
                     });
                 }
-                unitCommand = { abilityId, unitTags: [trainer.tag!], targetWorldSpacePos: point };
+                unitCommand = {
+                    abilityId,
+                    unitTags: [trainer.tag!],
+                    targetWorldSpacePos: point,
+                };
             } else {
                 const abilityId =
                     creationAbilityOverrides[unitTypeId] ?? world.data.getUnitTypeData(unitTypeId).abilityId;
@@ -551,7 +602,9 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
             const { units } = world.resources.get();
 
             if (!world.agent.canAffordUpgrade(upgradeId)) {
-                throw new TrainError(`cannot afford upgrade: ${upgradeId}`, { data: { upgradeId, upgradeFacility } });
+                throw new TrainError(`cannot afford upgrade: ${upgradeId}`, {
+                    data: { upgradeId, upgradeFacility },
+                });
             }
 
             let upgrader: Unit | undefined;
@@ -569,7 +622,10 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
             }
 
             const abilityId = researchAbilityOf(world.agent, upgradeId);
-            const unitCommand: SC2APIProtocol.ActionRawUnitCommand = { abilityId, unitTags: [upgrader.tag!] };
+            const unitCommand: SC2APIProtocol.ActionRawUnitCommand = {
+                abilityId,
+                unitTags: [upgrader.tag!],
+            };
 
             spend(world.agent, world.agent.calculateUpgradeCost(upgradeId));
             this.queueAction(unitCommand);
@@ -603,7 +659,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 });
             }
 
-            const destPoints = shuffled(points).slice(0, warpGates.length);
+            const destPoints = shuffle(points).slice(0, warpGates.length);
 
             const commands: SC2APIProtocol.ActionRawUnitCommand[] = destPoints.map((point, i) => ({
                 abilityId,
@@ -613,23 +669,25 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
 
             this.queueAction(commands);
         },
-        async stop(units: Unit | Unit[], queue = false) {
-            return this.do(Ability.STOP, tagsOf(units), { queue });
+        async stop(units: Unit | Unit[], { queue = false }: CommandOptions = {}) {
+            return this.do(units, Ability.STOP, { queue });
         },
-        async holdPosition(units: Unit | Unit[], queue = false) {
-            return this.do(Ability.HOLDPOSITION, tagsOf(units), { queue });
+        async holdPosition(units: Unit | Unit[], { queue = false }: CommandOptions = {}) {
+            return this.do(units, Ability.HOLDPOSITION, { queue });
         },
-        async repair(units: Unit | Unit[], target: Unit, queue = false) {
-            return this.do(Ability.EFFECT_REPAIR, tagsOf(units), { target, queue });
+        async repair(units: Unit | Unit[], target: Unit, { queue = false }: CommandOptions = {}) {
+            return this.do(units, Ability.EFFECT_REPAIR, { target, queue });
         },
-        async returnResource(units: Unit | Unit[], queue = false) {
-            return this.do(Ability.HARVEST_RETURN, tagsOf(units), { queue });
+        async returnResource(units: Unit | Unit[], { queue = false }: CommandOptions = {}) {
+            return this.do(units, Ability.HARVEST_RETURN, { queue });
         },
         queueAction(commands, { onNotSent } = {}) {
-            const commandList = Array.isArray(commands) ? commands : [commands];
+            const commandList = asArray(commands);
             const untagged = commandList.find((command) => !command.unitTags?.length);
             if (untagged) {
-                throw new ActionManagerError('a unit command needs at least one unit', { data: { command: untagged } });
+                throw new ActionManagerError('a unit command needs at least one unit', {
+                    data: { command: untagged },
+                });
             }
             const commander = currentCommander();
             markOrdered(commandList);
@@ -694,7 +752,11 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                     debugActionManager(`command not accepted, result ${result}: ${JSON.stringify(command)}`);
                 }
                 covers.forEach(({ proposal, tags }) => {
-                    const base = { owner: proposal.owner, command: proposal.command, tags };
+                    const base = {
+                        owner: proposal.owner,
+                        command: proposal.command,
+                        tags,
+                    };
                     if (failure || result !== SUCCESS) {
                         tags.filter((tag) => committed.get(tag) === proposal).forEach((tag) => {
                             const previous = previousHolders.get(tag);
@@ -706,7 +768,11 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                         proposal,
                         result: failure
                             ? { ...base, outcome: 'rejected', error: failure.message }
-                            : { ...base, outcome: result === SUCCESS ? 'won' : 'rejected', result },
+                            : {
+                                  ...base,
+                                  outcome: result === SUCCESS ? 'won' : 'rejected',
+                                  result,
+                              },
                     });
                 });
             });
@@ -725,9 +791,10 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 if (result.outcome !== 'won') proposal.onNotSent?.(result.tags, result);
             });
             if (results.length > 0) {
-                world.resources
-                    .get()
-                    .events.write({ name: 'commandResults', data: results.map(({ result }) => result) });
+                world.resources.get().events.write({
+                    name: 'commandResults',
+                    data: results.map(({ result }) => result),
+                });
             }
 
             if (failure) throw failure;
@@ -735,12 +802,25 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
         },
         async chatSend(message: string, teamOnly = false) {
             return protoClient.action({
-                actions: [{ actionChat: { channel: teamOnly ? CHAT_TEAM : CHAT_BROADCAST, message } }],
+                actions: [
+                    {
+                        actionChat: {
+                            channel: teamOnly ? CHAT_TEAM : CHAT_BROADCAST,
+                            message,
+                        },
+                    },
+                ],
             });
         },
         async toggleAutocast(units: Unit | Unit[], abilityId: number) {
             return protoClient.action({
-                actions: [{ actionRaw: { toggleAutocast: { abilityId, unitTags: tagsOf(units) } } }],
+                actions: [
+                    {
+                        actionRaw: {
+                            toggleAutocast: { abilityId, unitTags: toTags(units) },
+                        },
+                    },
+                ],
             });
         },
         async surrender() {
@@ -750,7 +830,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
             return protoClient.query(query);
         },
         async sendAction(commands: SC2APIProtocol.ActionRawUnitCommand | SC2APIProtocol.ActionRawUnitCommand[]) {
-            const actionList = Array.isArray(commands) ? commands : [commands];
+            const actionList = asArray(commands);
             const commander = currentCommander();
             markOrdered(actionList);
             actionList.forEach((command) => commit(command.unitTags ?? [], commander));
@@ -760,4 +840,9 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
     };
 }
 
-export default createActionManager;
+export const actionsResource = (client?: NodeSC2Proto.ProtoClient): ResourceDefinition<'actions'> => ({
+    name: 'actions',
+    create: (world) => createActionManager(world, client),
+    // recreating would build a new proto client
+    reset: (actions) => actions.clearQueuedActions(),
+});

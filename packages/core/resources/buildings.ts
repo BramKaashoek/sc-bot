@@ -1,5 +1,7 @@
 import { CANCEL_BUILDINPROGRESS, HARVEST_RETURN, MOVE, SMART } from '../constants/ability.ts';
 import { Alliance, Race } from '../constants/enums.ts';
+import { SCANNERSWEEP } from '../constants/effect.ts';
+import { DETECTOR_RANGES } from '../constants/detection.ts';
 import { addonTypes, creepTumorTypes, gasMineTypes, townhallTypes } from '../constants/groups.ts';
 import { GasMineRace } from '../constants/race-map.ts';
 import { BUILDING } from '../constants/unit-role.ts';
@@ -13,6 +15,7 @@ import type {
     BuildOptions,
     CommandResult,
     Earmark,
+    OwnedEffect,
     Point2D,
     ResourceDefinition,
     TrackedBuild,
@@ -29,6 +32,12 @@ const GEYSER_NEAR_TOWNHALL_SQUARED = 15 ** 2;
 const STALL_LOOPS = 10 * GAME_LOOPS_PER_SECOND;
 const STALL_DISTANCE_SQUARED = 1;
 const STALL_COOLDOWN_LOOPS = 60 * GAME_LOOPS_PER_SECOND;
+const EXPANSION_BLOCK_RADIUS = 5.5;
+const EXPANSION_BLOCK_SQUARED = EXPANSION_BLOCK_RADIUS ** 2;
+const DETECTOR_RANGE = 7;
+const ENEMY_CLEAR_RANGE = 9;
+const CANT_BUILD_LOCATION_INVALID = 44;
+const DETECTOR_TYPES = Object.keys(DETECTOR_RANGES).map(Number);
 const MORPHED_TOWNHALLS = [UnitType.ORBITALCOMMAND, UnitType.PLANETARYFORTRESS];
 
 type Build = {
@@ -53,10 +62,23 @@ type State = {
     unfinishedDone: Set<string>;
     stalledWorkers: Map<string, { unitType: number; until: number }>;
     optedIn: boolean;
-    step: () => void;
+    blocked: Point2D[];
 };
 
-const stateByTracker = new WeakMap<BuildingTracker, State>();
+export const stateByBuildings = new WeakMap<BuildingTracker, State>();
+
+const stepByBuildings = new WeakMap<BuildingTracker, () => void>();
+
+const freshState = (settings: BuildingSettings): State => ({
+    settings,
+    builds: [],
+    nextId: 1,
+    healthByTag: new Map(),
+    unfinishedDone: new Set(),
+    stalledWorkers: new Map(),
+    optedIn: false,
+    blocked: [],
+});
 
 const isGas = (unitType: number) => gasMineTypes.includes(unitType);
 
@@ -76,7 +98,7 @@ function selectWorker(world: World, near: Point2D, busy: Set<string>): Unit | un
 }
 
 export function stalledWorkers(world: World, unitType: number): Set<string> {
-    const state = stateByTracker.get(context(world).buildings)!;
+    const state = stateByBuildings.get(context(world).buildings)!;
     const loop = context(world).frame.getGameLoop();
     const stalled = new Set<string>();
     state.stalledWorkers.forEach((stall, tag) => {
@@ -120,16 +142,7 @@ function freeGeysers(world: World, exclude: Set<string>): Unit[] {
 export const buildingsResource: ResourceDefinition<'buildings'> = {
     name: 'buildings',
     create(world) {
-        const state: State = {
-            settings: { priority: 10, timeout: 120, maxAttempts: 5, cancelLowHp: 'tracked' },
-            builds: [],
-            nextId: 1,
-            healthByTag: new Map(),
-            unfinishedDone: new Set(),
-            stalledWorkers: new Map(),
-            optedIn: false,
-            step: () => {},
-        };
+        const state = freshState({ priority: 10, timeout: 120, maxAttempts: 5, cancelLowHp: 'tracked' });
 
         const track = (unitType: number, target: Point2D, worker: Unit, extra: Partial<Build>): Build => {
             const build: Build = {
@@ -180,6 +193,12 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
                     pinned: !!at,
                     suppliedWorker: !!worker,
                 });
+            },
+            getNextExpansion({ checkSafe = true } = {}) {
+                return nextExpansion(checkSafe);
+            },
+            isExpansionBlocked(pos) {
+                return isBlocked(pos);
             },
             buildGas({ geyser, max = 1 } = {}) {
                 const { units } = context(world);
@@ -316,18 +335,88 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
                 if (result.reason === 'repeat') return;
                 settled.forEach((earmark: Earmark) => world.data.addEarmark(earmark));
                 if (!isActive(build)) return;
+                if (
+                    result.result === CANT_BUILD_LOCATION_INVALID &&
+                    townhallTypes.includes(build.unitType) &&
+                    !isListed(build.target)
+                ) {
+                    state.blocked.push(build.target);
+                }
                 build.status = 'moving';
                 build.attempts += 1;
                 if (build.attempts >= state.settings.maxAttempts && !build.geyserTag) replan(build);
             });
         }
 
-        function retargetTownhall(build: Build): boolean {
-            const { map, placement } = context(world);
-            const next = map
+        const isListed = (pos: Point2D) => state.blocked.some((other) => other.x === pos.x && other.y === pos.y);
+
+        function isBlocked(pos: Point2D): boolean {
+            const { spatial, units } = context(world);
+            if (isListed(pos)) return true;
+            if (
+                spatial
+                    .unitsInRange(pos, EXPANSION_BLOCK_RADIUS, 'enemyGround')
+                    .some((unit) => unit.unitType !== UnitType.AUTOTURRET)
+            ) {
+                return true;
+            }
+            if (
+                spatial
+                    .unitsInRange(pos, EXPANSION_BLOCK_RADIUS, 'own')
+                    .some((unit) => townhallTypes.includes(unit.unitType!))
+            ) {
+                return true;
+            }
+            return [...units.getDestructables(), ...units.getWatchtowers()].some(
+                (unit) => distanceSquared(unit.pos, pos) < EXPANSION_BLOCK_SQUARED,
+            );
+        }
+
+        // own townhalls only block once they exist as units; a build still walking there has no structure yet
+        const isTargeted = (pos: Point2D) =>
+            state.builds.some(
+                (build) =>
+                    isActive(build) &&
+                    townhallTypes.includes(build.unitType) &&
+                    distanceSquared(build.target, pos) < EXPANSION_BLOCK_SQUARED,
+            );
+
+        function nextExpansion(checkSafe: boolean, accept: (pos: Point2D) => boolean = () => true) {
+            const { map, pathing } = context(world);
+            return map
                 .getAvailableExpansions()
                 .map((expansion) => expansion.townhallPosition)
-                .find((pos) => placement.canPlace(build.unitType, pos));
+                .find(
+                    (pos) =>
+                        !isBlocked(pos) &&
+                        !isTargeted(pos) &&
+                        (!checkSafe || pathing.isPositionSafe(pos)) &&
+                        accept(pos),
+                );
+        }
+
+        function clearBlocked() {
+            const { spatial, map } = context(world);
+            const scans = (map.getEffects() as OwnedEffect[]).filter(
+                (effect) => effect.effectId === SCANNERSWEEP && effect.alliance === Alliance.SELF,
+            );
+            state.blocked = state.blocked.filter((pos) => {
+                const detected =
+                    spatial
+                        .unitsInRange(pos, DETECTOR_RANGE, 'own')
+                        .some((unit) => DETECTOR_TYPES.includes(unit.unitType!)) ||
+                    scans.some((scan) =>
+                        (scan.pos ?? []).some(
+                            (center) => distanceSquared(center as Point2D, pos) <= DETECTOR_RANGE ** 2,
+                        ),
+                    );
+                return !detected || spatial.anyInRange(pos, ENEMY_CLEAR_RANGE, 'enemy');
+            });
+        }
+
+        function retargetTownhall(build: Build): boolean {
+            const { placement } = context(world);
+            const next = nextExpansion(true, (pos) => placement.canPlace(build.unitType, pos));
             if (!next) {
                 finish(build, 'failed', 'blocked');
                 return false;
@@ -418,7 +507,18 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
             }
 
             const isTownhall = townhallTypes.includes(build.unitType);
-            if (isTownhall && !placement.canPlace(build.unitType, build.target) && !retargetTownhall(build)) return;
+            if (isTownhall) {
+                const rejected = frame
+                    .getActionErrors()
+                    .some((error) => error.unitTag === worker.tag && error.result === CANT_BUILD_LOCATION_INVALID);
+                if (rejected && !isListed(build.target)) state.blocked.push(build.target);
+                if (
+                    (isListed(build.target) || !placement.canPlace(build.unitType, build.target)) &&
+                    !retargetTownhall(build)
+                ) {
+                    return;
+                }
+            }
 
             if (worker.distanceTo(build.target) > (gas ? GAS_RANGE : BUILD_RANGE)) {
                 build.status = 'moving';
@@ -476,7 +576,7 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
 
         function adoptUnfinished() {
             const { units } = context(world);
-            // opt-in (P4-D3): bots that never hand the tracker a build keep full control of their workers
+            // bots that never hand the tracker a build keep full control of their workers
             if (world.agent.race !== Race.TERRAN || !state.optedIn) return;
             const targets = state.builds.filter(isActive).map((build) => build.target);
             for (const structure of units.getStructures()) {
@@ -525,7 +625,8 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
             state.unfinishedDone = new Set([...state.unfinishedDone].filter((tag) => seen.has(tag)));
         }
 
-        state.step = () => {
+        stepByBuildings.set(tracker, () => {
+            clearBlocked();
             const loop = context(world).frame.getGameLoop();
             state.builds = state.builds.filter((build) => isActive(build) || build.finishedAt === loop);
             const { placement } = context(world);
@@ -538,20 +639,16 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
             state.builds.filter(isActive).forEach(stepBuild);
             adoptUnfinished();
             cancelLowHp();
-        };
-        stateByTracker.set(tracker, state);
+        });
+        stateByBuildings.set(tracker, state);
         return tracker;
     },
     reset(tracker) {
-        const state = stateByTracker.get(tracker)!;
-        state.builds = [];
-        state.nextId = 1;
-        state.healthByTag = new Map();
-        state.unfinishedDone = new Set();
-        state.stalledWorkers = new Map();
-        state.optedIn = false;
+        const state = stateByBuildings.get(tracker)!;
+        // create()'s closures hold this object, so it is reseated in place
+        Object.assign(state, freshState(state.settings));
     },
     onStep(tracker) {
-        stateByTracker.get(tracker)!.step();
+        stepByBuildings.get(tracker)!();
     },
 };

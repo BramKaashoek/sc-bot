@@ -2,24 +2,11 @@ import { describe, expect, it } from 'bun:test';
 import { Ability, Buff, UnitType } from '../constants/index.ts';
 import { Alliance, Attribute, DisplayType, Race, WeaponTargetType } from '../constants/enums.ts';
 import { createTestWorld } from '../test/create-test-world.ts';
-import { observation, rawUnit, toyFixture, unitTypeData } from '../test/factories.ts';
+import { rawUnit, toyFixture, toyWorld, unitTypeData } from '../test/factories.ts';
+import { NodeSC2Error } from '../engine/errors.ts';
 import { Units } from './units-collection.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
 import type { Unit } from '../types.ts';
-
-async function worldWith(
-    units: SC2APIProtocol.Unit[],
-    unitTypes: SC2APIProtocol.UnitTypeData[] = [],
-): Promise<TestWorld> {
-    const fixture = toyFixture();
-    unitTypes.forEach((typeData) => {
-        fixture.data.units![typeData.unitId!] = typeData;
-    });
-    fixture.observations[0] = observation({
-        units: [...fixture.observations[0].observation!.rawData!.units!, ...units],
-    });
-    return createTestWorld(fixture);
-}
 
 function collect(world: TestWorld, raws: SC2APIProtocol.Unit[]): Units {
     const { units } = world.resources.get();
@@ -35,7 +22,7 @@ describe('Units', () => {
         const far = rawUnit({ pos: { x: 18, y: 16, z: 10 } });
         const farthest = rawUnit({ pos: { x: 22, y: 10, z: 10 } });
         const origin = rawUnit({ pos: { x: 10, y: 10, z: 10 }, radius: 2 });
-        const world = await worldWith([near, mid, far, farthest, origin]);
+        const world = await toyWorld({ units: [near, mid, far, farthest, origin] });
         const group = collect(world, [mid, farthest, near, far]);
         const originUnit = world.resources.get().units.getByTag(origin.tag!)!;
         const point = { x: 10, y: 10 };
@@ -60,7 +47,8 @@ describe('Units', () => {
         expect(tagsOf(group.nClosestToDistance(point, 6, 2))).toEqual([mid.tag, far.tag]);
         expect(tagsOf(group.nClosestToDistance(originUnit, 6, 1))).toEqual([mid.tag]);
         expect(tagsOf(group.nFurthestToDistance(point, 6, 2))).toEqual([near.tag, farthest.tag]);
-        expect(group.nFurthestToDistance(point, 6, 0)).toHaveLength(4);
+        expect(group.nFurthestToDistance(point, 6, 0)).toHaveLength(0);
+        expect(group.nFurthestToDistance(point, 6, -1)).toHaveLength(0);
         expect(group.inClosestDistanceToGroup(Units.from([originUnit])).tag).toBe(near.tag);
     });
 
@@ -92,7 +80,7 @@ describe('Units', () => {
             radius: 0.5,
             buffIds: [Buff.GRAVITONBEAM],
         });
-        const world = await worldWith([attacker, inReach, justOutside, airborne, lifted], [melee]);
+        const world = await toyWorld({ units: [attacker, inReach, justOutside, airborne, lifted], unitTypes: [melee] });
         const targets = collect(world, [inReach, justOutside, airborne, lifted]);
         const zealot = world.resources.get().units.getByTag(attacker.tag!)!;
 
@@ -131,7 +119,7 @@ describe('Units', () => {
         const flyingOrbital = rawUnit({ unitType: UnitType.ORBITALCOMMANDFLYING, isFlying: true });
         const worker = rawUnit();
         const raws = [commandCenter, orbital, fortress, flyingCommandCenter, flyingOrbital, worker];
-        const world = await worldWith(raws, unitTypes);
+        const world = await toyWorld({ units: raws, unitTypes });
         const group = collect(world, raws);
 
         expect(tagsOf(group.ofType(UnitType.SCV))).toEqual([worker.tag]);
@@ -176,7 +164,8 @@ describe('Units', () => {
             tagsOf(collect(world, [commandCenter, orbital, fortress]).difference(collect(world, [orbital]))),
         ).toEqual([commandCenter.tag, fortress.tag]);
         expect(tagsOf(group.take(2))).toEqual([commandCenter.tag, orbital.tag]);
-        expect(group.take(10)).toBe(group);
+        expect(group.take(10)).not.toBe(group);
+        expect(tagsOf(group.take(10))).toEqual(tagsOf(group));
         expect(new Units().randomOr(null)).toBeNull();
         expect(tagsOf(raws as Unit[])).toContain(group.randomOr(null)!.tag);
     });
@@ -194,19 +183,16 @@ describe('Units', () => {
         const depot = rawUnit({ unitType: UnitType.SUPPLYDEPOT, buildProgress: 0.5 });
         const snapshot = rawUnit({ alliance: Alliance.ENEMY, owner: 2, displayType: DisplayType.SNAPSHOT });
         const selectedFlyer = rawUnit({ isFlying: true, isSelected: true });
-        fixture.observations[0] = observation({
-            units: [
-                ...fixture.observations[0].observation!.rawData!.units!,
-                gatherer,
-                returner,
-                returnsLater,
-                depot,
-                snapshot,
-                selectedFlyer,
-                mule,
-                lifted,
-            ],
-        });
+        fixture.observations[0].observation!.rawData!.units!.push(
+            gatherer,
+            returner,
+            returnsLater,
+            depot,
+            snapshot,
+            selectedFlyer,
+            mule,
+            lifted,
+        );
         const world = await createTestWorld(fixture);
         const group = collect(world, [gatherer, returner, returnsLater, depot, snapshot]);
 
@@ -254,7 +240,7 @@ describe('Units', () => {
             rawUnit({ pos: { x: 6, y: 5, z: 10 } }),
             rawUnit({ pos: { x: 25, y: 5, z: 10 } }),
         ];
-        const world = await worldWith(raws);
+        const world = await toyWorld({ units: raws });
         const { units } = world.resources.get();
         const group = units.getAlive().tagsIn(raws.map((raw) => raw.tag!));
 
@@ -276,9 +262,11 @@ describe('Units', () => {
         expect(spliced.amount).toBe(3);
         expect(filtered.closestTo({ x: 6, y: 6 }).tag).toBe(raws[1].tag);
         expect(sliced.furthestTo({ x: 0, y: 0 }).tag).toBe(raws[2].tag);
-        expect(() => group.filter((unit) => unit.pos.x > 100).first).toThrow();
+        expect(() => group.filter((unit) => unit.pos.x > 100).first).toThrow(NodeSC2Error);
+        expect(() => group.filter((unit) => unit.pos.x > 100).first).toThrow('Units object is empty');
         expect(group.randomGroupOf(0).amount).toBe(0);
         expect(group.randomGroupOf(5)).toEqual(group);
+        expect(group.randomGroupOf(5)).not.toBe(group);
         expect(group.randomGroupOf(2)).toBeInstanceOf(Units);
         expect(new Set(tagsOf(group.randomGroupOf(2))).size).toBe(2);
     });

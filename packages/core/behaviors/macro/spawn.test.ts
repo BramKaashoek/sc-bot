@@ -3,6 +3,7 @@ import createAgent from '../../agent/create-agent.ts';
 import { Race } from '../../constants/enums.ts';
 import { Ability, UnitType } from '../../constants/index.ts';
 import { NodeSC2Error } from '../../engine/errors.ts';
+import { executeBehavior, macroWorld } from '../../test/behavior-helpers.ts';
 import { createTestWorld, loadFixture } from '../../test/create-test-world.ts';
 import { observation, rawUnit } from '../../test/factories.ts';
 import { ownUnitCount } from './helpers.ts';
@@ -12,15 +13,7 @@ import type { Behavior } from '../../types.ts';
 type Units = SC2APIProtocol.Unit[];
 
 async function setup(units: Units, { minerals = 1000, vespene = 1000, foodWorkers = 12 } = {}) {
-    const fixture = loadFixture('blueshift');
-    fixture.observations = {
-        0: observation({
-            mapSize: fixture.gameInfo.startRaw!.mapSize,
-            playerCommon: { minerals, vespene, foodCap: 200, foodUsed: 0, foodWorkers },
-            units,
-        }),
-    };
-    return createTestWorld(fixture);
+    return macroWorld(units, { minerals, vespene, foodCap: 200, foodUsed: 0, foodWorkers });
 }
 
 const plainRax = (tag: string) => rawUnit({ tag, unitType: UnitType.BARRACKS });
@@ -31,9 +24,9 @@ const techlabRax = () => [
 const marines = (count: number) =>
     Array.from({ length: count }, (_, index) => rawUnit({ tag: `marine${index}`, unitType: UnitType.MARINE }));
 
-async function run(world: Awaited<ReturnType<typeof setup>>, behavior: Behavior) {
+async function runCommands(world: Awaited<ReturnType<typeof setup>>, behavior: Behavior) {
     const sentBefore = world.client.sent.actions.length;
-    const result = await world.resources.get().behaviors.run(behavior);
+    const result = await executeBehavior(world, behavior);
     await world.resources.get().actions.flushQueuedActions();
     const commands = world.client.sent.actions
         .slice(sentBefore)
@@ -53,13 +46,13 @@ const composition = {
 describe('spawnController', () => {
     it('trains in priority order and skips a type that is over its target proportion', async () => {
         const empty = await setup([plainRax('rax'), ...techlabRax()]);
-        expect((await run(empty, spawnController({ composition }))).commands).toEqual([
+        expect((await runCommands(empty, spawnController({ composition }))).commands).toEqual([
             { tag: 'techlabRax', abilityId: Ability.TRAIN_MARAUDER, queued: false },
             { tag: 'rax', abilityId: Ability.TRAIN_MARINE, queued: false },
         ]);
 
         const marineHeavy = await setup([plainRax('rax'), ...techlabRax(), ...marines(3)]);
-        expect((await run(marineHeavy, spawnController({ composition }))).commands).toEqual([
+        expect((await runCommands(marineHeavy, spawnController({ composition }))).commands).toEqual([
             { tag: 'techlabRax', abilityId: Ability.TRAIN_MARAUDER, queued: false },
         ]);
     });
@@ -67,10 +60,10 @@ describe('spawnController', () => {
     it('stops at an unaffordable top priority unless freeflow', async () => {
         const units = [plainRax('rax'), ...techlabRax()];
         const stopped = await setup(units, { vespene: 0 });
-        expect(await run(stopped, spawnController({ composition }))).toEqual({ result: false, commands: [] });
+        expect(await runCommands(stopped, spawnController({ composition }))).toEqual({ result: false, commands: [] });
 
         const freeflow = await setup(units, { vespene: 0 });
-        expect((await run(freeflow, spawnController({ composition, freeflow: true }))).commands).toEqual([
+        expect((await runCommands(freeflow, spawnController({ composition, freeflow: true }))).commands).toEqual([
             { tag: 'rax', abilityId: Ability.TRAIN_MARINE, queued: false },
             { tag: 'techlabRax', abilityId: Ability.TRAIN_MARINE, queued: false },
         ]);
@@ -90,13 +83,13 @@ describe('spawnController', () => {
             ],
             { vespene: 0 },
         );
-        expect((await run(world, spawnController({ composition }))).commands).toEqual([
+        expect((await runCommands(world, spawnController({ composition }))).commands).toEqual([
             { tag: 'rax', abilityId: Ability.TRAIN_MARINE, queued: false },
         ]);
 
         const [techlabHost, techlab] = techlabRax();
         const unfinished = await setup([plainRax('rax'), techlabHost, { ...techlab, buildProgress: 0.5 }]);
-        expect((await run(unfinished, spawnController({ composition }))).commands).toEqual([
+        expect((await runCommands(unfinished, spawnController({ composition }))).commands).toEqual([
             { tag: 'rax', abilityId: Ability.TRAIN_MARINE, queued: false },
             { tag: 'techlabRax', abilityId: Ability.TRAIN_MARINE, queued: false },
         ]);
@@ -119,7 +112,7 @@ describe('spawnController', () => {
             [UnitType.ZEALOT]: { proportion: 0.5, priority: 0 },
             [UnitType.PROBE]: { proportion: 0.5, priority: 1 },
         };
-        expect((await run(protoss, spawnController({ composition: unpowered }))).commands).toEqual([
+        expect((await runCommands(protoss, spawnController({ composition: unpowered }))).commands).toEqual([
             { tag: 'nexus', abilityId: Ability.TRAIN_PROBE, queued: false },
         ]);
     });
@@ -129,7 +122,7 @@ describe('spawnController', () => {
             rawUnit({ tag: 'reactorRax', unitType: UnitType.BARRACKS, addOnTag: 'reactor' }),
             rawUnit({ tag: 'reactor', unitType: UnitType.BARRACKSREACTOR }),
         ]);
-        const { commands } = await run(
+        const { commands } = await runCommands(
             world,
             spawnController({ composition: { [UnitType.MARINE]: { proportion: 1, priority: 0 } } }),
         );
@@ -146,10 +139,13 @@ describe('spawnController', () => {
             [UnitType.GHOST]: { proportion: 0.5, priority: 1 },
         };
         const topped = await setup(units);
-        expect((await run(topped, spawnController({ composition: lowTech }))).commands).toHaveLength(3);
+        expect((await runCommands(topped, spawnController({ composition: lowTech }))).commands).toHaveLength(3);
 
         const off = await setup(units);
-        const { result } = await run(off, spawnController({ composition: lowTech, overProduceOnLowTech: false }));
+        const { result } = await runCommands(
+            off,
+            spawnController({ composition: lowTech, overProduceOnLowTech: false }),
+        );
         expect(result).toBe(false);
     });
 
@@ -169,8 +165,8 @@ describe('spawnController', () => {
 describe('buildWorkers', () => {
     it('trains toward toCount and stops at it', async () => {
         const world = await setup([rawUnit({ tag: 'cc', unitType: UnitType.COMMANDCENTER })], { foodWorkers: 12 });
-        expect((await run(world, buildWorkers({ toCount: 12 }))).result).toBe(false);
-        expect((await run(world, buildWorkers({ toCount: 13 }))).commands).toEqual([
+        expect((await runCommands(world, buildWorkers({ toCount: 12 }))).result).toBe(false);
+        expect((await runCommands(world, buildWorkers({ toCount: 13 }))).commands).toEqual([
             { tag: 'cc', abilityId: Ability.TRAIN_SCV, queued: false },
         ]);
     });

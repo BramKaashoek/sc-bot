@@ -2,8 +2,6 @@ import { Race } from './enums.ts';
 import * as UnitType from './unit-type.ts';
 import * as Ability from './ability.ts';
 
-// These constants are helpers to create race-agnostic routines
-
 const GasMineRace = {
     [Race.ZERG]: UnitType.EXTRACTOR,
     [Race.PROTOSS]: UnitType.ASSIMILATOR,

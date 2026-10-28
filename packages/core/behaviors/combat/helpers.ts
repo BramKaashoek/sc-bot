@@ -1,11 +1,11 @@
-import { avgPoints, distance, distanceSquared } from '../../utils/geometry/point.ts';
-import { isFlying } from '../../resources/units-collection.ts';
-import type { InfluenceLayer, Point2D, Unit, World } from '../../types.ts';
+import { generalAbility } from '../../engine/data-storage.ts';
+import { avgPoints, distance, distanceSquared, toPoint } from '../../utils/geometry/point.ts';
+import { isFlying } from '../../utils/geometry/units.ts';
+import type { InfluenceGrid, InfluenceLayer, Point2D, Unit, World } from '../../types.ts';
 
 export type Target = Point2D | Unit;
 
-export const positionOf = (target: Target): Point2D => ('pos' in target ? target.pos : target);
-export const layerFor = (unit: Unit, layer?: InfluenceLayer): InfluenceLayer =>
+export const layerFor = (unit: Unit, layer?: InfluenceLayer | InfluenceGrid): InfluenceLayer | InfluenceGrid =>
     layer ?? (isFlying(unit) ? 'air' : 'ground');
 
 export function attackReady(unit: Unit, target: Unit, stepLoops = 4): boolean {
@@ -28,9 +28,6 @@ export function pickEnemyTarget(targets: Unit[]): Unit | undefined {
     );
 }
 
-const generalAbility = (world: World, abilityId: number) =>
-    world.data.getAbilityData(abilityId)?.remapsToAbilityId || abilityId;
-
 const rounded = ({ x, y }: Point2D) => `${Math.round(x)},${Math.round(y)}`;
 
 export function duplicateOrSimilarOrder(
@@ -40,12 +37,12 @@ export function duplicateOrSimilarOrder(
     abilityId: number,
     distanceSquaredCheck = 2,
 ): boolean {
-    const targetPos = 'pos' in target ? target.pos : target;
+    const targetPos = toPoint(target);
     if (distanceSquared(unit.pos, targetPos) < distanceSquaredCheck) return true;
 
     const [order] = unit.orders ?? [];
     if (!order || (!order.targetUnitTag && !order.targetWorldSpacePos)) return false;
-    if (generalAbility(world, order.abilityId!) !== generalAbility(world, abilityId)) return false;
+    if (generalAbility(world.data, order.abilityId!) !== generalAbility(world.data, abilityId)) return false;
     if (order.targetWorldSpacePos) return rounded(order.targetWorldSpacePos as Point2D) === rounded(targetPos);
     return 'tag' in target && order.targetUnitTag === target.tag;
 }

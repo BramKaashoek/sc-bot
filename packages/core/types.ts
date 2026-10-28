@@ -76,7 +76,7 @@ export interface SystemObject {
     getOpening?: () => string | undefined;
     buildOptions?: {
         paused?: boolean;
-        earmarks: null | number;
+        earmarks?: null | number;
         fillWorkers?: boolean;
     };
     pauseBuild?: () => void;
@@ -381,6 +381,8 @@ export interface Expansion {
     areas?: ExpansionArea;
     getWall(): Array<Point2D>;
     getBase(): Unit | undefined;
+    getMineralFields(): Units;
+    getVespeneGeysers(): Units;
     getAlliance(): SC2APIProtocol.Alliance;
     cluster: Cluster;
     townhallPosition: Point2D;
@@ -398,8 +400,11 @@ export type Grids = {
     pathing?: Grid2D;
 };
 
+// proto typings omit Effect.alliance and owner, but the bundled decoder fills them
+export type OwnedEffect = SC2APIProtocol.Effect & { alliance?: SC2APIProtocol.Alliance; owner?: number };
+
 export type Locations = {
-    self: Point2D;
+    self: Point2D | undefined;
     enemy: Point2D[];
 };
 
@@ -425,8 +430,8 @@ export interface MapResource {
     isCustom: () => boolean;
     isPathable: (point: Point2D) => boolean;
     setPathable: (point: Point2D, pathable: boolean) => void;
-    isPlaceable: (point: Point2D) => boolean;
-    isPlaceableAt: (unitType: number, pos: Point2D) => boolean;
+    isPlaceable: (point: Point2D, opts?: MapPathOptions) => boolean;
+    isPlaceableAt: (unitType: number, pos: Point2D, opts?: MapPathOptions) => boolean;
     setPlaceable: (point: Point2D, placeable: boolean) => void;
     isVisible: (point: Point2D) => boolean;
     isRamp: (point: Point2D) => boolean;
@@ -437,10 +442,10 @@ export interface MapResource {
     getGrids: () => Grids;
     getLocations: () => Locations;
     getExpansions: (alliance?: SC2APIProtocol.Alliance) => Expansion[];
-    getMain: () => Expansion;
-    getEnemyMain: () => Expansion;
-    getNatural: () => Expansion;
-    getEnemyNatural: () => Expansion;
+    getMain: () => Expansion | undefined;
+    getEnemyMain: () => Expansion | undefined;
+    getNatural: () => Expansion | undefined;
+    getEnemyNatural: () => Expansion | undefined;
     getThirds: () => Expansion[];
     getEnemyThirds: () => Expansion[];
     getHeight: (point: Point2D) => number;
@@ -450,7 +455,7 @@ export interface MapResource {
     getCombatRally: () => Point2D;
     getSize: () => SC2APIProtocol.Size2DI;
     getCenter: (pathable?: boolean) => Point2D;
-    closestPathable: (point: Point2D) => Point2D;
+    closestPathable: (point: Point2D, radius?: number) => Point2D;
     setActiveEffects: (currEffects: Array<SC2APIProtocol.Effect>) => void;
     setGrids: (grids: Grids) => void;
     setSize: (mapSize: SC2APIProtocol.Size2DI) => void;
@@ -476,9 +481,16 @@ export interface MapResource {
 
 export interface MapSystem extends EngineObject, EventConsumer {}
 
-export type AbilityOptions = {
-    target?: Unit | Point2D;
+export type CommandOptions = {
     queue?: boolean;
+};
+
+export type AbilityOptions = CommandOptions & {
+    target?: Unit | Point2D;
+};
+
+export type BuildCommandOptions = {
+    worker?: Unit;
 };
 
 export type WarpInOptions = {
@@ -500,24 +512,22 @@ export type CommandResult = {
 
 export interface ActionManager {
     _client: NodeSC2Proto.ProtoClient;
-    attack(units?: Unit[], unit?: Unit, queue?: boolean): Promise<void>;
-    attackMove(u?: Unit[], p?: Point2D, queue?: boolean): Promise<void>;
-    build(unitTypeId: number, target?: Unit, worker?: Unit): Promise<void>;
-    build(unitTypeId: number, pos?: Point2D | null, worker?: Unit): Promise<void>;
-    do(abilityId: number, tags: string, opts?: AbilityOptions): Promise<void>;
-    do(abilityId: number, tags: string[], opts?: AbilityOptions): Promise<void>;
+    attack(units?: Unit | Unit[], unit?: Unit, opts?: CommandOptions): Promise<void>;
+    attackMove(units?: Unit | Unit[], position?: Point2D, opts?: CommandOptions): Promise<void>;
+    build(unitTypeId: number, target?: Unit | Point2D | null, opts?: BuildCommandOptions): Promise<void>;
+    do(units: Unit | string | Array<Unit | string>, abilityId: number, opts?: AbilityOptions): Promise<void>;
     buildGasMine: () => Promise<void>;
-    gather: (unit: Unit, mineralField?: Unit, queue?: boolean) => Promise<void>;
-    mine: (units: Unit[], target: Unit, queue?: boolean) => Promise<void>;
-    move(units: Unit, target: Point2D, queue?: boolean): Promise<void>;
-    move(units: Unit[], target: Point2D, queue?: boolean): Promise<void>;
-    move(units: Unit, target: Unit, queue?: boolean): Promise<void>;
-    move(units: Unit[], target: Unit, queue?: boolean): Promise<void>;
-    patrol(units: Unit | Unit[], positions: [from: Point2D, to: Point2D] | Point2D, queue?: boolean): Promise<void>;
+    gather: (unit: Unit, mineralField?: Unit, opts?: CommandOptions) => Promise<void>;
+    mine: (units: Unit | Unit[], gasMine: Unit, opts?: CommandOptions) => Promise<void>;
+    move(units: Unit | Unit[], target: Point2D | Unit, opts?: CommandOptions): Promise<void>;
+    patrol(
+        units: Unit | Unit[],
+        positions: [from: Point2D, to: Point2D] | Point2D,
+        opts?: CommandOptions,
+    ): Promise<void>;
     train: (unitTypeId: number, unit?: Unit) => Promise<void>;
     upgrade: (upgradeId: number, tag?: Unit) => Promise<void>;
-    smart(units: Unit[], target: Point2D, queue?: boolean): Promise<void>;
-    smart(units: Unit[], target: Unit, queue?: boolean): Promise<void>;
+    smart(units: Unit | Unit[], target: Point2D | Unit, opts?: CommandOptions): Promise<void>;
     swapBuildings(unitA: Unit, unitB: Unit): Promise<void>;
     warpIn(unitTypeId: number, opts: WarpInOptions): Promise<void>;
     canPlace: (unitTypeId: number, positions: Point2D[]) => Promise<Point2D | false>;
@@ -525,10 +535,10 @@ export interface ActionManager {
     sendAction(unitCommand: SC2APIProtocol.ActionRawUnitCommand): Promise<SC2APIProtocol.ResponseAction>;
     sendAction(unitCommand: SC2APIProtocol.ActionRawUnitCommand[]): Promise<SC2APIProtocol.ResponseAction>;
     sendQuery: (query: SC2APIProtocol.RequestQuery) => Promise<SC2APIProtocol.ResponseQuery>;
-    stop(units: Unit | Unit[], queue?: boolean): Promise<void>;
-    holdPosition(units: Unit | Unit[], queue?: boolean): Promise<void>;
-    repair(units: Unit | Unit[], target: Unit, queue?: boolean): Promise<void>;
-    returnResource(units: Unit | Unit[], queue?: boolean): Promise<void>;
+    stop(units: Unit | Unit[], opts?: CommandOptions): Promise<void>;
+    holdPosition(units: Unit | Unit[], opts?: CommandOptions): Promise<void>;
+    repair(units: Unit | Unit[], target: Unit, opts?: CommandOptions): Promise<void>;
+    returnResource(units: Unit | Unit[], opts?: CommandOptions): Promise<void>;
     queueAction(
         commands: SC2APIProtocol.ActionRawUnitCommand | SC2APIProtocol.ActionRawUnitCommand[],
         opts?: { onNotSent?: (tags: string[], result: CommandResult) => void },
@@ -652,9 +662,6 @@ export interface Debugger {
 }
 
 export type GameFrame = {
-    _previous?: GameFrame;
-    _observation?: SC2APIProtocol.Observation;
-    _gameInfo?: SC2APIProtocol.ResponseGameInfo;
     _gameLoop: number;
 };
 
@@ -670,7 +677,7 @@ export interface FrameResource {
     getObservation: () => SC2APIProtocol.Observation;
     getGameInfo: () => SC2APIProtocol.ResponseGameInfo;
     getGameLoop: () => number;
-    getPrevious: () => GameFrame;
+    getPrevious: () => GameFrame | undefined;
     getEffects: () => Array<SC2APIProtocol.Effect>;
     getMapState: () => SC2APIProtocol.MapState;
     getRender: () => SC2APIProtocol.ObservationRender;
@@ -812,9 +819,9 @@ export type Earmark = {
 export interface StorageBlueprint {
     register: (name: string, fn: Function) => void;
     mineralCost: (unitType: number) => number;
-    getAbilityData: (abilityId: number) => SC2APIProtocol.AbilityData;
-    getEffectData: (effectId: number) => SC2APIProtocol.EffectData;
-    getUpgradeData: (upgradeId: number) => SC2APIProtocol.UpgradeData;
+    getAbilityData: (abilityId: number) => SC2APIProtocol.AbilityData | undefined;
+    getEffectData: (effectId: number) => SC2APIProtocol.EffectData | undefined;
+    getUpgradeData: (upgradeId: number) => SC2APIProtocol.UpgradeData | undefined;
     getUnitTypeData: (unitTypeId: number) => SC2APIProtocol.UnitTypeData;
     findUnitTypesWithAbility: (abilityId: number) => number[];
     addEarmark: (earmark: Earmark) => Earmark[] | DataStorage;
@@ -842,7 +849,16 @@ export interface SpatialIndex {
     closest(from: Point2D | Unit, kind: SpatialKind, maxDistance?: number): Unit | undefined;
 }
 
-export type InfluenceLayer = 'ground' | 'air' | 'groundAvoidance' | 'airAvoidance';
+export type InfluenceLayer =
+    | 'ground'
+    | 'air'
+    | 'groundAvoidance'
+    | 'airAvoidance'
+    | 'climber'
+    | 'airVsGround'
+    | 'groundToAir'
+    | 'priorityGroundAvoidance'
+    | 'tacticalGround';
 
 export interface InfluenceGrid {
     readonly layer: InfluenceLayer;
@@ -857,19 +873,40 @@ export type InfluenceSettings = {
     effectsRangeBuffer: number;
     costMultiplier: number;
     effects: Partial<Record<number, { cost: number; range: number }>>;
+    airVsGroundDefault: number;
+    tacticalGround: boolean;
+    kd8Charge: { cost: number; range: number };
+    parasiticBomb: { cost: number; range: number };
+    delayedEffects: {
+        bile: { reactAfter: number; duration: number };
+        nuke: { reactAfter: number; duration: number };
+    };
 };
 
 export interface InfluenceResource {
     getGrid(layer: InfluenceLayer): InfluenceGrid;
-    addCost(layers: InfluenceLayer | InfluenceLayer[], center: Point2D, radius: number, weight: number): void;
+    getCleanGrid(layer: InfluenceLayer): InfluenceGrid;
+    addCost(
+        target: InfluenceLayer | InfluenceLayer[] | InfluenceGrid,
+        center: Point2D,
+        radius: number,
+        weight: number,
+    ): void;
     configure(settings: Partial<InfluenceSettings>): void;
-    drawDebug(layer: InfluenceLayer, opts?: { threshold?: number }): void;
+    drawDebug(target: InfluenceLayer | InfluenceGrid, opts?: { threshold?: number }): void;
+    getForcefieldPositions(): Point2D[];
 }
 
 export type PathOptions = { layer?: InfluenceLayer | InfluenceGrid; sensitivity?: number; maxExpanded?: number };
 
 export interface PathingResource {
     findPath(start: Point2D, goal: Point2D, opts?: PathOptions): Point2D[];
+    findLowPriorityPath(start: Point2D, goal: Point2D, opts?: { layer?: InfluenceLayer | InfluenceGrid }): Point2D[];
+    findFurthestSafeSpot(
+        from: Point2D,
+        opts?: { layer?: InfluenceLayer | InfluenceGrid; radius?: number },
+    ): Point2D | undefined;
+    findLowestCostPoints(from: Point2D, opts?: { layer?: InfluenceLayer | InfluenceGrid; radius?: number }): Point2D[];
     nextPoint(
         start: Point2D,
         goal: Point2D,
@@ -949,6 +986,9 @@ export interface IntelResource {
     has(flag: IntelFlag): boolean;
     detectedAt(flag: IntelFlag): number | undefined;
     getProxies(): Units;
+    getEnemyDetectors(): ReadonlyArray<{ pos: Point2D; range: number }>;
+    isDetected(target: Unit | Point2D, opts?: { byEnemy?: boolean }): boolean;
+    getOwnUnitsInDetectorRange(): ReadonlySet<string>;
     configure(settings: Partial<IntelSettings>): void;
 }
 
@@ -966,6 +1006,7 @@ export type PlacementFlag =
     | 'staticDefence'
     | 'productionPylon'
     | 'optimalPylon'
+    | 'firstPylon'
     | 'custom';
 
 export type PlacementState = 'available' | 'reserved' | 'taken';
@@ -988,9 +1029,23 @@ export type PlacementRequest = {
     reserve?: boolean;
     powered?: boolean;
     pylonBuildProgress?: number;
+    firstPylon?: boolean;
 };
 
-export type UserPlacement = { pos: Point2D; size?: BuildingSize; unitType?: number; flags?: PlacementFlag[] };
+export type UserPlacement = {
+    pos: Point2D;
+    size?: BuildingSize;
+    unitType?: number;
+    flags?: PlacementFlag[];
+    gateKeeper?: true;
+};
+
+export type PlacementTable = Record<
+    string,
+    Partial<
+        Record<'UpperSpawn' | 'LowerSpawn', Partial<Record<string, Partial<Record<string, Array<[number, number]>>>>>>
+    >
+>;
 
 export type PlacementSettings = { reservationTimeout: number };
 
@@ -1006,6 +1061,8 @@ export interface PlacementResource {
         flag?: PlacementFlag;
     }): Placement[];
     add(placements: UserPlacement[]): void;
+    getGatekeeperPositions(base?: Point2D): Point2D[];
+    getNatGatekeeperPosition(): Point2D | undefined;
     configure(settings: Partial<PlacementSettings>): void;
     drawDebug(): void;
 }
@@ -1044,6 +1101,8 @@ export interface BuildingTracker {
     buildGas(opts?: { geyser?: Unit; max?: number }): TrackedBuild | undefined;
     cancel(target: Unit | TrackedBuild): void;
     pending(unitType?: number): number;
+    getNextExpansion(opts?: { checkSafe?: boolean }): Point2D | undefined;
+    isExpansionBlocked(pos: Point2D): boolean;
     getTracked(): readonly TrackedBuild[];
     configure(settings: Partial<BuildingSettings>): void;
 }
@@ -1156,6 +1215,7 @@ export type OpeningDefinition = {
     autoSupplyAtSupply?: number;
     constantWorkerProductionTill?: number;
     persistentWorker?: boolean;
+    shouldHandleGasSteal?: boolean;
 };
 
 export type OpeningSettings = {

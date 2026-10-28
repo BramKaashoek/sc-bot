@@ -31,7 +31,7 @@ export const createBot = () =>
         },
         async onStep({ resources }: World) {
             const { map, behaviors } = resources.get();
-            const productionLocation = map.getLocations().self;
+            const productionLocation = map.getLocations().self!;
 
             await behaviors.run(
                 plan(

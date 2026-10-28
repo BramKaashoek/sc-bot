@@ -35,47 +35,47 @@ function cellsInFootprint(centerPoint: Point2D, footprint: Footprint, includeSel
     return Array.from({ length: footprint.w + 1 }).reduce<Point2D[]>((cells, _, i) => {
         if (i === 1) {
             if (includeSelf) {
-                cells.push(centerPoint); // center
+                cells.push(centerPoint);
             }
         } else if (i === 2) {
-            cells.push({ x: centerPoint.x - 1, y: centerPoint.y }); // left
+            cells.push({ x: centerPoint.x - 1, y: centerPoint.y });
             if (footprint.h >= 2) {
-                cells.push({ x: centerPoint.x, y: centerPoint.y - 1 }); // down
-                cells.push({ x: centerPoint.x - 1, y: centerPoint.y - 1 }); // down left
+                cells.push({ x: centerPoint.x, y: centerPoint.y - 1 });
+                cells.push({ x: centerPoint.x - 1, y: centerPoint.y - 1 });
             }
         } else if (i === 3) {
-            cells.push({ x: centerPoint.x + 1, y: centerPoint.y }); // right
+            cells.push({ x: centerPoint.x + 1, y: centerPoint.y });
             if (footprint.h >= 2) {
-                cells.push({ x: centerPoint.x + 1, y: centerPoint.y - 1 }); // down right
+                cells.push({ x: centerPoint.x + 1, y: centerPoint.y - 1 });
             }
             if (footprint.h >= 3) {
-                cells.push({ x: centerPoint.x - 1, y: centerPoint.y + 1 }); // up left
-                cells.push({ x: centerPoint.x, y: centerPoint.y + 1 }); // up
-                cells.push({ x: centerPoint.x + 1, y: centerPoint.y + 1 }); // up right
+                cells.push({ x: centerPoint.x - 1, y: centerPoint.y + 1 });
+                cells.push({ x: centerPoint.x, y: centerPoint.y + 1 });
+                cells.push({ x: centerPoint.x + 1, y: centerPoint.y + 1 });
             }
         } else if (i === 5) {
-            cells.push({ x: centerPoint.x - 2, y: centerPoint.y }); // 2 left
-            cells.push({ x: centerPoint.x + 2, y: centerPoint.y }); // 2 right
+            cells.push({ x: centerPoint.x - 2, y: centerPoint.y });
+            cells.push({ x: centerPoint.x + 2, y: centerPoint.y });
             if (footprint.h >= 5) {
-                cells.push({ x: centerPoint.x - 2, y: centerPoint.y - 2 }); // 2 left 2 down
-                cells.push({ x: centerPoint.x - 2, y: centerPoint.y - 1 }); // 2 left 1 down
+                cells.push({ x: centerPoint.x - 2, y: centerPoint.y - 2 });
+                cells.push({ x: centerPoint.x - 2, y: centerPoint.y - 1 });
 
-                cells.push({ x: centerPoint.x, y: centerPoint.y - 2 }); // 2 down
-                cells.push({ x: centerPoint.x - 1, y: centerPoint.y - 2 }); // 2 down 1 left
-                cells.push({ x: centerPoint.x + 1, y: centerPoint.y - 2 }); // 2 down 1 right
+                cells.push({ x: centerPoint.x, y: centerPoint.y - 2 });
+                cells.push({ x: centerPoint.x - 1, y: centerPoint.y - 2 });
+                cells.push({ x: centerPoint.x + 1, y: centerPoint.y - 2 });
 
-                cells.push({ x: centerPoint.x + 2, y: centerPoint.y - 2 }); // 2 right 2 down
-                cells.push({ x: centerPoint.x + 2, y: centerPoint.y - 1 }); // 2 right 1 down
+                cells.push({ x: centerPoint.x + 2, y: centerPoint.y - 2 });
+                cells.push({ x: centerPoint.x + 2, y: centerPoint.y - 1 });
 
-                cells.push({ x: centerPoint.x - 2, y: centerPoint.y + 2 }); // 2 left 2 up
-                cells.push({ x: centerPoint.x - 2, y: centerPoint.y + 1 }); // 2 left 1 up
+                cells.push({ x: centerPoint.x - 2, y: centerPoint.y + 2 });
+                cells.push({ x: centerPoint.x - 2, y: centerPoint.y + 1 });
 
-                cells.push({ x: centerPoint.x, y: centerPoint.y + 2 }); // 2 up
-                cells.push({ x: centerPoint.x - 1, y: centerPoint.y + 2 }); // 2 up 1 left
-                cells.push({ x: centerPoint.x + 1, y: centerPoint.y + 2 }); // 2 up 1 right
+                cells.push({ x: centerPoint.x, y: centerPoint.y + 2 });
+                cells.push({ x: centerPoint.x - 1, y: centerPoint.y + 2 });
+                cells.push({ x: centerPoint.x + 1, y: centerPoint.y + 2 });
 
-                cells.push({ x: centerPoint.x + 2, y: centerPoint.y + 2 }); // 2 right 2 up
-                cells.push({ x: centerPoint.x + 2, y: centerPoint.y + 1 }); // 2 right 1 up
+                cells.push({ x: centerPoint.x + 2, y: centerPoint.y + 2 });
+                cells.push({ x: centerPoint.x + 2, y: centerPoint.y + 1 });
             }
         }
 

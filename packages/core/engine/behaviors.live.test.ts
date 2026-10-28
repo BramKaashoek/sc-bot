@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { spawnSync } from 'node:child_process';
+import { afterEach, beforeEach, expect, it } from 'bun:test';
 import createEngine from './create-engine.ts';
 import { Alliance, Difficulty, PlayerType, Race } from '../constants/enums.ts';
 import { ATTACKING, BUILDING, GATHERING } from '../constants/unit-role.ts';
 import { createBot, MACRO_OWNER } from '../examples/behaviors-bot.ts';
+import { describeLive, killNewSc2, sc2Pids } from '../test/live.ts';
 import type { CommandResult, World } from '../types.ts';
 
 const GAME_SECONDS = 8 * 60;
@@ -14,15 +14,6 @@ const OWNERS = [MACRO_OWNER, `role:${ATTACKING}`, `role:${BUILDING}`, `role:${GA
 let engine: ReturnType<typeof createEngine> | undefined;
 let sc2PidsBefore = new Set<number>();
 
-const sc2Pids = () =>
-    new Set(
-        spawnSync('pgrep', ['-f', '[V]ersions/Base[0-9]*/SC2_x64'])
-            .stdout.toString()
-            .split('\n')
-            .filter((line) => line.trim())
-            .map(Number),
-    );
-
 beforeEach(() => {
     sc2PidsBefore = sc2Pids();
 });
@@ -31,16 +22,10 @@ afterEach(() => {
     try {
         engine?.shutdown();
     } catch {}
-    [...sc2Pids()]
-        .filter((pid) => !sc2PidsBefore.has(pid))
-        .forEach((pid) => {
-            try {
-                process.kill(pid, 'SIGKILL');
-            } catch {}
-        });
+    killNewSc2(sc2PidsBefore);
 });
 
-describe.skipIf(!process.env.SC2PATH)('live behaviors sample bot', () => {
+describeLive('live behaviors sample bot', () => {
     it('macros to 60 supply, expands and upgrades vs Easy AI, every command owned by a controller or behavior', async () => {
         const bot = createBot();
         const owners = new Set<string>();

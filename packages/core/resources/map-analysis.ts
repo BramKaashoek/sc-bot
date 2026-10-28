@@ -58,7 +58,9 @@ type State = {
     loggedStepError: boolean;
 };
 
-const states = new WeakMap<MapAnalysisResource, State>();
+export const stateByMapAnalysis = new WeakMap<MapAnalysisResource, State>();
+
+const freshState = (settings: MapAnalysisSettings): State => ({ settings, fields: new Map(), loggedStepError: false });
 
 const cellPoint = (cell: number, width: number): Point2D => ({ x: cell % width, y: Math.floor(cell / width) });
 
@@ -169,15 +171,15 @@ function analyze(world: World, settings: MapAnalysisSettings): Analysis {
 }
 
 function createMapAnalysis(world: World): MapAnalysisResource {
-    const state: State = { settings: { ...DEFAULT_SETTINGS }, fields: new Map(), loggedStepError: false };
-
     const getAnalysis = () => {
+        const state = stateByMapAnalysis.get(resource)!;
         state.analysis ??= analyze(world, state.settings);
         return state.analysis;
     };
 
     const fieldFrom = (start: number) => {
         const analysis = getAnalysis();
+        const state = stateByMapAnalysis.get(resource)!;
         const cached = state.fields.get(start);
         if (cached) return cached;
 
@@ -224,7 +226,10 @@ function createMapAnalysis(world: World): MapAnalysisResource {
                 .filter(({ pathDistance }) => pathDistance !== Infinity)
                 .sort((a, b) => a.pathDistance - b.pathDistance || a.choke.id - b.choke.id);
         },
-        getDefensivePosition(base, { towards, offset = state.settings.defenseOffset } = {}) {
+        getDefensivePosition(
+            base,
+            { towards, offset = stateByMapAnalysis.get(resource)!.settings.defenseOffset } = {},
+        ) {
             const baseChokes = resource.getBaseChokes(base);
             if (baseChokes.length === 0) return undefined;
 
@@ -315,6 +320,7 @@ function createMapAnalysis(world: World): MapAnalysisResource {
             return resource.getDefensivePosition(enemyMain, { towards: self })?.choke.ramp;
         },
         configure(settings) {
+            const state = stateByMapAnalysis.get(resource)!;
             Object.assign(state.settings, settings);
             state.analysis = undefined;
             state.fields.clear();
@@ -331,22 +337,21 @@ function createMapAnalysis(world: World): MapAnalysisResource {
             ]);
         },
     };
-    states.set(resource, state);
+    stateByMapAnalysis.set(resource, freshState({ ...DEFAULT_SETTINGS }));
     return resource;
 }
 
 export const mapAnalysisResource: ResourceDefinition<'mapAnalysis'> = {
     name: 'mapAnalysis',
-    create: (world) => createMapAnalysis(world),
-    reset: (resource) => {
-        const state = states.get(resource)!;
-        state.analysis = undefined;
-        state.fields.clear();
-        state.loggedStepError = false;
+    create(world) {
+        return createMapAnalysis(world);
     },
-    onStep: (resource, world) => {
+    reset(resource) {
+        stateByMapAnalysis.set(resource, freshState(stateByMapAnalysis.get(resource)!.settings));
+    },
+    onStep(resource, world) {
         if (!world.config.features.eagerMapAnalysis) return;
-        const state = states.get(resource)!;
+        const state = stateByMapAnalysis.get(resource)!;
         try {
             resource.getRegions();
         } catch (err) {

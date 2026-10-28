@@ -3,8 +3,8 @@ import createAgent from '../agent/create-agent.ts';
 import { Ability, Buff, UnitType, Upgrade, WarpUnitAbility } from '../constants/index.ts';
 import { Race } from '../constants/enums.ts';
 import { GATHERING, PERSISTENT_BUILDER } from '../constants/unit-role.ts';
-import { ActionManagerError, GatherError, TrainError } from '../engine/errors.ts';
-import { createTestWorld, loadFixture, stepTo } from '../test/create-test-world.ts';
+import { ActionManagerError, BuildError, GatherError, TrainError } from '../engine/errors.ts';
+import { createTestWorld, loadFixture, observationAt, stepTo, stepWith } from '../test/create-test-world.ts';
 import { rawUnit, toyFixture } from '../test/factories.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
 
@@ -21,18 +21,28 @@ describe('ActionManager', () => {
         const { actions, map, units } = world.resources.get();
         const [marine, scv] = units.getByTag(['4354211841', '4344512513']);
         const depot = units.getByTag('4351328257')!;
+        const otherWorker = units.getWorkers().find((worker) => worker.tag !== scv.tag)!;
+        const mineralField = units.getMineralFields()[0];
 
         await actions.stop([marine]);
-        await actions.holdPosition([marine], true);
-        await actions.repair([scv], depot, true);
+        await actions.holdPosition([marine], { queue: true });
+        await actions.repair([scv], depot, { queue: true });
         await actions.returnResource([scv]);
         await marine.useAbility(Ability.EFFECT_STIM, { queue: true });
         await scv.useAbility(Ability.MOVE, { target: { x: 20, y: 20 } });
-        await actions.do(Ability.ATTACK_ATTACK, marine.tag!, { target: depot, queue: true });
+        await actions.do(marine.tag!, Ability.ATTACK_ATTACK, { target: depot, queue: true });
         await actions.move([marine], { x: 0, y: 7 });
         await actions.smart([scv], { x: 0, y: 0 });
-        await actions.do(Ability.MOVE, marine.tag!, { target: depot.tag as never });
-        await actions.build(UnitType.SUPPLYDEPOT, { x: 0, y: 7 }, scv);
+        await actions.do(marine, Ability.MOVE, { target: depot.tag as never });
+        await actions.build(UnitType.SUPPLYDEPOT, { x: 0, y: 7 }, { worker: scv });
+        await actions.attack(marine, depot, { queue: true });
+        await actions.attackMove(marine, { x: 3, y: 4 }, { queue: true });
+        await actions.move(marine, { x: 5, y: 6 }, { queue: true });
+        await actions.smart(scv, depot, { queue: true });
+        await actions.patrol(marine, { x: 8, y: 9 }, { queue: true });
+        await actions.gather(otherWorker, mineralField, { queue: false });
+        await actions.mine(otherWorker, depot, { queue: false });
+        await actions.do([marine, scv], Ability.STOP);
 
         await actions.flushQueuedActions();
 
@@ -78,10 +88,49 @@ describe('ActionManager', () => {
                 queueCommand: false,
                 targetWorldSpacePos: { x: 0, y: 7 },
             },
+            { abilityId: Ability.ATTACK, unitTags: [marine.tag!], targetUnitTag: depot.tag, queueCommand: true },
+            {
+                abilityId: Ability.ATTACK,
+                unitTags: [marine.tag!],
+                targetWorldSpacePos: { x: 3, y: 4 },
+                queueCommand: true,
+            },
+            {
+                abilityId: Ability.MOVE,
+                unitTags: [marine.tag!],
+                targetWorldSpacePos: { x: 5, y: 6 },
+                queueCommand: true,
+            },
+            { abilityId: Ability.SMART, unitTags: [scv.tag!], targetUnitTag: depot.tag, queueCommand: true },
+            {
+                abilityId: Ability.MOVE,
+                unitTags: [marine.tag!],
+                targetWorldSpacePos: marine.pos,
+                queueCommand: true,
+            },
+            {
+                abilityId: Ability.PATROL,
+                unitTags: [marine.tag!],
+                targetWorldSpacePos: { x: 8, y: 9 },
+                queueCommand: true,
+            },
+            {
+                abilityId: Ability.SMART,
+                unitTags: [otherWorker.tag!],
+                targetUnitTag: mineralField.tag,
+                queueCommand: false,
+            },
+            {
+                abilityId: Ability.HARVEST_GATHER,
+                unitTags: [otherWorker.tag!],
+                targetUnitTag: depot.tag,
+                queueCommand: false,
+            },
+            { abilityId: Ability.STOP, unitTags: [marine.tag!, scv.tag!], queueCommand: false },
         ]);
 
         const sentBefore = world.client.sent.actions.length;
-        await actions.do(Ability.STOP, []);
+        await actions.do([], Ability.STOP);
         await actions.attackMove([], { x: 10, y: 10 });
         await expect(actions.attack([marine])).rejects.toBeInstanceOf(ActionManagerError);
         expect(() => actions.queueAction({ abilityId: Ability.STOP })).toThrow(ActionManagerError);
@@ -152,16 +201,16 @@ describe('ActionManager', () => {
 
     it('charges net cost like agent.train: 100 for a depot, 150 (not 550) for an orbital morph, 100/100 for an upgrade, rejecting an upgrade it cannot afford', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
-        const withTech = structuredClone(world.client.fixture.observations[896]);
-        withTech.observation!.gameLoop = 900;
+        const withTech = observationAt(world, 900, {
+            add: [
+                rawUnit({ tag: 'rax', unitType: UnitType.BARRACKS, pos: { x: 40, y: 40, z: 10 } }),
+                rawUnit({ tag: 'cc1', unitType: UnitType.COMMANDCENTER, pos: { x: 60, y: 40, z: 10 } }),
+                rawUnit({ tag: 'cc2', unitType: UnitType.COMMANDCENTER, pos: { x: 80, y: 40, z: 10 } }),
+                rawUnit({ tag: 'ebay', unitType: UnitType.ENGINEERINGBAY, pos: { x: 40, y: 60, z: 10 } }),
+            ],
+        });
         withTech.observation!.playerCommon!.minerals = 500;
         withTech.observation!.playerCommon!.vespene = 100;
-        withTech.observation!.rawData!.units!.push(
-            rawUnit({ tag: 'rax', unitType: UnitType.BARRACKS, pos: { x: 40, y: 40, z: 10 } }),
-            rawUnit({ tag: 'cc1', unitType: UnitType.COMMANDCENTER, pos: { x: 60, y: 40, z: 10 } }),
-            rawUnit({ tag: 'cc2', unitType: UnitType.COMMANDCENTER, pos: { x: 80, y: 40, z: 10 } }),
-            rawUnit({ tag: 'ebay', unitType: UnitType.ENGINEERINGBAY, pos: { x: 40, y: 60, z: 10 } }),
-        );
         await stepTo(world, withTech);
         const { actions, units } = world.resources.get();
         const [cc1, cc2, ebay] = units.getByTag(['cc1', 'cc2', 'ebay']);
@@ -188,8 +237,7 @@ describe('ActionManager', () => {
 
     it('rejects gather without a mineral field when no own base is complete', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
-        const withoutBase = structuredClone(world.client.fixture.observations[896]);
-        withoutBase.observation!.gameLoop = 900;
+        const withoutBase = observationAt(world, 900);
         withoutBase.observation!.rawData!.units!.find(
             (unit) => unit.unitType === UnitType.COMMANDCENTER,
         )!.buildProgress = 0.5;
@@ -209,10 +257,7 @@ describe('ActionManager', () => {
                 healthMax: 500,
             }),
         );
-        const withWarpGates = structuredClone(world.client.fixture.observations[896]);
-        withWarpGates.observation!.gameLoop = 900;
-        withWarpGates.observation!.rawData!.units!.push(...warpGates);
-        await stepTo(world, withWarpGates);
+        await stepTo(world, observationAt(world, 900, { add: warpGates }));
         const { actions, units } = world.resources.get();
         const canWarpZealots = () =>
             warpGates.forEach((warpGate) => {
@@ -226,7 +271,7 @@ describe('ActionManager', () => {
         );
         expect(world.client.sent.actions.length).toBe(sentBefore);
 
-        const powered = structuredClone(withWarpGates);
+        const powered = observationAt(world, 900, { add: warpGates });
         powered.observation!.rawData!.player!.powerSources = [{ pos: { x: 26, y: 26, z: 12 }, radius: 2, tag: '1' }];
         await stepTo(world, powered);
         canWarpZealots();
@@ -261,17 +306,9 @@ describe('ActionManager', () => {
             UnitType.WARPGATE,
             UnitType.ARMORY,
         ].map((unitType) => rawUnit({ unitType, pos: { x: 30.5, y: 30.5, z: 12 } }));
-        const withProducers = structuredClone(world.client.fixture.observations[896]);
-        withProducers.observation!.gameLoop = 900;
-        withProducers.observation!.rawData!.units!.push(
-            hydralisk,
-            lurkerDen,
-            gateway,
-            warpGate,
-            otherWarpGate,
-            coolingWarpGate,
-            armory,
-        );
+        const withProducers = observationAt(world, 900, {
+            add: [hydralisk, lurkerDen, gateway, warpGate, otherWarpGate, coolingWarpGate, armory],
+        });
         withProducers.observation!.rawData!.player!.powerSources = [
             { pos: { x: 26, y: 26, z: 12 }, radius: 2, tag: '1' },
         ];
@@ -333,9 +370,7 @@ describe('ActionManager', () => {
             [commandCenter.tag, { x: barracks.pos.x, y: barracks.pos.y }],
         ]);
 
-        const next = structuredClone(world.client.fixture.observations[896]);
-        next.observation!.gameLoop = 900;
-        await stepTo(world, next);
+        await stepWith(world, 900);
         expect(world.client.sent.actions.slice(sentBefore)).toEqual([
             unitCommand({
                 abilityId: Ability.LIFT,
@@ -430,7 +465,7 @@ describe('ActionManager', () => {
         expect(client.sent.actions.length).toBe(sentAfterFailure);
         const { actions } = world.resources.get();
         expect(actions.unitTagsReceivedAction()).toEqual(new Set([first, second, mover]));
-        await stepTo(world, structuredClone(fixture.observations[0]));
+        await stepTo(world, observationAt(world, 0, { base: 0 }));
         expect(actions.unitTagsReceivedAction()).toEqual(new Set());
     });
 
@@ -527,5 +562,13 @@ describe('ActionManager', () => {
             { x: 16, y: 40 },
             ...[2, 4, 6, 8, 10, 12, 14, 16, 18].map((ring) => ({ x: 16 - ring, y: 40 - ring })),
         ]);
+    });
+
+    it('rejects building a unit type whose build ability has no data, naming the type', async () => {
+        const world = await createTestWorld(toyFixture({ playerCommon: { minerals: 1000 } }));
+
+        await expect(world.resources.get().actions.build(UnitType.SUPPLYDEPOT, { x: 16, y: 16 })).rejects.toThrow(
+            new BuildError(`Unit type ${UnitType.SUPPLYDEPOT} has no build ability to build it with`),
+        );
     });
 });

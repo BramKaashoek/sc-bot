@@ -1,3 +1,4 @@
+import { describe } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import createEngine from '../engine/create-engine.ts';
 import { Difficulty, PlayerType, Race } from '../constants/enums.ts';
@@ -36,6 +37,8 @@ export const veryEasyZerg = () => ({
     race: Race.ZERG,
     difficulty: Difficulty.VERYEASY,
 });
+
+export const describeLive = (name: string, fn: () => void) => describe.skipIf(!process.env.SC2PATH)(name, fn);
 
 export const newLiveEngine = (port: number, gameStep?: number) =>
     createEngine({ port, ...(gameStep ? { config: { gameStep } } : {}) });

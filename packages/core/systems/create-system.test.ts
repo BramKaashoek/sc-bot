@@ -1,6 +1,9 @@
 import { describe, expect, it, spyOn } from 'bun:test';
+import createDebug from 'debug';
 import createAgent from '../agent/create-agent.ts';
+import { GameEndedError, NodeSC2Error } from '../engine/errors.ts';
 import { UnitType } from '../constants/index.ts';
+import { observation, toyFixture } from '../test/factories.ts';
 import { createTestWorld, stepTo } from '../test/create-test-world.ts';
 import { taskFunctions } from './builder-plugin.ts';
 import createSystem from './create-system.ts';
@@ -44,5 +47,38 @@ describe('createSystem', () => {
         expect(pulse._system.state.seen).toEqual([]);
         expect(pulse._system.state.lastSeen).toEqual(new Map());
         expect(pulse._system.state.scoreOf).toBe(scoreOf);
+    });
+
+    it('rejects dispatch with a fatal error thrown by a system handler but logs and survives any other', async () => {
+        let failure: Error = new Error('boom');
+        const agent = createAgent();
+        agent.use(
+            createSystem({
+                name: 'Flaky',
+                async onStep() {
+                    throw failure;
+                },
+            }),
+        );
+        const world = await createTestWorld(toyFixture(), { agent });
+        const warn = spyOn(console, 'warn').mockImplementation(() => {});
+        const lines: string[] = [];
+        const { log } = createDebug;
+        createDebug.log = (line: string) => lines.push(line);
+        createDebug.enable('sc2:debug:system');
+        try {
+            failure = new NodeSC2Error('refused');
+            await stepTo(world, observation({ gameLoop: 4 }));
+            failure = new TypeError('bad');
+            await stepTo(world, observation({ gameLoop: 8 }));
+            expect(['refused', 'bad'].map((text) => lines.some((line) => line.includes(text)))).toEqual([true, true]);
+
+            failure = new GameEndedError('over');
+            await expect(stepTo(world, observation({ gameLoop: 16 }))).rejects.toBe(failure);
+        } finally {
+            createDebug.disable();
+            createDebug.log = log;
+            warn.mockRestore();
+        }
     });
 });

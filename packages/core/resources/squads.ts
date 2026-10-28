@@ -1,3 +1,5 @@
+import { NodeSC2Error } from '../engine/errors.ts';
+import { asArray } from '../utils/collections.ts';
 import { avgPoints, distance } from '../utils/geometry/point.ts';
 import { Units } from './units-collection.ts';
 import type { Point2D, ResourceDefinition, Squad, SquadsResource, Unit, UnitRole } from '../types.ts';
@@ -13,10 +15,9 @@ type KeyState = {
     cache?: { loop: number; squads: Squad[] };
 };
 
-const statesBySquads = new WeakMap<SquadsResource, Map<string, KeyState>>();
+export const stateBySquads = new WeakMap<SquadsResource, Map<string, KeyState>>();
 
-const typeList = (types?: number | number[]) =>
-    types === undefined ? [] : [...(Array.isArray(types) ? types : [types])].sort((a, b) => a - b);
+const typeList = (types?: number | number[]) => (types === undefined ? [] : [...asArray(types)].sort((a, b) => a - b));
 
 function cluster(state: KeyState, role: UnitRole, members: Unit[], radius: number): SquadState[] {
     const byTag = new Map(members.map((unit) => [unit.tag!, unit]));
@@ -73,12 +74,11 @@ function cluster(state: KeyState, role: UnitRole, members: Unit[], radius: numbe
 export const squadsResource: ResourceDefinition<'squads'> = {
     name: 'squads',
     create(world) {
-        const states = new Map<string, KeyState>();
-
         const squads: SquadsResource = {
             getSquads(role, { radius = DEFAULT_RADIUS, types } = {}) {
                 const sortedTypes = typeList(types);
                 const key = JSON.stringify([role, sortedTypes]);
+                const states = stateBySquads.get(squads)!;
                 const state = states.get(key) ?? { squads: [], counter: 0 };
                 states.set(key, state);
 
@@ -119,14 +119,18 @@ export const squadsResource: ResourceDefinition<'squads'> = {
             getMainSquadPosition(role, { types } = {}) {
                 const main = squads.getMainSquad(role, { types });
                 if (main) return main.position;
-                const state = states.get(JSON.stringify([role, typeList(types)]));
-                return state?.lastMainPosition ?? world.resources.get().map.getMain().townhallPosition;
+                const state = stateBySquads.get(squads)!.get(JSON.stringify([role, typeList(types)]));
+                const { map, units } = world.resources.get();
+                const position = state?.lastMainPosition ?? map.getMain()?.townhallPosition ?? units.getBases()[0]?.pos;
+                if (!position)
+                    throw new NodeSC2Error('getMainSquadPosition: no main squad, main expansion or own base');
+                return position;
             },
         };
-        statesBySquads.set(squads, states);
+        stateBySquads.set(squads, new Map());
         return squads;
     },
     reset(squads) {
-        statesBySquads.get(squads)!.clear();
+        stateBySquads.set(squads, new Map());
     },
 };

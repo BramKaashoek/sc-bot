@@ -17,10 +17,18 @@ import * as UnitType from '../../constants/unit-type.ts';
 
 const { COMMANDCENTER } = UnitType;
 
+const MIN_RESOURCE_DISTANCE = 3;
+const CELL_SIZE = 1;
+
 // townhallPosition is the floored cell; the townhall center is +0.5
 export const townhallCenter = ({ townhallPosition: { x, y } }: Expansion): Point2D => ({ x: x + 0.5, y: y + 0.5 });
 
-function calculateTownhallPlacement(world: World, center: Point2D, mineralFields: Unit[], geysers: Unit[]): Point2D {
+function calculateTownhallPlacement(
+    world: World,
+    center: Point2D,
+    mineralFields: Unit[],
+    geysers: Unit[],
+): Point2D | undefined {
     const { map, debug } = world.resources.get();
 
     // flat mineral lines (Automaton gold) leave the centroid ambiguous, so bias toward the geysers
@@ -37,7 +45,7 @@ function calculateTownhallPlacement(world: World, center: Point2D, mineralFields
                 const closestResource = clusterUnits.reduce<{ closestField: Unit | null; distance: number }>(
                     (closestField, field) => {
                         const mfCells = cellsInFootprint(createPoint2D(field.pos), getFootprint(field.unitType)!);
-                        const closestMfCell = closestPoint(thCell, mfCells);
+                        const closestMfCell = closestPoint(thCell, mfCells)!; // a footprint always has cells
                         const d = distance(thCell, closestMfCell);
                         if (d < closestField.distance) {
                             return { closestField: field, distance: d };
@@ -56,8 +64,7 @@ function calculateTownhallPlacement(world: World, center: Point2D, mineralFields
                 cellBucket,
             };
         })
-        // every cell for the placement must be 3 (min distance) + 1 (cell size) away from every resource unit
-        .filter((cell) => cell.cellBucket.every((cell) => cell.closest.distance >= 3 + 1))
+        .filter((cell) => cell.cellBucket.every((cell) => cell.closest.distance >= MIN_RESOURCE_DISTANCE + CELL_SIZE))
         .map((grid) => ({ x: grid.x, y: grid.y }))
         .filter((placement) => {
             // don't check placeable if it matches the townhall starting position, because it's right
@@ -66,8 +73,7 @@ function calculateTownhallPlacement(world: World, center: Point2D, mineralFields
             return map.isPlaceableAt(COMMANDCENTER, placement);
         });
 
-    const townhallPlacement = closestPoint(center, grids);
-    return townhallPlacement;
+    return closestPoint(center, grids);
 }
 
 export default calculateTownhallPlacement;

@@ -1,9 +1,8 @@
 import createDebug from 'debug';
-import { ConnectionClosedError, GameEndedError, NodeSC2Error } from './errors.ts';
+import { NodeSC2Error, triageError } from './errors.ts';
 import type { ResourceContainer, ResourceDefinition, ResourceManager, World } from '../types.ts';
 
 const debug = createDebug('sc2:debug:resources');
-const debugSilly = createDebug('sc2:silly:resources');
 
 function createResourceManager(world: World): ResourceManager {
     const managedResources = {} as ResourceContainer;
@@ -63,14 +62,18 @@ function createResourceManager(world: World): ResourceManager {
                 try {
                     definition.onStep?.(managedResources[name]!, world);
                 } catch (err) {
-                    if (err instanceof GameEndedError || err instanceof ConnectionClosedError) throw err;
-                    if (err instanceof NodeSC2Error) {
-                        debugSilly(`Resource onStep error in ${String(name)}: `, err);
-                    } else {
-                        debug(`Resource onStep error in ${String(name)}: `);
-                        debug((err as Error).message);
-                        debug((err as Error).stack);
-                    }
+                    const log = (label: string, e: Error) => {
+                        debug(label);
+                        debug(e.message);
+                        debug(e.stack);
+                    };
+                    triageError(err, `Resource onStep error in ${String(name)}: `, {
+                        expected: log,
+                        unexpected: (label, e) => {
+                            log(label, e);
+                            console.warn(label, e);
+                        },
+                    });
                 }
             });
         },

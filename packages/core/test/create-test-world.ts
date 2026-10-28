@@ -58,6 +58,42 @@ export async function stepTo(world: TestWorld, next: SC2APIProtocol.ResponseObse
     await engine.dispatch();
 }
 
+export type ObservationEdit = {
+    base?: number;
+    add?: SC2APIProtocol.Unit[];
+    hide?: string[];
+    fog?: boolean;
+    edit?: (units: SC2APIProtocol.Unit[]) => SC2APIProtocol.Unit[];
+};
+
+export function observationAt(
+    world: TestWorld,
+    loop: number,
+    { base = 896, add = [], hide = [], fog = false, edit = (units) => units }: ObservationEdit = {},
+): SC2APIProtocol.ResponseObservation {
+    const baseObservation = world.client.fixture.observations[base];
+    if (!baseObservation) throw new Error(`fixture has no observation for loop ${base}`);
+
+    const responseObservation = structuredClone(baseObservation);
+    const { rawData } = responseObservation.observation!;
+    responseObservation.observation!.gameLoop = loop;
+    const hidden = rawData!.units!.filter((raw) => hide.includes(raw.tag!));
+    rawData!.units = edit([...rawData!.units!.filter((raw) => !hide.includes(raw.tag!)), ...add]);
+
+    if (fog) {
+        const { data, size } = rawData!.mapState!.visibility!;
+        hidden.forEach(({ pos }) => {
+            for (let dy = -2; dy <= 2; dy++)
+                for (let dx = -2; dx <= 2; dx++)
+                    data![(Math.floor(pos!.y!) + dy) * size!.x! + Math.floor(pos!.x!) + dx] = 1;
+        });
+    }
+    return responseObservation;
+}
+
+export const stepWith = (world: TestWorld, loop: number, units?: SC2APIProtocol.Unit[]) =>
+    stepTo(world, observationAt(world, loop, { add: units }));
+
 export async function createTestWorld(
     fixtureOrMapName: Fixture | string,
     { loop, agent = createAgent(), onQuery, config }: TestWorldOptions = {},

@@ -26,7 +26,7 @@ describe('build targets', () => {
         const { map, mapAnalysis } = world.resources.get();
         const own = map.getExpansions();
         const enemy = map.getExpansions(Alliance.ENEMY);
-        const start = map.getLocations().self;
+        const start = map.getLocations().self!;
 
         const expected: Record<string, Point2D> = {
             [T.SPAWN]: own[0].townhallPosition,
@@ -35,8 +35,8 @@ describe('build targets', () => {
             [T.FOURTH]: own[3].townhallPosition,
             [T.FIFTH]: own[4].townhallPosition,
             [T.SIXTH]: own[5].townhallPosition,
-            [T.ENEMY_SPAWN]: map.getEnemyMain().townhallPosition,
-            [T.ENEMY_NAT]: map.getEnemyNatural().townhallPosition,
+            [T.ENEMY_SPAWN]: map.getEnemyMain()!.townhallPosition,
+            [T.ENEMY_NAT]: map.getEnemyNatural()!.townhallPosition,
             [T.ENEMY_THIRD]: enemy[2].townhallPosition,
             [T.ENEMY_FOURTH]: enemy[3].townhallPosition,
             [T.RAMP]: map.getMainBaseRamp()!.topCenter,
@@ -54,16 +54,16 @@ describe('build targets', () => {
             expect(resolveTarget(world, target as never)).toEqual(point);
         });
         const vision = resolveTarget(world, T.ENEMY_NAT_VISION);
-        expect(distance(vision, map.getEnemyNatural().townhallPosition)).toBeCloseTo(10, 5);
+        expect(distance(vision, map.getEnemyNatural()!.townhallPosition)).toBeCloseTo(10, 5);
         expect(distance(vision, map.getCenter(true))).toBeLessThan(
-            distance(map.getEnemyNatural().townhallPosition, map.getCenter(true)),
+            distance(map.getEnemyNatural()!.townhallPosition, map.getCenter(true)),
         );
     });
 
     it('turns structure targets into placement requests, townhall spots, proxies or nothing', async () => {
         const world = await blueshift();
         const { map } = world.resources.get();
-        const natural = map.getNatural().townhallPosition;
+        const natural = map.getNatural()!.townhallPosition;
 
         expect(structurePlacement(world, SUPPLYDEPOT, T.RAMP)).toEqual({ placement: { flags: ['wall'] } });
         expect(structurePlacement(world, SUPPLYDEPOT, T.NAT_WALL)).toEqual({
@@ -86,7 +86,7 @@ describe('build targets', () => {
         expect(structurePlacement(world, COMMANDCENTER, T.MAP_CENTER)).toEqual({ near: map.getCenter(true) });
         expect(structurePlacement(world, REFINERY, T.NAT)).toBeUndefined();
         expect(structurePlacement(world, SUPPLYDEPOT, T.ENEMY_NAT)).toEqual({
-            near: map.getEnemyNatural().townhallPosition,
+            near: map.getEnemyNatural()!.townhallPosition,
         });
         expect(structurePlacement(world, SUPPLYDEPOT, T.MAP_CENTER)).toEqual({ near: map.getCenter(true) });
 
@@ -97,7 +97,7 @@ describe('build targets', () => {
     it('scouts the enemy main from its ramp around the perimeter, the natural behind its minerals, and lists in order', async () => {
         const world = await blueshift();
         const { map, mapAnalysis } = world.resources.get();
-        const enemyMain = map.getEnemyMain().townhallPosition;
+        const enemyMain = map.getEnemyMain()!.townhallPosition;
         const region = mapAnalysis.getRegion(enemyMain)!;
         const rampTop = mapAnalysis.getEnemyMainRamp()!.topCenter;
         const perimeter = mapAnalysis.getPerimeter(region).filter((point) => distance(point, rampTop) > 8);
@@ -125,7 +125,7 @@ describe('build targets', () => {
             distance(sources[0], rampTop) - Math.min(...perimeter.map((point) => distance(point, rampTop))),
         ).toBeLessThanOrEqual(0.5);
         expect(scoutWaypoints(world, [T.NAT, T.MAP_CENTER])).toEqual([
-            ...map.getNatural().areas!.behindMineralLine,
+            ...map.getNatural()!.areas!.behindMineralLine,
             map.getCenter(true),
         ]);
 

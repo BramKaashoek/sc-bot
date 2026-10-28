@@ -35,7 +35,11 @@ export {
     stutterGroupBack,
     stutterGroupForward,
 } from './combat/group.ts';
+export { autoUseAOEAbility, useAOEAbility } from './combat/aoe.ts';
+export { ghostSnipe, placePredictiveAoE, ravenAutoTurret, reaperGrenade } from './combat/spells.ts';
 export { ownUnitCount } from './macro/helpers.ts';
+export { protossStaticDefence, restorePower } from './macro/protoss.ts';
+export type { ProtossStaticDefenceOptions } from './macro/protoss.ts';
 export { buildWorkers, spawnController } from './macro/spawn.ts';
 export {
     autoSupply,

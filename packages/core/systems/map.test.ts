@@ -3,7 +3,7 @@ import createAgent from '../agent/create-agent.ts';
 import { createTestWorld, loadFixture, stepTo } from '../test/create-test-world.ts';
 import { Alliance, Attribute, DisplayType } from '../constants/enums.ts';
 import { UnitType } from '../constants/index.ts';
-import { observation, packBits, rawUnit, toyFixture, unitTypeData } from '../test/factories.ts';
+import { observation, packBits, rawUnit, toyFixture } from '../test/factories.ts';
 import { footprintCells } from '../utils/geometry/units.ts';
 import { PixelMap } from '../utils/pixel-map.ts';
 import { GameEndedError } from '../engine/errors.ts';
@@ -83,10 +83,11 @@ describe('map system', () => {
     )(
         'frees the footprint of an %s %p when it lifts even if already moved off it, blocks it where it lands leaving townhall corners pathable, and frees nothing when it dies unlanded',
         async (owner, landed, flying, half, landedCorner) => {
-            const fixture = toyFixture();
-            for (const unitType of [landed, flying]) {
-                fixture.data.units![unitType] ??= unitTypeData(unitType, { attributes: [Attribute.STRUCTURE] });
-            }
+            const fixture = toyFixture({
+                unitTypes: Object.fromEntries(
+                    [landed, flying].map((unitType) => [unitType, { attributes: [Attribute.STRUCTURE] }]),
+                ),
+            });
             const world = await createTestWorld(fixture);
             const { map } = world.resources.get();
             const tag = '9001';
@@ -139,10 +140,14 @@ describe('map system', () => {
     ])(
         'keeps %s lowered depot placement-blocked but pathable, re-blocks pathing when raised, and frees placement when it dies',
         async (_, alliance) => {
-            const fixture = toyFixture();
-            for (const unitType of [UnitType.SUPPLYDEPOT, UnitType.SUPPLYDEPOTLOWERED]) {
-                fixture.data.units![unitType] ??= unitTypeData(unitType, { attributes: [Attribute.STRUCTURE] });
-            }
+            const fixture = toyFixture({
+                unitTypes: Object.fromEntries(
+                    [UnitType.SUPPLYDEPOT, UnitType.SUPPLYDEPOTLOWERED].map((unitType) => [
+                        unitType,
+                        { attributes: [Attribute.STRUCTURE] },
+                    ]),
+                ),
+            });
             const world = await createTestWorld(fixture);
             const { map } = world.resources.get();
             const base = fixture.observations[0].observation!.rawData!.units!;
@@ -189,29 +194,71 @@ describe('map system', () => {
         },
     );
 
-    it('forgets the previous game structures, so they hold no cells in the next game', async () => {
-        const fixture = toyFixture();
-        fixture.data.units![UnitType.BARRACKS] = unitTypeData(UnitType.BARRACKS, { attributes: [Attribute.STRUCTURE] });
+    it('forgets the previous game structures, blocker claims and live grid, so they are rebuilt in the next game', async () => {
+        const fixture = toyFixture({
+            unitTypes: {
+                [UnitType.BARRACKS]: { attributes: [Attribute.STRUCTURE] },
+                [UnitType.DESTRUCTIBLEROCKEX1VERTICALHUGE]: {
+                    name: 'DestructibleRockEx1VerticalHuge',
+                    attributes: [Attribute.STRUCTURE],
+                },
+            },
+        });
+        const startRaw = fixture.gameInfo.startRaw!;
+        const isRock = (x: number, y: number) => x >= 15 && x <= 18 && y >= 22 && y <= 25;
+        fixture.liveGameInfo = {
+            ...fixture.gameInfo,
+            startRaw: {
+                ...startRaw,
+                pathingGrid: packBits(startRaw.mapSize!, (x, y) => x > 0 && y > 0 && x < 31 && y < 31 && !isRock(x, y)),
+            },
+        };
         const world = await createTestWorld(fixture);
         const base = fixture.observations[0].observation!.rawData!.units!;
         const barracks = (tag: string, y: number) =>
             rawUnit({ tag, unitType: UnitType.BARRACKS, pos: { x: 14.5, y, z: 10 } });
+        const rock = rawUnit({
+            alliance: Alliance.NEUTRAL,
+            owner: 16,
+            unitType: UnitType.DESTRUCTIBLEROCKEX1VERTICALHUGE,
+            pos: { x: 17, y: 24, z: 10 },
+            radius: 2,
+        });
+        const gameInfo = spyOn(world.client, 'gameInfo');
+        const readsDuring = async (play: () => Promise<void>) => {
+            const before = gameInfo.mock.calls.length;
+            world.client.setObservation(fixture.observations[0]);
+            await world.engine.setupGame();
+            await play();
+            return gameInfo.mock.calls.length - before;
+        };
 
-        await stepTo(world, observation({ gameLoop: 8, units: [...base, barracks('9001', 10.5)] }));
-        world.client.setObservation(fixture.observations[0]);
-        await world.engine.setupGame();
-        await stepTo(world, observation({ gameLoop: 8, units: [...base, barracks('9002', 12.5)] }));
-        const destroyed = observation({ gameLoop: 16, units: base });
-        destroyed.observation!.rawData!.event!.deadUnits = ['9002'];
-        await stepTo(world, destroyed);
+        await stepTo(world, observation({ gameLoop: 8, units: [...base, barracks('9001', 10.5), rock] }));
+        // each game fetches the game info at start, and the claimed rock reads the live grid once more
+        const secondGameReads = await readsDuring(() =>
+            stepTo(world, observation({ gameLoop: 8, units: [...base, rock] })),
+        );
+        const thirdGameReads = await readsDuring(async () => {
+            await stepTo(world, observation({ gameLoop: 8, units: [...base, barracks('9002', 12.5), rock] }));
+            const destroyed = observation({ gameLoop: 16, units: [...base, rock] });
+            destroyed.observation!.rawData!.event!.deadUnits = ['9002'];
+            await stepTo(world, destroyed);
+        });
 
-        expect(world.resources.get().map.isPlaceable({ x: 14, y: 11 })).toBe(true);
+        expect([secondGameReads, thirdGameReads, world.resources.get().map.isPlaceable({ x: 14, y: 11 })]).toEqual([
+            2,
+            2,
+            true,
+        ]);
     });
 
     it('blocks placement only for a depot created already lowered', async () => {
-        const fixture = toyFixture();
-        fixture.data.units![UnitType.SUPPLYDEPOTLOWERED] ??= unitTypeData(UnitType.SUPPLYDEPOTLOWERED, {
-            attributes: [Attribute.STRUCTURE],
+        const fixture = toyFixture({
+            unitTypes: {
+                [UnitType.SUPPLYDEPOTLOWERED]: {
+                    attributes: [Attribute.STRUCTURE],
+                },
+            },
         });
         const world = await createTestWorld(fixture);
         const { map } = world.resources.get();
@@ -231,9 +278,13 @@ describe('map system', () => {
     });
 
     it('unassigns the base a townhall lifts off and assigns the one it lands on', async () => {
-        const fixture = toyFixture({ enemyStart: false });
-        fixture.data.units![UnitType.COMMANDCENTERFLYING] = unitTypeData(UnitType.COMMANDCENTERFLYING, {
-            attributes: [Attribute.STRUCTURE],
+        const fixture = toyFixture({
+            enemyStart: false,
+            unitTypes: {
+                [UnitType.COMMANDCENTERFLYING]: {
+                    attributes: [Attribute.STRUCTURE],
+                },
+            },
         });
         const world = await createTestWorld(fixture);
         const { map } = world.resources.get();
@@ -256,10 +307,14 @@ describe('map system', () => {
     });
 
     it('keeps townhall corners pathable and the rest blocked when a command center morphs in place', async () => {
-        const fixture = toyFixture();
-        for (const unitType of [UnitType.COMMANDCENTER, UnitType.ORBITALCOMMAND]) {
-            fixture.data.units![unitType] ??= unitTypeData(unitType, { attributes: [Attribute.STRUCTURE] });
-        }
+        const fixture = toyFixture({
+            unitTypes: Object.fromEntries(
+                [UnitType.COMMANDCENTER, UnitType.ORBITALCOMMAND].map((unitType) => [
+                    unitType,
+                    { attributes: [Attribute.STRUCTURE] },
+                ]),
+            ),
+        });
         const world = await createTestWorld(fixture);
         const { map } = world.resources.get();
         const base = fixture.observations[0].observation!.rawData!.units!;
@@ -290,9 +345,12 @@ describe('map system', () => {
     });
 
     it('leaves a nydus canal corners pathable and the rest blocked, and frees everything when it dies', async () => {
-        const fixture = toyFixture();
-        fixture.data.units![UnitType.NYDUSCANAL] ??= unitTypeData(UnitType.NYDUSCANAL, {
-            attributes: [Attribute.STRUCTURE],
+        const fixture = toyFixture({
+            unitTypes: {
+                [UnitType.NYDUSCANAL]: {
+                    attributes: [Attribute.STRUCTURE],
+                },
+            },
         });
         const world = await createTestWorld(fixture);
         const { map } = world.resources.get();
@@ -330,10 +388,13 @@ describe('map system', () => {
     });
 
     it('blocks destructible rocks and towers for pathing in the grid and the graph, rocks until they die, and leaves unbuildable rocks walkable', async () => {
-        const fixture = toyFixture();
-        fixture.data.units![UnitType.DESTRUCTIBLEROCKEX16X6] = unitTypeData(UnitType.DESTRUCTIBLEROCKEX16X6, {
-            name: 'DestructibleRockEx16x6',
-            attributes: [Attribute.STRUCTURE],
+        const fixture = toyFixture({
+            unitTypes: {
+                [UnitType.DESTRUCTIBLEROCKEX16X6]: {
+                    name: 'DestructibleRockEx16x6',
+                    attributes: [Attribute.STRUCTURE],
+                },
+            },
         });
         const base = fixture.observations[0].observation!.rawData!.units!;
         const rock = rawUnit({
@@ -386,14 +447,17 @@ describe('map system', () => {
     });
 
     it("blocks a rock that appears mid-game where SC2's live pathing grid has it, and on death frees what the live grid frees, keeping cliffs, ramps, resources and own and stale enemy structures blocked", async () => {
-        const fixture = toyFixture();
-        fixture.data.units![UnitType.DESTRUCTIBLEROCKEX1VERTICALHUGE] = unitTypeData(
-            UnitType.DESTRUCTIBLEROCKEX1VERTICALHUGE,
-            { name: 'DestructibleRockEx1VerticalHuge', attributes: [Attribute.STRUCTURE] },
-        );
-        fixture.data.units![UnitType.SUPPLYDEPOTLOWERED] = unitTypeData(UnitType.SUPPLYDEPOTLOWERED, {
-            unitAlias: UnitType.SUPPLYDEPOT,
-            attributes: [Attribute.STRUCTURE],
+        const fixture = toyFixture({
+            unitTypes: {
+                [UnitType.DESTRUCTIBLEROCKEX1VERTICALHUGE]: {
+                    name: 'DestructibleRockEx1VerticalHuge',
+                    attributes: [Attribute.STRUCTURE],
+                },
+                [UnitType.SUPPLYDEPOTLOWERED]: {
+                    unitAlias: UnitType.SUPPLYDEPOT,
+                    attributes: [Attribute.STRUCTURE],
+                },
+            },
         });
         const startRaw = fixture.gameInfo.startRaw!;
         const interior = (x: number, y: number) => x > 0 && y > 0 && x < 31 && y < 31;
@@ -507,15 +571,18 @@ describe('map system', () => {
 
     it('falls back to rock footprints while the live pathing grid cannot be read, and frees two rocks dying in one step with one live grid read', async () => {
         const warn = spyOn(console, 'warn').mockImplementation(() => {});
-        const fixture = toyFixture();
-        fixture.data.units![UnitType.DESTRUCTIBLEROCKEX16X6] = unitTypeData(UnitType.DESTRUCTIBLEROCKEX16X6, {
-            name: 'DestructibleRockEx16x6',
-            attributes: [Attribute.STRUCTURE],
+        const fixture = toyFixture({
+            unitTypes: {
+                [UnitType.DESTRUCTIBLEROCKEX16X6]: {
+                    name: 'DestructibleRockEx16x6',
+                    attributes: [Attribute.STRUCTURE],
+                },
+                [UnitType.DESTRUCTIBLEROCKEX1VERTICALHUGE]: {
+                    name: 'DestructibleRockEx1VerticalHuge',
+                    attributes: [Attribute.STRUCTURE],
+                },
+            },
         });
-        fixture.data.units![UnitType.DESTRUCTIBLEROCKEX1VERTICALHUGE] = unitTypeData(
-            UnitType.DESTRUCTIBLEROCKEX1VERTICALHUGE,
-            { name: 'DestructibleRockEx1VerticalHuge', attributes: [Attribute.STRUCTURE] },
-        );
         const startRaw = fixture.gameInfo.startRaw!;
         const interior = (x: number, y: number) => x > 0 && y > 0 && x < 31 && y < 31;
         const isCliff = (x: number, y: number) => x === 17 && y === 27;
@@ -595,10 +662,13 @@ describe('map system', () => {
     });
 
     it('lets a game end surface through the live pathing grid read', async () => {
-        const fixture = toyFixture();
-        fixture.data.units![UnitType.XELNAGATOWER] = unitTypeData(UnitType.XELNAGATOWER, {
-            name: 'XelNagaTower',
-            attributes: [Attribute.STRUCTURE],
+        const fixture = toyFixture({
+            unitTypes: {
+                [UnitType.XELNAGATOWER]: {
+                    name: 'XelNagaTower',
+                    attributes: [Attribute.STRUCTURE],
+                },
+            },
         });
         const world = await createTestWorld(fixture);
         world.client.gameInfo = async () => {
@@ -657,9 +727,12 @@ describe('map system', () => {
     });
 
     it('keeps a burrowed creep tumor placement-blocked but pathable', async () => {
-        const fixture = toyFixture();
-        fixture.data.units![UnitType.CREEPTUMORBURROWED] ??= unitTypeData(UnitType.CREEPTUMORBURROWED, {
-            attributes: [Attribute.STRUCTURE],
+        const fixture = toyFixture({
+            unitTypes: {
+                [UnitType.CREEPTUMORBURROWED]: {
+                    attributes: [Attribute.STRUCTURE],
+                },
+            },
         });
         const world = await createTestWorld(fixture);
         const { map } = world.resources.get();
@@ -673,9 +746,12 @@ describe('map system', () => {
         expect(`${map.isPlaceable({ x: 14, y: 10 })}/${map.isPathable({ x: 14, y: 10 })}`).toBe('false/true');
     });
     it('keeps enemy structures and snapshots blocked out of vision, moves them where they are seen next, and keeps own cells blocked when freeing them', async () => {
-        const fixture = toyFixture();
-        fixture.data.units![UnitType.BARRACKS] ??= unitTypeData(UnitType.BARRACKS, {
-            attributes: [Attribute.STRUCTURE],
+        const fixture = toyFixture({
+            unitTypes: {
+                [UnitType.BARRACKS]: {
+                    attributes: [Attribute.STRUCTURE],
+                },
+            },
         });
         const world = await createTestWorld(fixture);
         const { map } = world.resources.get();

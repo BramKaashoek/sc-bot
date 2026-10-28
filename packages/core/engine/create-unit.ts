@@ -3,6 +3,7 @@ import * as Ability from '../constants/ability.ts';
 import { TownhallRace } from '../constants/race-map.ts';
 import * as Buff from '../constants/buff.ts';
 import * as Upgrade from '../constants/upgrade.ts';
+import { setAvailableAbilities } from '../resources/units.ts';
 import {
     Alliance,
     WeaponTargetType,
@@ -41,8 +42,10 @@ import {
     burrowedTypes,
     toggleAbilities,
 } from '../constants/groups.ts';
-import { distanceSquared } from '../utils/geometry/point.ts';
-import { isFlying, toPoint } from '../resources/units-collection.ts';
+import { generalAbility } from './data-storage.ts';
+import { distance, distanceSquared, toPoint } from '../utils/geometry/point.ts';
+import { NodeSC2Error } from './errors.ts';
+import { isFlying } from '../utils/geometry/units.ts';
 import type { DamageVsTarget, Point2D, Point3D, Unit, World } from '../types.ts';
 import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
 
@@ -108,17 +111,17 @@ function createUnit(unitData: SC2APIProtocol.Unit, world: World): Unit {
                     }
                 }
 
-                return actions.do(Ability.EFFECT_INJECTLARVA, this.tag, { target });
+                return actions.do(this.tag, Ability.EFFECT_INJECTLARVA, { target });
             }
         },
         async blink(target, opts = {}) {
             if (this.canBlink()) {
-                return actions.do(Ability.EFFECT_BLINK, this.tag, { target, ...opts });
+                return actions.do(this.tag, Ability.EFFECT_BLINK, { target, ...opts });
             }
         },
         async burrow(opts = {}) {
             if (burrowedTypes[this.unitType]) {
-                return actions.do(Ability.BURROWDOWN, this.tag, opts);
+                return actions.do(this.tag, Ability.BURROWDOWN, opts);
             }
         },
         async toggle(options = {}) {
@@ -129,7 +132,7 @@ function createUnit(unitData: SC2APIProtocol.Unit, world: World): Unit {
 
             const abilityId = toggleAbilities[this.unitType];
             if (abilityId) {
-                return actions.do(abilityId, this.tag, opts);
+                return actions.do(this.tag, abilityId, opts);
             }
         },
         addLabel(name, value) {
@@ -160,10 +163,15 @@ function createUnit(unitData: SC2APIProtocol.Unit, world: World): Unit {
             const gameLoop = frame.getGameLoop();
             if (this._availableAbilitiesLoop === gameLoop) return this._availableAbilities;
 
-            const response = await actions.sendQuery({ abilities: [{ unitTag: this.tag }] });
+            const response = await actions.sendQuery({
+                abilities: [{ unitTag: this.tag }],
+            });
             const [abilitiesOfUnit] = response.abilities ?? [];
-            this._availableAbilities = (abilitiesOfUnit?.abilities ?? []).map((available) => available.abilityId!);
-            this._availableAbilitiesLoop = gameLoop;
+            setAvailableAbilities(
+                this,
+                (abilitiesOfUnit?.abilities ?? []).map((available) => available.abilityId!),
+                gameLoop,
+            );
             return this._availableAbilities;
         },
         data() {
@@ -263,8 +271,7 @@ function createUnit(unitData: SC2APIProtocol.Unit, world: World): Unit {
             const [current] = this.orders;
             if (!current) return false;
             const wanted = Array.isArray(abilityIds) ? abilityIds : [abilityIds];
-            const remapped = data.getAbilityData(current.abilityId!)?.remapsToAbilityId;
-            return wanted.includes(current.abilityId!) || (!!remapped && wanted.includes(remapped));
+            return wanted.includes(current.abilityId!) || wanted.includes(generalAbility(data, current.abilityId!));
         },
         isMoving() {
             return this.isUsingAbility([Ability.MOVE, Ability.GENERAL_MOVE]);
@@ -582,11 +589,11 @@ function createUnit(unitData: SC2APIProtocol.Unit, world: World): Unit {
             return (frame.getGameLoop() - this.lastSeen) / GAME_LOOPS_PER_SECOND;
         },
         async useAbility(abilityId, options = {}) {
-            return actions.do(abilityId, this.tag, options);
+            return actions.do(this.tag, abilityId, options);
         },
         distanceTo(target) {
             const point = toPoint(target);
-            return Math.hypot(point.x - this.pos.x, point.y - this.pos.y);
+            return distance(point, this.pos);
         },
         isFacing(other, angleError = 0.05) {
             let angle = Math.atan2(other.pos.y - this.pos.y, other.pos.x - this.pos.x);
@@ -614,7 +621,7 @@ function createUnit(unitData: SC2APIProtocol.Unit, world: World): Unit {
             };
         }
         default: {
-            throw new Error('CANT CREATE A UNIT WITH NO ALLIANCE, THIS SHOULD NEVER HAPPEN');
+            throw new NodeSC2Error('CANT CREATE A UNIT WITH NO ALLIANCE, THIS SHOULD NEVER HAPPEN');
         }
     }
 }

@@ -1,15 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, expect, it } from 'bun:test';
 import createAgent from '../agent/create-agent.ts';
 import { PlayerType, Race } from '../constants/enums.ts';
+import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
 import * as UnitType from '../constants/unit-type.ts';
-import { clientOf, killNewSc2, newLiveEngine, sc2Pids, veryEasyZerg } from '../test/live.ts';
+import { describeLive, clientOf, killNewSc2, newLiveEngine, sc2Pids, veryEasyZerg } from '../test/live.ts';
 import { spawnUnits } from '../test/spawn-units.ts';
 import type { Point2D, World } from '../types.ts';
 
 const MAP = 'Melee/Simple64';
 const SWAP_SECONDS = 30;
 const GAME_SECONDS = 60;
-const LOOPS_PER_SECOND = 22.4;
 const LAND_TOLERANCE = 0.5;
 const ADDON_OFFSET = { x: 2.5, y: -0.5 };
 
@@ -29,7 +29,7 @@ afterEach(() => {
 
 const near = (a: Point2D, b: Point2D) => Math.hypot(a.x - b.x, a.y - b.y) <= LAND_TOLERANCE;
 
-describe.skipIf(!process.env.SC2PATH)('live flying structures', () => {
+describeLive('live flying structures', () => {
     it("addonSwap lands the barracks (with reactor) and the factory at each other's positions within 30 game s", async () => {
         let barracksTag: string | undefined;
         let factoryTag: string | undefined;
@@ -96,10 +96,10 @@ describe.skipIf(!process.env.SC2PATH)('live flying structures', () => {
             gameTimeLimit: GAME_SECONDS,
         });
 
-        console.log(`flying.live swap: ${((landedLoop ?? NaN) - (swapLoop ?? NaN)) / LOOPS_PER_SECOND} game s`);
+        console.log(`flying.live swap: ${((landedLoop ?? NaN) - (swapLoop ?? NaN)) / GAME_LOOPS_PER_SECOND} game s`);
         expect(accepted).toBe(true);
         expect(landedLoop).toBeDefined();
         expect(factoryAddOn).toBe(reactorTag);
-        expect((landedLoop! - swapLoop!) / LOOPS_PER_SECOND).toBeLessThanOrEqual(SWAP_SECONDS);
+        expect((landedLoop! - swapLoop!) / GAME_LOOPS_PER_SECOND).toBeLessThanOrEqual(SWAP_SECONDS);
     }, 240_000);
 });

@@ -1,21 +1,16 @@
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import createAgent from '../agent/create-agent.ts';
 import { Alliance } from '../constants/enums.ts';
+import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
 import * as UnitType from '../constants/unit-type.ts';
-import { createTestWorld, stepTo } from '../test/create-test-world.ts';
+import { createTestWorld, observationAt, stepTo } from '../test/create-test-world.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
 import { rawUnit } from '../test/factories.ts';
 import type { Placement, Point2D, UserPlacement, World } from '../types.ts';
 import type { Ramp } from '../utils/map/ramp.ts';
 
-const LOOPS_PER_SECOND = 22.4;
-
-function at(world: TestWorld, gameLoop: number, extra: SC2APIProtocol.Unit[] = []) {
-    const next = structuredClone(world.client.fixture.observations[0]);
-    next.observation!.gameLoop = gameLoop;
-    next.observation!.rawData!.units!.push(...extra);
-    return next;
-}
+const at = (world: TestWorld, gameLoop: number, extra: SC2APIProtocol.Unit[] = []) =>
+    observationAt(world, gameLoop, { base: 0, add: extra });
 
 async function solved(
     map = 'blueshift',
@@ -70,7 +65,7 @@ describe('placement resource (Terran)', () => {
 
         const walls = placement.getPlacements({ flag: 'wall' });
         expect(walls.map((s) => s.pos)).toEqual([ramp.barracksCorrectPlacement!, ...ramp.cornerDepots]);
-        expect(placement.getPlacements({ flag: 'bunker', base: gameMap.getNatural().townhallPosition })).toHaveLength(
+        expect(placement.getPlacements({ flag: 'bunker', base: gameMap.getNatural()!.townhallPosition })).toHaveLength(
             1,
         );
 
@@ -147,7 +142,7 @@ describe('placement resource (Terran)', () => {
         placement.release(first);
         expect(placement.request(UnitType.SUPPLYDEPOT)).toEqual(first);
 
-        await stepTo(world, at(world, 8 + Math.ceil(61 * LOOPS_PER_SECOND)));
+        await stepTo(world, at(world, 8 + Math.ceil(61 * GAME_LOOPS_PER_SECOND)));
         expect(placement.getPlacements({ state: 'reserved' })).toEqual([]);
     });
 
@@ -162,7 +157,7 @@ describe('placement resource (Terran)', () => {
         const available = placement.getPlacements({
             size: '2x2',
             state: 'available',
-            base: map.getMain().townhallPosition,
+            base: map.getMain()!.townhallPosition,
         });
         const closestToRamp = Math.min(...available.map((s) => distanceSquared(s.pos, ramp.topCenter)));
         expect(distanceSquared(fallback, ramp.topCenter)).toBeLessThanOrEqual(closestToRamp);
@@ -171,7 +166,7 @@ describe('placement resource (Terran)', () => {
     it('offers a spot at another own base only when findAlternative allows it', async () => {
         const world = await solved();
         const { placement, map } = world.resources.get();
-        const natural = map.getNatural().townhallPosition;
+        const natural = map.getNatural()!.townhallPosition;
         await stepTo(
             world,
             at(world, 16, [
@@ -184,7 +179,7 @@ describe('placement resource (Terran)', () => {
             ]),
         );
         expect(map.getOccupiedExpansions()).toHaveLength(2);
-        for (const spot of placement.getPlacements({ size: '2x2', base: map.getMain().townhallPosition })) {
+        for (const spot of placement.getPlacements({ size: '2x2', base: map.getMain()!.townhallPosition })) {
             placement.reserve(spot.pos);
         }
 
@@ -270,7 +265,7 @@ describe('placement resource (Terran)', () => {
         await world.engine.setupGame();
         await stepTo(world, at(world, 8));
         const reserved = placement.request(UnitType.SUPPLYDEPOT)!;
-        await stepTo(world, at(world, 8 + Math.ceil(6 * LOOPS_PER_SECOND)));
+        await stepTo(world, at(world, 8 + Math.ceil(6 * GAME_LOOPS_PER_SECOND)));
         expect(placement.getPlacements({ state: 'reserved' })).toEqual([]);
         expect(reserved).toBeDefined();
     });
@@ -338,7 +333,7 @@ describe('placement resource (Protoss)', () => {
             expect(near(optimal)).toBe(mostNear);
         }
 
-        const natural = placement.getPlacements({ base: map.getNatural().townhallPosition });
+        const natural = placement.getPlacements({ base: map.getNatural()!.townhallPosition });
         expect(
             natural.map((s) => `${s.size} ${s.pos.x},${s.pos.y}${[...s.flags].map((f) => ` ${f}`).join('')}`),
         ).toEqual(NATURAL_SPOTS);
@@ -347,7 +342,7 @@ describe('placement resource (Protoss)', () => {
     it('returns powered spots only near own pylons that are far enough along', async () => {
         const world = await solved('blueshift-protoss');
         const { placement, map } = world.resources.get();
-        const spot = placement.getPlacements({ size: '3x3', base: map.getNatural().townhallPosition })[7].pos;
+        const spot = placement.getPlacements({ size: '3x3', base: map.getNatural()!.townhallPosition })[7].pos;
         const pylon = rawUnit({
             unitType: UnitType.PYLON,
             pos: { x: spot.x + 3.5, y: spot.y + 0.5, z: 12 },
@@ -357,7 +352,7 @@ describe('placement resource (Protoss)', () => {
 
         const request = (pylonBuildProgress?: number) =>
             placement.request(UnitType.GATEWAY, {
-                base: map.getNatural().townhallPosition,
+                base: map.getNatural()!.townhallPosition,
                 powered: true,
                 reserve: false,
                 findAlternative: false,
@@ -370,7 +365,7 @@ describe('placement resource (Protoss)', () => {
     it('never gives a pylon a staticDefence spot', async () => {
         const baseline = (await solved('blueshift-protoss')).resources.get();
         const [defence] = baseline.placement
-            .getPlacements({ size: '2x2', base: baseline.map.getMain().townhallPosition })
+            .getPlacements({ size: '2x2', base: baseline.map.getMain()!.townhallPosition })
             .filter((s) => s.flags.size === 0);
         const world = await solved('blueshift-protoss', {
             placements: [{ pos: { ...defence.pos }, size: '2x2', flags: ['staticDefence'] }],

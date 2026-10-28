@@ -1,27 +1,23 @@
 import { describe, expect, it } from 'bun:test';
 import { Ability, UnitType, Upgrade } from '../constants/index.ts';
 import { Alliance } from '../constants/enums.ts';
+import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
 import { NodeSC2Error } from '../engine/errors.ts';
-import { createTestWorld, stepTo } from '../test/create-test-world.ts';
+import { createTestWorld, observationAt, stepTo } from '../test/create-test-world.ts';
 import { rawUnit } from '../test/factories.ts';
 import { Units } from './units-collection.ts';
-import type { TestWorld } from '../test/create-test-world.ts';
+import type { ObservationEdit, TestWorld } from '../test/create-test-world.ts';
 import type { Unit } from '../types.ts';
 
 const tagsOf = (group: Unit[]) => group.map((unit) => unit.tag);
 const sortedTags = (group: Unit[]) => tagsOf(group).sort();
 
-function editedObservation(
+const editedObservation = (
     world: TestWorld,
-    loop: number,
+    base: number,
     gameLoop: number,
-    edit: (units: SC2APIProtocol.Unit[]) => SC2APIProtocol.Unit[],
-): SC2APIProtocol.ResponseObservation {
-    const responseObservation = structuredClone(world.client.fixture.observations[loop]);
-    responseObservation.observation!.gameLoop = gameLoop;
-    responseObservation.observation!.rawData!.units = edit(responseObservation.observation!.rawData!.units!);
-    return responseObservation;
-}
+    edit: NonNullable<ObservationEdit['edit']>,
+) => observationAt(world, gameLoop, { base, edit });
 
 function fogAround(responseObservation: SC2APIProtocol.ResponseObservation, center: { x: number; y: number }) {
     const { data, size } = responseObservation.observation!.rawData!.mapState!.visibility!;
@@ -170,7 +166,11 @@ describe('UnitResource', () => {
 
         expect(tagsOf(units.getEnemyUnits())).toEqual([OVERLORD]);
         expect(sortedTags(units.getAll(Alliance.ENEMY))).toEqual([...ZERGLINGS, OVERLORD, ...ENEMY_SNAPSHOTS].sort());
-        expect([zergling.isMemory(), zergling.isSnapshot(), zergling.age()]).toEqual([true, false, (940 - 896) / 22.4]);
+        expect([zergling.isMemory(), zergling.isSnapshot(), zergling.age()]).toEqual([
+            true,
+            false,
+            (940 - 896) / GAME_LOOPS_PER_SECOND,
+        ]);
         expect([hatchery.isMemory(), hatchery.isSnapshot(), hatchery.age()]).toEqual([false, true, 0]);
         expect([overlord.isMemory(), overlord.isSnapshot(), overlord.age()]).toEqual([false, false, 0]);
 

@@ -1,8 +1,8 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 import { Race } from '../../constants/enums.ts';
 import { Ability, UnitType } from '../../constants/index.ts';
-import { createTestWorld, loadFixture } from '../../test/create-test-world.ts';
-import { observation, rawUnit } from '../../test/factories.ts';
+import { executeBehavior, macroWorld } from '../../test/behavior-helpers.ts';
+import { rawUnit } from '../../test/factories.ts';
 import type { FlightPlan, TrackedBuild } from '../../types.ts';
 import { productionController } from './production.ts';
 
@@ -26,16 +26,7 @@ async function setup(
         plans = [] as FlightPlan[],
     } = {},
 ) {
-    const fixture = loadFixture('blueshift');
-    fixture.observations = {
-        0: observation({
-            mapSize: fixture.gameInfo.startRaw!.mapSize,
-            playerCommon: { minerals, vespene, foodCap: 100, foodUsed: 20 },
-            units,
-        }),
-    };
-    const world = await createTestWorld(fixture);
-    world.agent.race = race;
+    const world = await macroWorld(units, { minerals, vespene, race });
     const { actions, buildings, flying, frame } = world.resources.get();
     spyOn(frame, 'getScore').mockReturnValue({
         scoreDetails: { collectionRateMinerals: rate, collectionRateVespene: gasRate },
@@ -48,15 +39,10 @@ async function setup(
     };
 }
 
-const execute = (
-    world: Awaited<ReturnType<typeof setup>>['world'],
-    options: Parameters<typeof productionController>[0],
-) => world.resources.get().behaviors.run(productionController(options));
-
 describe('productionController', () => {
     it('adds a barracks when income supports it and none is idle', async () => {
         const { world, build } = await setup([depot, busyRax('rax')]);
-        expect(await execute(world, { composition, base })).toBe(true);
+        expect(await executeBehavior(world, productionController({ composition, base }))).toBe(true);
         expect(build).toHaveBeenCalledWith(UnitType.BARRACKS, {
             placement: { base, flags: ['production'], findAlternative: true },
         });
@@ -68,7 +54,7 @@ describe('productionController', () => {
         [400, 399, false],
     ])('with an idle barracks, banking %d/%d adds one: %p', async (minerals, vespene, built) => {
         const { world, build } = await setup([depot, idleRax], { minerals, vespene, rate: 600 });
-        expect(await execute(world, { composition, base })).toBe(built);
+        expect(await executeBehavior(world, productionController({ composition, base }))).toBe(built);
         expect(build).toHaveBeenCalledTimes(built ? 1 : 0);
     });
 
@@ -77,15 +63,18 @@ describe('productionController', () => {
         [600, true],
     ])('banked reapers at gas income %d add a barracks: %p', async (gasRate, built) => {
         const { world, build } = await setup([depot, idleRax], { minerals: 1000, rate: 600, gasRate });
-        expect(await execute(world, { composition: { [UnitType.REAPER]: { proportion: 1, priority: 0 } }, base })).toBe(
-            built,
-        );
+        expect(
+            await executeBehavior(
+                world,
+                productionController({ composition: { [UnitType.REAPER]: { proportion: 1, priority: 0 } }, base }),
+            ),
+        ).toBe(built);
         expect(build).toHaveBeenCalledTimes(built ? 1 : 0);
     });
 
     it('counts only ready barracks plus pending toward banked production', async () => {
         const { world, build } = await setup([depot, idleRax, raxAt(0.5)], { minerals: 1000, rate: 200 });
-        expect(await execute(world, { composition, base })).toBe(true);
+        expect(await executeBehavior(world, productionController({ composition, base }))).toBe(true);
         expect(build).toHaveBeenCalledTimes(1);
     });
 
@@ -97,7 +86,7 @@ describe('productionController', () => {
             [depot, busyRax('rax'), rawUnit({ tag: 'flyer', unitType: UnitType.BARRACKSFLYING, pos: { x, y: 16 } })],
             { plans: [{ tag: 'flyer', destination: base, land: true, state: 'flying', startedAt: 0 }] },
         );
-        expect(await execute(world, { composition, base })).toBe(built);
+        expect(await executeBehavior(world, productionController({ composition, base }))).toBe(built);
         expect(build).toHaveBeenCalledTimes(built ? 1 : 0);
     });
 
@@ -107,7 +96,7 @@ describe('productionController', () => {
             busyRax('rax'),
             rawUnit({ tag: 'marine', unitType: UnitType.MARINE }),
         ]);
-        expect(await execute(world, { composition, base })).toBe(false);
+        expect(await executeBehavior(world, productionController({ composition, base }))).toBe(false);
         expect(build).not.toHaveBeenCalled();
     });
 
@@ -120,7 +109,10 @@ describe('productionController', () => {
         async (proportion, rate, built) => {
             const { world, build } = await setup([depot, busyRax('rax'), raxAt(0.5)], { rate });
             expect(
-                await execute(world, { composition: { [UnitType.MARINE]: { proportion, priority: 0 } }, base }),
+                await executeBehavior(
+                    world,
+                    productionController({ composition: { [UnitType.MARINE]: { proportion, priority: 0 } }, base }),
+                ),
             ).toBe(built);
             expect(build).toHaveBeenCalledTimes(built ? 1 : 0);
         },
@@ -133,7 +125,7 @@ describe('productionController', () => {
         ['construction at 0.89', raxAt(0.89), true],
     ])('a second barracks with %s lets one be added: %p', async (_, rax, built) => {
         const { world, build } = await setup([depot, busyRax('rax'), rax]);
-        expect(await execute(world, { composition, base })).toBe(built);
+        expect(await executeBehavior(world, productionController({ composition, base }))).toBe(built);
         expect(build).toHaveBeenCalledTimes(built ? 1 : 0);
     });
 
@@ -148,9 +140,12 @@ describe('productionController', () => {
             ],
             { race: Race.PROTOSS },
         );
-        expect(await execute(world, { composition: { [UnitType.ZEALOT]: { proportion: 1, priority: 0 } }, base })).toBe(
-            built,
-        );
+        expect(
+            await executeBehavior(
+                world,
+                productionController({ composition: { [UnitType.ZEALOT]: { proportion: 1, priority: 0 } }, base }),
+            ),
+        ).toBe(built);
         expect(build.mock.calls).toEqual(
             built ? [[UnitType.GATEWAY, { placement: { base, flags: ['production'], findAlternative: true } }]] : [],
         );
@@ -159,7 +154,10 @@ describe('productionController', () => {
     it('techs up before adding production', async () => {
         const { world, build, queued } = await setup([depot, idleRax]);
         expect(
-            await execute(world, { composition: { [UnitType.MARAUDER]: { proportion: 1, priority: 0 } }, base }),
+            await executeBehavior(
+                world,
+                productionController({ composition: { [UnitType.MARAUDER]: { proportion: 1, priority: 0 } }, base }),
+            ),
         ).toBe(true);
         expect(queued.mock.calls.map(([command]) => command)).toMatchObject([
             { abilityId: Ability.BUILD_TECHLAB_BARRACKS, unitTags: ['idle'] },
@@ -170,13 +168,15 @@ describe('productionController', () => {
     it('stops at the income cap', async () => {
         const raxes = Array.from({ length: 8 }, (_, i) => busyRax(`rax${i}`));
         const { world, build } = await setup([depot, ...raxes]);
-        expect(await execute(world, { composition, base })).toBe(false);
+        expect(await executeBehavior(world, productionController({ composition, base }))).toBe(false);
         expect(build).not.toHaveBeenCalled();
     });
 
     it('stops at maxProductionStructures', async () => {
         const { world, build } = await setup([depot, busyRax('rax')]);
-        expect(await execute(world, { composition, base, maxProductionStructures: 1 })).toBe(false);
+        expect(
+            await executeBehavior(world, productionController({ composition, base, maxProductionStructures: 1 })),
+        ).toBe(false);
         expect(build).not.toHaveBeenCalled();
     });
 
@@ -185,20 +185,20 @@ describe('productionController', () => {
             rawUnit({ tag: 'depot', unitType: UnitType.SUPPLYDEPOT, buildProgress: 0.5 }),
             busyRax('rax'),
         ]);
-        expect(await execute(world, { composition, base })).toBe(false);
+        expect(await executeBehavior(world, productionController({ composition, base }))).toBe(false);
         expect(build).not.toHaveBeenCalled();
     });
 
     it('treats missing score as zero income instead of throwing', async () => {
         const { world, build } = await setup([depot, busyRax('rax')]);
         spyOn(world.resources.get().frame, 'getScore').mockReturnValue(null as never);
-        expect(await execute(world, { composition, base })).toBe(false);
+        expect(await executeBehavior(world, productionController({ composition, base }))).toBe(false);
         expect(build).not.toHaveBeenCalled();
     });
 
     it('returns false for Zerg', async () => {
         const { world, build } = await setup([busyRax('rax')], { race: Race.ZERG });
-        expect(await execute(world, { composition, base })).toBe(false);
+        expect(await executeBehavior(world, productionController({ composition, base }))).toBe(false);
         expect(build).not.toHaveBeenCalled();
     });
 });

@@ -8,7 +8,10 @@ import {
 } from '../constants/influence.ts';
 import * as Effect from '../constants/effect.ts';
 import { Alliance } from '../constants/enums.ts';
+import { NodeSC2Error } from '../engine/errors.ts';
 import * as UnitType from '../constants/unit-type.ts';
+import { CHANGELINGS } from '../utils/combat/changelings.ts';
+import { asArray } from '../utils/collections.ts';
 import { addCircle } from '../utils/grid/stamp.ts';
 import type { InfluenceSource } from '../constants/influence.ts';
 import type {
@@ -16,6 +19,7 @@ import type {
     InfluenceLayer,
     InfluenceResource,
     InfluenceSettings,
+    OwnedEffect,
     Point2D,
     ResourceDefinition,
     Unit,
@@ -23,27 +27,29 @@ import type {
 } from '../types.ts';
 import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
 
-const LAYERS: InfluenceLayer[] = ['ground', 'air', 'groundAvoidance', 'airAvoidance'];
+const LAYERS: InfluenceLayer[] = [
+    'ground',
+    'air',
+    'groundAvoidance',
+    'airAvoidance',
+    'climber',
+    'airVsGround',
+    'groundToAir',
+    'priorityGroundAvoidance',
+    'tacticalGround',
+];
 
-const CHANGELINGS = new Set([
-    UnitType.CHANGELING,
-    UnitType.CHANGELINGMARINE,
-    UnitType.CHANGELINGMARINESHIELD,
-    UnitType.CHANGELINGZEALOT,
-    UnitType.CHANGELINGZERGLING,
-    UnitType.CHANGELINGZERGLINGWINGS,
-]);
+const AIR_LAYERS = new Set<InfluenceLayer>(['air', 'airAvoidance', 'airVsGround', 'groundToAir', 'tacticalGround']);
 
 const LIBERATOR_ZONES = new Set([Effect.LIBERATORTARGETMORPHDELAYPERSISTENT, Effect.LIBERATORTARGETMORPHPERSISTENT]);
-
-// proto typings omit Effect.alliance, but the bundled decoder fills it
-type EffectWithAlliance = SC2APIProtocol.Effect & { alliance?: SC2APIProtocol.Alliance };
 
 type Grids = Record<InfluenceLayer, InfluenceGrid>;
 
 type State = { settings: InfluenceSettings; grids?: Grids; builtLoop: number };
 
-const stateByResource = new WeakMap<InfluenceResource, State>();
+export const stateByInfluence = new WeakMap<InfluenceResource, State>();
+
+const freshState = (settings: InfluenceSettings): State => ({ settings, builtLoop: -1 });
 
 function createGrid(layer: InfluenceLayer, width: number, height: number): InfluenceGrid {
     const data = new Float32Array(width * height);
@@ -65,6 +71,20 @@ function clampToOne(data: Float32Array, start = 0, end = data.length) {
     for (let i = start; i < end; i++) if (data[i] < 1) data[i] = 1;
 }
 
+function fillBase(world: World, width: number, height: number, ground?: Float32Array, air?: Float32Array) {
+    const { frame, map } = world.resources.get();
+    const pathing = map.getGrids().pathing ?? [];
+    const { p0, p1 } = frame.getGameInfo().startRaw?.playableArea ?? {};
+    const [x0, y0, x1, y1] = [p0?.x ?? 0, p0?.y ?? 0, p1?.x ?? width, p1?.y ?? height];
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const i = y * width + x;
+            if (ground) ground[i] = pathing[y]?.[x] === 0 ? 1 : Infinity;
+            if (air) air[i] = x >= x0 && x < x1 && y >= y0 && y < y1 ? 1 : Infinity;
+        }
+    }
+}
+
 function build(world: World, state: State): Grids {
     const { frame, map, memory } = world.resources.get();
     const { x: width = 0, y: height = 0 } = map.getSize();
@@ -76,20 +96,15 @@ function build(world: World, state: State): Grids {
     const grids = state.grids;
     const { settings } = state;
 
-    const pathing = map._grids.pathing ?? [];
-    const { p0, p1 } = frame.getGameInfo().startRaw?.playableArea ?? {};
-    const [x0, y0, x1, y1] = [p0?.x ?? 0, p0?.y ?? 0, p1?.x ?? width, p1?.y ?? height];
-    for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-            const i = y * width + x;
-            const ground = pathing[y]?.[x] === 0 ? 1 : Infinity;
-            const air = x >= x0 && x < x1 && y >= y0 && y < y1 ? 1 : Infinity;
-            grids.ground.data[i] = ground;
-            grids.groundAvoidance.data[i] = ground;
-            grids.air.data[i] = air;
-            grids.airAvoidance.data[i] = air;
-        }
-    }
+    fillBase(world, width, height, grids.ground.data, grids.air.data);
+    grids.groundAvoidance.data.set(grids.ground.data);
+    grids.airAvoidance.data.set(grids.air.data);
+    // placeholder bases until R2-T10 builds the real ones
+    grids.climber.data.set(grids.ground.data);
+    grids.priorityGroundAvoidance.data.set(grids.ground.data);
+    grids.airVsGround.data.set(grids.air.data);
+    grids.groundToAir.data.set(grids.air.data);
+    grids.tacticalGround.data.set(grids.air.data);
 
     const stamp = (layers: readonly InfluenceLayer[], center: Point2D, radius: number, weight: number) => {
         for (const layer of layers)
@@ -132,7 +147,7 @@ function build(world: World, state: State): Grids {
         if (avoidance) stampSource(enemy, avoidance);
     }
 
-    for (const effect of map.getEffects() as EffectWithAlliance[]) {
+    for (const effect of map.getEffects() as OwnedEffect[]) {
         // deliberate ares deviation: our own liberator zones don't threaten our units
         if (LIBERATOR_ZONES.has(effect.effectId!) && effect.alliance === Alliance.SELF) continue;
         const influence = EFFECT_INFLUENCE[effect.effectId!];
@@ -159,11 +174,8 @@ function build(world: World, state: State): Grids {
 export const influenceResource: ResourceDefinition<'influence'> = {
     name: 'influence',
     create(world) {
-        const state: State = {
-            settings: { ...INFLUENCE_DEFAULTS, effects: {} },
-            builtLoop: -1,
-        };
         const current = (): Grids => {
+            const state = stateByInfluence.get(resource)!;
             const loop = world.resources.get().frame.getGameLoop();
             if (!state.grids || state.builtLoop !== loop) {
                 build(world, state);
@@ -176,10 +188,21 @@ export const influenceResource: ResourceDefinition<'influence'> = {
             getGrid(layer) {
                 return current()[layer];
             },
-            addCost(layers, center, radius, weight) {
-                const grids = current();
-                for (const layer of Array.isArray(layers) ? layers : [layers]) {
-                    const { data, width, height } = grids[layer];
+            getCleanGrid(layer) {
+                const { x: width = 0, y: height = 0 } = world.resources.get().map.getSize();
+                const grid = createGrid(layer, width, height);
+                const isAir = AIR_LAYERS.has(layer);
+                if (isAir) fillBase(world, width, height, undefined, grid.data);
+                else fillBase(world, width, height, grid.data);
+                return grid;
+            },
+            getForcefieldPositions() {
+                throw new NodeSC2Error('not implemented: getForcefieldPositions');
+            },
+            addCost(target, center, radius, weight) {
+                const targets = asArray(target);
+                for (const entry of targets) {
+                    const { data, width, height } = typeof entry === 'string' ? current()[entry] : entry;
                     addCircle(data, width, height, center.x, center.y, radius, weight);
                     const reach = Math.floor(radius);
                     const firstRow = Math.max(0, Math.floor(center.y) - reach);
@@ -188,14 +211,14 @@ export const influenceResource: ResourceDefinition<'influence'> = {
                 }
             },
             configure(settings) {
-                Object.assign(state.settings, settings, {
-                    effects: { ...state.settings.effects, ...settings.effects },
-                });
+                const { settings: kept } = stateByInfluence.get(resource)!;
+                Object.assign(kept, settings, { effects: { ...kept.effects, ...settings.effects } });
             },
-            drawDebug(layer, { threshold = 1 } = {}) {
+            drawDebug(target, { threshold = 1 } = {}) {
                 const { debug } = world.resources.get();
                 if (!debug) return;
-                const { data, width } = current()[layer];
+                const grid = typeof target === 'string' ? current()[target] : target;
+                const { data, width, layer } = grid;
                 const cells = [];
                 for (let i = 0; i < data.length; i++) {
                     if (data[i] > threshold && Number.isFinite(data[i]))
@@ -207,12 +230,10 @@ export const influenceResource: ResourceDefinition<'influence'> = {
                 debug.setDrawCells(`influence-${layer}`, cells);
             },
         };
-        stateByResource.set(resource, state);
+        stateByInfluence.set(resource, freshState({ ...INFLUENCE_DEFAULTS, effects: {} }));
         return resource;
     },
     reset(resource) {
-        const state = stateByResource.get(resource)!;
-        state.grids = undefined;
-        state.builtLoop = -1;
+        stateByInfluence.set(resource, freshState(stateByInfluence.get(resource)!.settings));
     },
 };

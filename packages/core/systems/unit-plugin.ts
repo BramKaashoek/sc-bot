@@ -1,6 +1,5 @@
+import { NOOP } from '../utils/collections.ts';
 import type { EventReader, System, Unit, UnitSystemObject, World } from '../types.ts';
-
-const NOOP = () => {};
 
 export default function unitPlugin(system: EventReader<System>) {
     const unitSystem = system as unknown as UnitSystemObject;

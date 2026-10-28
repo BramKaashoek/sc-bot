@@ -25,7 +25,14 @@ type OpeningsState = {
     inReplay: boolean;
 };
 
-const stateByOpenings = new WeakMap<OpeningsResource, OpeningsState>();
+export const stateByOpenings = new WeakMap<OpeningsResource, OpeningsState>();
+
+const freshState = (settings: OpeningSettings): OpeningsState => ({
+    settings,
+    decided: false,
+    history: [],
+    inReplay: false,
+});
 
 const raceName = (race: SC2APIProtocol.Race | undefined) => RACE_NAMES[race ?? Race.NORACE] ?? 'Random';
 
@@ -104,26 +111,20 @@ function chooseWinrate(cycle: string[], history: OpeningRecord[], minGames: numb
 export const openingsResource: ResourceDefinition<'openings'> = {
     name: 'openings',
     create(world) {
-        const state: OpeningsState = {
-            settings: { builds: {}, choices: {}, method: 'cycle', minGames: 3 },
-            decided: false,
-            history: [],
-            inReplay: false,
-        };
-
-        const loadHistory = () => {
+        const loadHistory = (state: OpeningsState) => {
             const { dataDir } = state.settings;
             if (dataDir !== undefined) state.history = readHistory(historyPath(world, dataDir));
         };
 
         const openings: OpeningsResource = {
             configure(next) {
-                Object.assign(state.settings, next);
+                Object.assign(stateByOpenings.get(openings)!.settings, next);
             },
             getDefinitions() {
-                return state.settings.builds;
+                return stateByOpenings.get(openings)!.settings.builds;
             },
-            choose(available = Object.keys(state.settings.builds)) {
+            choose(available = Object.keys(stateByOpenings.get(openings)!.settings.builds)) {
+                const state = stateByOpenings.get(openings)!;
                 if (state.decided) return state.chosen;
                 state.decided = true;
 
@@ -134,7 +135,7 @@ export const openingsResource: ResourceDefinition<'openings'> = {
                 const cycle = (listed ?? available).filter((name) => available.includes(name));
                 if (cycle.length === 0) return undefined;
 
-                loadHistory();
+                loadHistory(state);
                 state.chosen =
                     method === 'winrate'
                         ? chooseWinrate(cycle, state.history, minGames)
@@ -142,26 +143,23 @@ export const openingsResource: ResourceDefinition<'openings'> = {
                 return state.chosen;
             },
             record(name) {
-                if (!state.decided) loadHistory();
+                const state = stateByOpenings.get(openings)!;
+                if (!state.decided) loadHistory(state);
                 state.decided = true;
                 state.chosen = name;
             },
             getChosen() {
-                return state.chosen;
+                return stateByOpenings.get(openings)!.chosen;
             },
             getHistory() {
-                return state.history;
+                return stateByOpenings.get(openings)!.history;
             },
         };
-        stateByOpenings.set(openings, state);
+        stateByOpenings.set(openings, freshState({ builds: {}, choices: {}, method: 'cycle', minGames: 3 }));
         return openings;
     },
     reset(openings) {
-        const state = stateByOpenings.get(openings)!;
-        state.decided = false;
-        state.chosen = undefined;
-        state.history = [];
-        state.inReplay = false;
+        stateByOpenings.set(openings, freshState(stateByOpenings.get(openings)!.settings));
     },
     onStep(openings, world) {
         const state = stateByOpenings.get(openings)!;

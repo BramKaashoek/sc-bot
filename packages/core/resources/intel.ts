@@ -1,4 +1,7 @@
 import { Alliance, Race } from '../constants/enums.ts';
+import * as Buff from '../constants/buff.ts';
+import { DETECTOR_RANGES, SCANNER_SWEEP_RANGE } from '../constants/detection.ts';
+import * as Effect from '../constants/effect.ts';
 import { creepTumorTypes, gasMineTypes, townhallTypes, workerTypes } from '../constants/groups.ts';
 import { TownhallRace } from '../constants/race-map.ts';
 import * as UnitType from '../constants/unit-type.ts';
@@ -9,6 +12,7 @@ import type {
     IntelFlag,
     IntelResource,
     IntelSettings,
+    OwnedEffect,
     Point2D,
     ResourceDefinition,
     Unit,
@@ -25,6 +29,8 @@ const DEFAULT_SETTINGS: IntelSettings = {
     greedyThreeHatchBefore: 90,
 };
 
+type Detector = { pos: Point2D; range: number };
+
 type Kind = 'ground' | 'air';
 
 type IntelState = {
@@ -34,14 +40,21 @@ type IntelState = {
     townhallStarts: Map<string, number>;
 };
 
-const stateByIntel = new WeakMap<IntelResource, IntelState>();
+export const stateByIntel = new WeakMap<IntelResource, IntelState>();
 
-type Places = { ownStart: Point2D; ownNatural?: Point2D; enemyStart?: Point2D; enemyNatural?: Point2D };
+const freshState = (settings: IntelSettings): IntelState => ({
+    settings,
+    threats: new Map(),
+    detected: new Map(),
+    townhallStarts: new Map(),
+});
+
+type Places = { ownStart?: Point2D; ownNatural?: Point2D; enemyStart?: Point2D; enemyNatural?: Point2D };
 
 function places(world: World): Places {
     const { map } = world.resources.get();
     return {
-        ownStart: map.getMain().townhallPosition,
+        ownStart: map.getMain()?.townhallPosition,
         ownNatural: map.getNatural()?.townhallPosition,
         enemyStart: map.getLocations().enemy?.[0],
         enemyNatural: map.getEnemyNatural()?.townhallPosition,
@@ -182,13 +195,6 @@ function trackThreats(world: World, state: IntelState) {
 export const intelResource: ResourceDefinition<'intel'> = {
     name: 'intel',
     create(world) {
-        const state: IntelState = {
-            settings: { ...DEFAULT_SETTINGS },
-            threats: new Map(),
-            detected: new Map(),
-            townhallStarts: new Map(),
-        };
-
         const resolve = (tags: Set<string>) =>
             Units.from(
                 [...tags].flatMap((tag) => {
@@ -199,10 +205,35 @@ export const intelResource: ResourceDefinition<'intel'> = {
         const supplyOf = (group: Unit[]) =>
             group.reduce((sum, unit) => sum + (unit.isStructure() ? 0 : (unit.data().foodRequired ?? 0)), 0);
 
+        const cache = new Map<number, { loop: number; detectors: Detector[] }>();
+        let ownInRange: { loop: number; tags: Set<string> } | undefined;
+        const detectorsFor = (alliance: number): Detector[] => {
+            const { frame, memory, units, map } = world.resources.get();
+            const loop = frame.getGameLoop();
+            const cached = cache.get(alliance);
+            if (cached?.loop === loop) return cached.detectors;
+            const detectors: Detector[] = [];
+            for (const effect of map.getEffects() as OwnedEffect[]) {
+                const pos = effect.pos?.[0];
+                if (effect.effectId === Effect.SCANNERSWEEP && effect.alliance === alliance && pos)
+                    detectors.push({ pos: { x: pos.x!, y: pos.y! }, range: SCANNER_SWEEP_RANGE });
+            }
+            const source =
+                alliance === Alliance.ENEMY
+                    ? memory.getEnemies().filter((unit) => unit.isCurrent())
+                    : units.getAlive(alliance);
+            for (const unit of source) {
+                const range = DETECTOR_RANGES[unit.unitType];
+                if (range !== undefined) detectors.push({ pos: unit.pos, range });
+            }
+            cache.set(alliance, { loop, detectors });
+            return detectors;
+        };
+
         const intel: IntelResource = {
             getBaseThreats() {
                 const { units } = world.resources.get();
-                return [...state.threats].flatMap(([tag, sets]): BaseThreat[] => {
+                return [...stateByIntel.get(intel)!.threats].flatMap(([tag, sets]): BaseThreat[] => {
                     const townhall = units.getByTag(tag);
                     if (!townhall || sets.ground.size + sets.air.size === 0) return [];
                     const ground = resolve(sets.ground);
@@ -221,26 +252,45 @@ export const intelResource: ResourceDefinition<'intel'> = {
                     );
             },
             has(flag) {
-                return state.detected.has(flag);
+                return stateByIntel.get(intel)!.detected.has(flag);
             },
             detectedAt(flag) {
-                return state.detected.get(flag);
+                return stateByIntel.get(intel)!.detected.get(flag);
             },
             getProxies() {
                 return Units.from(proxiesOf([...world.resources.get().memory.getEnemies()], places(world)));
             },
+            getEnemyDetectors() {
+                return detectorsFor(Alliance.ENEMY);
+            },
+            isDetected(target, opts) {
+                const isUnit = 'hasBuff' in target;
+                if (isUnit && target.hasBuff(Buff.ORACLEREVELATION)) return true;
+                const pos = isUnit ? target.pos : target;
+                const detectors = detectorsFor(opts?.byEnemy === false ? Alliance.SELF : Alliance.ENEMY);
+                return detectors.some((detector) => distance(pos, detector.pos) < detector.range);
+            },
+            getOwnUnitsInDetectorRange() {
+                const { frame, spatial } = world.resources.get();
+                const loop = frame.getGameLoop();
+                if (ownInRange?.loop !== loop) {
+                    const tags = new Set<string>();
+                    for (const detector of detectorsFor(Alliance.ENEMY))
+                        for (const unit of spatial.unitsInRange(detector.pos, detector.range, 'own'))
+                            tags.add(unit.tag!);
+                    ownInRange = { loop, tags };
+                }
+                return ownInRange.tags;
+            },
             configure(settings) {
-                Object.assign(state.settings, settings);
+                Object.assign(stateByIntel.get(intel)!.settings, settings);
             },
         };
-        stateByIntel.set(intel, state);
+        stateByIntel.set(intel, freshState({ ...DEFAULT_SETTINGS }));
         return intel;
     },
     reset(intel) {
-        const state = stateByIntel.get(intel)!;
-        state.threats.clear();
-        state.detected.clear();
-        state.townhallStarts.clear();
+        stateByIntel.set(intel, freshState(stateByIntel.get(intel)!.settings));
     },
     onStep(intel, world) {
         const state = stateByIntel.get(intel)!;

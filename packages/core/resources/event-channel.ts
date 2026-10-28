@@ -1,8 +1,11 @@
 import createDebug from 'debug';
 import shortid from 'shortid';
-import type { EventChannel, EventType, ReaderId, SystemEvent, World } from '../types.ts';
+import type { EventChannel, EventType, ReaderId, ResourceDefinition, SystemEvent, World } from '../types.ts';
 
 const debugEventSilly = createDebug('sc2:silly:EventChannel');
+
+const normaliseEventType = (type?: EventType): EventType =>
+    !type || type === 'build' || type === 'unit' ? 'agent' : type;
 
 function createEventChannel({ resources }: World): EventChannel {
     let events: SystemEvent[] = [];
@@ -13,8 +16,7 @@ function createEventChannel({ resources }: World): EventChannel {
 
     return {
         createReader(type) {
-            // by default, only subscribe to agent events
-            const readerType = type ? (type === 'build' || type === 'unit' ? 'agent' : type) : 'agent';
+            const readerType = normaliseEventType(type);
             const readerId = shortid.generate();
 
             debugEventSilly(`new reader registered of type ${readerType}`);
@@ -32,12 +34,10 @@ function createEventChannel({ resources }: World): EventChannel {
 
         read(readerId) {
             debugEventSilly(`all current events: ${events.map((event) => event.name)}`);
-            // get all events holding this readerId
             const unreadEvents = events.filter((event) => event.readers.includes(readerId));
             debugEventSilly(
                 `Reading events for ${readerId}, the following are unread: ${unreadEvents.map((event) => event.name)}`,
             );
-            // remove the reader id from the event, essentially 'consuming' it
             unreadEvents.forEach((event) => event.consume(readerId));
 
             return unreadEvents;
@@ -47,11 +47,12 @@ function createEventChannel({ resources }: World): EventChannel {
             const { frame } = resources.get();
 
             const eventType = event.type || 'agent';
+            const matchType = normaliseEventType(eventType);
             const currentFrame = frame.getGameLoop();
 
             const currentReaders = readers
                 .filter((reader) => (readerId ? reader !== readerId : true))
-                .filter((reader) => eventType === 'all' || readerTypes[reader] === eventType);
+                .filter((reader) => matchType === 'all' || readerTypes[reader] === matchType);
 
             // @TODO: possible future perf issues - consider mutating the given event argument + creating an
             // event prototype for consume / destroy / future implemented methods
@@ -67,7 +68,6 @@ function createEventChannel({ resources }: World): EventChannel {
                         `consuming ${event.name} event for ${readerId} - ${this.readers.length} readers left to consume this event.`,
                     );
 
-                    // if there are no more readers, remove it from the event channel queue
                     if (this.readers.length <= 0) {
                         this.destroy();
                         debugEventSilly(`${event.name} event consumed, event queue length: ${events.length}`);
@@ -85,4 +85,7 @@ function createEventChannel({ resources }: World): EventChannel {
     };
 }
 
-export default createEventChannel;
+export const eventsResource: ResourceDefinition<'events'> = {
+    name: 'events',
+    create: (world) => createEventChannel(world),
+};

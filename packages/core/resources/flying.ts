@@ -2,6 +2,7 @@ import * as Ability from '../constants/ability.ts';
 import { Alliance } from '../constants/enums.ts';
 import { flyingStructureTypes, reactorTypes, techLabTypes } from '../constants/groups.ts';
 import * as UnitType from '../constants/unit-type.ts';
+import { toTag } from '../utils/collections.ts';
 import { distanceSquared } from '../utils/geometry/point.ts';
 import type { FlightPlan, FlyingStructures, Point2D, ResourceDefinition, Unit, World } from '../types.ts';
 
@@ -20,7 +21,9 @@ const LIFT_ORDERS = [
     Ability.LIFT_STARPORT,
 ];
 
-const stateByFlying = new WeakMap<FlyingStructures, State>();
+export const stateByFlying = new WeakMap<FlyingStructures, State>();
+
+const freshState = (settings: State['settings']): State => ({ settings, plans: new Map() });
 
 const hasAddon = (unit: Unit) => !!unit.addOnTag && unit.addOnTag !== '0';
 
@@ -70,7 +73,7 @@ function fly(world: World, plan: Plan, unit: Unit) {
 
 export const flyingResource: ResourceDefinition<'flying'> = {
     name: 'flying',
-    create: (world) => {
+    create(world) {
         const flying: FlyingStructures = {
             move(structure, destination, { land = true } = {}) {
                 stateByFlying.get(flying)!.plans.set(structure.tag, {
@@ -110,7 +113,7 @@ export const flyingResource: ResourceDefinition<'flying'> = {
                 return true;
             },
             cancel(structure) {
-                stateByFlying.get(flying)!.plans.delete(typeof structure === 'string' ? structure : structure.tag);
+                stateByFlying.get(flying)!.plans.delete(toTag(structure));
             },
             getPlans() {
                 return [...stateByFlying.get(flying)!.plans.values()].map((plan) =>
@@ -121,13 +124,13 @@ export const flyingResource: ResourceDefinition<'flying'> = {
                 Object.assign(stateByFlying.get(flying)!.settings, settings);
             },
         };
-        stateByFlying.set(flying, { settings: { priority: 10 }, plans: new Map() });
+        stateByFlying.set(flying, freshState({ priority: 10 }));
         return flying;
     },
-    reset: (flying) => {
-        stateByFlying.get(flying)!.plans.clear();
+    reset(flying) {
+        stateByFlying.set(flying, freshState(stateByFlying.get(flying)!.settings));
     },
-    onStep: (flying, world) => {
+    onStep(flying, world) {
         const { plans, settings } = stateByFlying.get(flying)!;
         if (plans.size === 0) return;
         const { units, actions } = world.resources.get();

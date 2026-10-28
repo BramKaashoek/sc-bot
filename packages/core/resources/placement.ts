@@ -1,11 +1,11 @@
 import createDebug from 'debug';
 import Color from '../constants/color.ts';
 import { Race } from '../constants/enums.ts';
+import { NodeSC2Error } from '../engine/errors.ts';
 import { addonHostTypes, flyingStructureTypes, gasMineTypes } from '../constants/groups.ts';
 import * as UnitType from '../constants/unit-type.ts';
 import { distance, distanceSquared, towards } from '../utils/geometry/point.ts';
-import { footprintData, getFootprint } from '../utils/geometry/units.ts';
-import { isFlying } from './units-collection.ts';
+import { footprintData, getFootprint, isFlying } from '../utils/geometry/units.ts';
 import {
     type BuildingScan,
     type FormationGrids,
@@ -59,7 +59,7 @@ const CREEP_EXEMPT = [UnitType.HATCHERY, UnitType.NYDUSCANAL];
 const SIZE_BY_WIDTH: Record<number, BuildingSize> = { 2: '2x2', 3: '3x3', 5: '5x5' };
 const WIDTH_BY_SIZE: Record<BuildingSize, number> = { '2x2': 2, '3x3': 3, '5x5': 5 };
 
-const stateByPlacement = new WeakMap<PlacementResource, State>();
+export const stateByPlacement = new WeakMap<PlacementResource, State>();
 
 const freshState = (settings: PlacementSettings): State => ({
     settings,
@@ -124,7 +124,7 @@ function createGrids(world: World): FormationGrids {
 
 function refreshLive(world: World, grids: FormationGrids): FormationGrids {
     const { map } = world.resources.get();
-    const { placement, pathing } = map._grids;
+    const { placement, pathing } = map.getGrids();
     const { creep } = map._mapState;
     for (let y = 0; y < grids.height; y++) {
         for (let x = 0; x < grids.width; x++) {
@@ -162,7 +162,7 @@ function footprintAvoided(grids: FormationGrids, pos: Point2D, size: BuildingSiz
 
 function cellsFree(world: World, x0: number, y0: number, w: number, h: number, checkCreep: boolean) {
     const { map } = world.resources.get();
-    const { placement, pathing } = map._grids;
+    const { placement, pathing } = map.getGrids();
     const { creep } = map._mapState;
     for (let y = y0; y < y0 + h; y++) {
         const placementRow = placement![y];
@@ -324,7 +324,8 @@ function solveProtoss(world: World, state: State) {
     const { map, placer } = world.resources.get();
     const grids = state.grids!;
     const expansions = map.getExpansions();
-    const main = map.getMain().townhallPosition;
+    // own main exists once the game has started
+    const main = map.getMain()!.townhallPosition;
 
     addUserPlacements(world, state, [...(placer?.placements?.(world) ?? []), ...state.pending]);
     state.pending = [];
@@ -371,7 +372,7 @@ function solveTerran(world: World, state: State) {
     const { map, placer } = world.resources.get();
     const grids = state.grids!;
     const expansions = map.getExpansions();
-    const main = map.getMain().townhallPosition;
+    const main = map.getMain()!.townhallPosition;
     const enemyMain = attempt(() => map.getEnemyMain()?.townhallPosition);
 
     markMineralLines(world, grids);
@@ -431,7 +432,7 @@ function select(world: World, candidates: Spot[], base: Point2D, opts: Placement
 
     if (flags.includes('wall')) {
         const { map } = world.resources.get();
-        const isMain = samePos(base, map.getMain().townhallPosition);
+        const isMain = samePos(base, map.getMain()!.townhallPosition);
         const rampTop = isMain ? attempt(() => map.getMainBaseRamp())?.topCenter : undefined;
         const wallClosestTo = opts.closestTo ?? rampTop ?? base;
         const others = flags.filter((flag) => flag !== 'wall');
@@ -501,7 +502,7 @@ const STATE_COLORS: Record<PlacementState, ColorType> = {
 
 export const placementResource: ResourceDefinition<'placement'> = {
     name: 'placement',
-    create: (world) => {
+    create(world) {
         const placement: PlacementResource = {
             request(unitType, opts = {}) {
                 const state = stateByPlacement.get(placement)!;
@@ -510,7 +511,7 @@ export const placementResource: ResourceDefinition<'placement'> = {
                 if (size !== '2x2' && size !== '3x3') return undefined;
 
                 const { map } = world.resources.get();
-                const origin = opts.base ?? map.getMain().townhallPosition;
+                const origin = opts.base ?? map.getMain()!.townhallPosition;
                 const solvedBases = state.spots.map((spot) => ({ pos: spot.base }));
                 const base = closest(solvedBases, origin)?.pos;
                 if (!base) return undefined;
@@ -593,6 +594,12 @@ export const placementResource: ResourceDefinition<'placement'> = {
                 refreshLive(world, state.grids);
                 addUserPlacements(world, state, placements);
             },
+            getGatekeeperPositions() {
+                throw new NodeSC2Error('not implemented: getGatekeeperPositions');
+            },
+            getNatGatekeeperPosition() {
+                throw new NodeSC2Error('not implemented: getNatGatekeeperPosition');
+            },
             configure(settings) {
                 Object.assign(stateByPlacement.get(placement)!.settings, settings);
             },
@@ -613,11 +620,10 @@ export const placementResource: ResourceDefinition<'placement'> = {
         stateByPlacement.set(placement, freshState({ ...DEFAULT_SETTINGS }));
         return placement;
     },
-    reset: (placement) => {
-        const state = stateByPlacement.get(placement)!;
-        stateByPlacement.set(placement, freshState(state.settings));
+    reset(placement) {
+        stateByPlacement.set(placement, freshState(stateByPlacement.get(placement)!.settings));
     },
-    onStep: (placement, world) => {
+    onStep(placement, world) {
         const state = stateByPlacement.get(placement)!;
         if (!state.solved) {
             const { map } = world.resources.get();

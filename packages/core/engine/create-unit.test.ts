@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { Ability, UnitType, Upgrade } from '../constants/index.ts';
 import { AbilityDataTarget, Alliance, Attribute, Race, WeaponTargetType } from '../constants/enums.ts';
-import { createTestWorld } from '../test/create-test-world.ts';
-import { observation, packBits, rawUnit, toyFixture, unitTypeData } from '../test/factories.ts';
+import { rawUnit, toyWorld, unitTypeData } from '../test/factories.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
 import type { Unit } from '../types.ts';
 
@@ -17,38 +16,6 @@ const Buff = {
     RAVENSHREDDERMISSILETINT: 279,
     DUTCHMARAUDERSLOW: 226,
 };
-
-type WorldSetup = {
-    units: SC2APIProtocol.Unit[];
-    unitTypes?: SC2APIProtocol.UnitTypeData[];
-    abilities?: SC2APIProtocol.AbilityData[];
-    upgradeIds?: number[];
-    hasCreep?: (x: number, y: number) => boolean;
-};
-
-async function worldWith({
-    units,
-    unitTypes = [],
-    abilities = [],
-    upgradeIds = [],
-    hasCreep,
-}: WorldSetup): Promise<TestWorld> {
-    const fixture = toyFixture();
-    unitTypes.forEach((typeData) => {
-        fixture.data.units![typeData.unitId!] = typeData;
-    });
-    abilities.forEach((abilityData) => {
-        fixture.data.abilities![abilityData.abilityId!] = abilityData;
-    });
-    const responseObservation = observation({
-        units: [...fixture.observations[0].observation!.rawData!.units!, ...units],
-    });
-    const rawData = responseObservation.observation!.rawData!;
-    rawData.player!.upgradeIds = upgradeIds;
-    if (hasCreep) rawData.mapState!.creep = packBits(fixture.gameInfo.startRaw!.mapSize!, hasCreep);
-    fixture.observations[0] = responseObservation;
-    return createTestWorld(fixture);
-}
 
 const unitOf = (world: TestWorld, raw: SC2APIProtocol.Unit): Unit => world.resources.get().units.getByTag(raw.tag!)!;
 
@@ -142,7 +109,7 @@ describe('createUnit', () => {
         });
         const tank = rawUnit({ unitType: UnitType.SIEGETANK, orders: [{ abilityId: Ability.MORPH_SIEGEMODE }] });
         const idler = rawUnit();
-        const world = await worldWith({
+        const world = await toyWorld({
             units: [
                 mover,
                 attacker,
@@ -208,7 +175,7 @@ describe('createUnit', () => {
 
     it('treats a unit of a type missing from game data as not a structure', async () => {
         const unknown = rawUnit({ unitType: 99999 });
-        const world = await worldWith({ units: [unknown] });
+        const world = await toyWorld({ units: [unknown] });
 
         expect(unitOf(world, unknown).isStructure()).toBe(false);
     });
@@ -231,7 +198,7 @@ describe('createUnit', () => {
         ];
         const gases = gasTypes.map((unitType) => rawUnit({ unitType, alliance: Alliance.NEUTRAL }));
         const minerals = mineralTypes.map((unitType) => rawUnit({ unitType, alliance: Alliance.NEUTRAL }));
-        const world = await worldWith({ units: [...gases, ...minerals] });
+        const world = await toyWorld({ units: [...gases, ...minerals] });
 
         expect(gases.map((raw) => unitOf(world, raw).isGasMine())).toEqual(gasTypes.map(() => true));
         expect(
@@ -264,7 +231,7 @@ describe('createUnit', () => {
             assignedHarvesters: 14,
             idealHarvesters: 16,
         });
-        const world = await worldWith({ units: [techLab, barracks, bareBarracks, base], unitTypes });
+        const world = await toyWorld({ units: [techLab, barracks, bareBarracks, base], unitTypes });
 
         expect([unitOf(world, barracks).hasTechLab(), unitOf(world, barracks).hasReactor()]).toEqual([true, false]);
         expect(unitOf(world, bareBarracks).hasTechLab()).toBe(false);
@@ -280,7 +247,7 @@ describe('createUnit', () => {
             unitTypeData(unitType, { race: Race.ZERG }),
         );
         const [roach, uprooted, marine] = unitTypes.map(({ unitId }) => rawUnit({ unitType: unitId }));
-        const world = await worldWith({ units: [roach, uprooted, marine], unitTypes });
+        const world = await toyWorld({ units: [roach, uprooted, marine], unitTypes });
         const sentBefore = world.client.sent.actions.length;
 
         await unitOf(world, roach).burrow();
@@ -326,7 +293,7 @@ describe('createUnit', () => {
         const templarRaw = rawUnit({ unitType: UnitType.HIGHTEMPLAR });
         const ultraRaw = rawUnit({ unitType: UnitType.ULTRALISK });
         const cruiserRaw = rawUnit({ unitType: UnitType.BATTLECRUISER, isFlying: true });
-        const world = await worldWith({ units: [marineRaw, vikingRaw, templarRaw, ultraRaw, cruiserRaw], unitTypes });
+        const world = await toyWorld({ units: [marineRaw, vikingRaw, templarRaw, ultraRaw, cruiserRaw], unitTypes });
         const marine = unitOf(world, marineRaw);
         const viking = unitOf(world, vikingRaw);
         const cruiser = unitOf(world, cruiserRaw);
@@ -407,7 +374,7 @@ describe('createUnit', () => {
             isFlying: true,
             buffIds: [Buff.VOIDRAYSWARMDAMAGEBOOST],
         });
-        const world = await worldWith({
+        const world = await toyWorld({
             units: [
                 ownLingOnCreep,
                 ownLingOffCreep,
@@ -457,7 +424,7 @@ describe('createUnit', () => {
         });
         const colossusRaw = enemy({ unitType: UnitType.COLOSSUS, pos: { x: 20, y: 20, z: 10 }, radius: 1 });
         const groundRaw = enemy({ pos: { x: 12, y: 20, z: 10 }, radius: 0.375 });
-        const world = await worldWith({
+        const world = await toyWorld({
             units: [marineRaw, atEdge, pastEdge, vikingRaw, colossusRaw, groundRaw],
             unitTypes: [marineData, vikingData, colossusData],
         });
@@ -479,7 +446,7 @@ describe('createUnit', () => {
         const casterRaw = rawUnit({ pos: { x: 10, y: 10, z: 10 }, radius: 0.375 });
         const atEdge = rawUnit({ pos: { x: 17.75, y: 10, z: 10 }, radius: 0.375 });
         const pastEdge = rawUnit({ pos: { x: 18, y: 10, z: 10 }, radius: 0.375 });
-        const world = await worldWith({ units: [casterRaw, atEdge, pastEdge], abilities });
+        const world = await toyWorld({ units: [casterRaw, atEdge, pastEdge], abilities });
         const caster = unitOf(world, casterRaw);
 
         expect([caster.distanceTo(unitOf(world, atEdge)), caster.distanceTo({ x: 13, y: 14 })]).toEqual([7.75, 5]);
@@ -547,7 +514,7 @@ describe('createUnit', () => {
                 },
             ],
         });
-        const world = await worldWith({
+        const world = await toyWorld({
             units: [
                 marauderRaw,
                 roachRaw,
@@ -615,7 +582,7 @@ describe('createUnit', () => {
         const colossusRaw = enemy({ unitType: UnitType.COLOSSUS, health: 200, healthMax: 200 });
         const lingRaw = enemy({ unitType: UnitType.ZERGLING, health: 35, healthMax: 35 });
         const roachRaw = enemy({ unitType: UnitType.ROACH, health: 145, healthMax: 145 });
-        const world = await worldWith({
+        const world = await toyWorld({
             units: [vikingRaw, queenRaw, unfinishedRaw, marineRaw, colossusRaw, lingRaw, roachRaw],
             unitTypes: [vikingData, queenData, marauderData, marineData, colossusData, zerglingData, roachData],
         });
@@ -632,7 +599,7 @@ describe('createUnit', () => {
         const coolingRaw = rawUnit({ unitType: UnitType.MARINE, weaponCooldown: 4.48 });
         const readyRaw = rawUnit({ unitType: UnitType.MARINE, weaponCooldown: 0 });
         const unarmedRaw = rawUnit({ weaponCooldown: 0 });
-        const world = await worldWith({ units: [coolingRaw, readyRaw, unarmedRaw], unitTypes: [marineData] });
+        const world = await toyWorld({ units: [coolingRaw, readyRaw, unarmedRaw], unitTypes: [marineData] });
         const unarmed = unitOf(world, unarmedRaw);
 
         expect(unarmed.weaponCooldown).toBe(0);
@@ -642,7 +609,7 @@ describe('createUnit', () => {
         expect(unarmed.weaponReady()).toBe(false);
 
         const realMarineRaw = rawUnit({ unitType: UnitType.MARINE, weaponCooldown: 16 });
-        const realMarineWorld = await worldWith({
+        const realMarineWorld = await toyWorld({
             units: [realMarineRaw],
             unitTypes: [{ ...marineData, movementSpeed: 2.25 }],
         });
@@ -656,7 +623,7 @@ describe('createUnit', () => {
         const eastTarget = rawUnit({ pos: { x: 15, y: 10, z: 10 } });
         const northTarget = rawUnit({ pos: { x: 10, y: 15, z: 10 } });
         const southTarget = rawUnit({ pos: { x: 10, y: 5, z: 10 } });
-        const world = await worldWith({
+        const world = await toyWorld({
             units: [eastRaw, almostNorthRaw, southRaw, eastTarget, northTarget, southTarget],
         });
         const east = unitOf(world, eastRaw);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { PixelMap } from './pixel-map.ts';
+import { loadFixture } from '../test/create-test-world.ts';
 import type { Point2D } from '../types.ts';
 
 const byPosition = (left: Point2D, right: Point2D) => left.y - right.y || left.x - right.x;
@@ -21,6 +22,19 @@ describe('PixelMap', () => {
         expect(() => bits.get({ x: 4, y: 0 })).toThrow();
         expect(() => bytes.get({ x: 0, y: -1 })).toThrow();
         expect(() => bytes.isSet({ x: 0.5, y: 0 })).toThrow(TypeError);
+    });
+
+    it('builds from SC2 image data directly and rejects image data with a missing field', () => {
+        const { pathingGrid } = loadFixture('simple64').gameInfo.startRaw!;
+        const { bitsPerPixel, size, data } = pathingGrid!;
+
+        const direct = new PixelMap(pathingGrid!);
+        const explicit = new PixelMap({ bitsPerPixel: bitsPerPixel!, size: { x: size!.x!, y: size!.y! }, data: data! });
+
+        expect(direct).toEqual(explicit);
+        expect(() => new PixelMap({ ...pathingGrid, data: undefined })).toThrow(TypeError);
+        expect(() => new PixelMap({ ...pathingGrid, size: { x: 64 } })).toThrow(TypeError);
+        expect(() => new PixelMap({ ...pathingGrid, bitsPerPixel: undefined })).toThrow(TypeError);
     });
 
     it('sets values on a copy without touching the original', () => {

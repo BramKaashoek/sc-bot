@@ -173,6 +173,22 @@ describe('unit system events', () => {
         expect(sortedEvents(events.firstSeen)).toEqual(enemiesAt896.map((tag): [number, string] => [896, tag]));
     });
 
+    it('forgets which units were already seen when a second game starts on the same engine', async () => {
+        const { events, record } = recorder();
+        const agent = createAgent({ onUnitSpawned: record('spawned'), onEnemyFirstSeen: record('firstSeen') });
+        const world = await createTestWorld('blueshift', { loop: 896, agent });
+        const spawnedInGame1 = events.spawned.length;
+        const firstSeenInGame1 = events.firstSeen.length;
+
+        world.client.setObservation(world.client.fixture.observations[896]);
+        await world.engine.setupGame();
+
+        expect(spawnedInGame1).toBeGreaterThan(0);
+        expect(firstSeenInGame1).toBeGreaterThan(0);
+        expect(events.spawned).toHaveLength(spawnedInGame1 * 2);
+        expect(events.firstSeen).toHaveLength(firstSeenInGame1 * 2);
+    });
+
     it('keeps processing later own units after one of an unknown type, on both the create and update paths', async () => {
         const { events, record } = recorder();
         const agent = createAgent({

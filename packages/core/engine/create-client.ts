@@ -1,7 +1,7 @@
 import createDebug from 'debug';
 import createTransport from '@node-sc2/proto';
 import root from '@node-sc2/proto/root';
-import { ConnectionClosedError } from './errors.ts';
+import { ConnectionClosedError, NodeSC2Error } from './errors.ts';
 
 type Pending = {
     name: string;
@@ -73,7 +73,7 @@ function createClient(base: NodeSC2Proto.ProtoClient = createTransport()): NodeS
 
                 if (response.error && response.error.length > 0) {
                     entry.reject(
-                        Object.assign(new Error(`Response Error: ${JSON.stringify(response.error, null, 2)}`), {
+                        new NodeSC2Error(`Response Error: ${JSON.stringify(response.error, null, 2)}`, {
                             err: response.error,
                         }),
                     );
@@ -98,7 +98,7 @@ function createClient(base: NodeSC2Proto.ProtoClient = createTransport()): NodeS
             const ws = base._ws;
             if (closedError) return reject(closedError);
             if (!ws || ws.readyState !== WS_OPEN)
-                return reject(new Error(`SC2 connection not open for ${name} request`));
+                return reject(new NodeSC2Error(`SC2 connection not open for ${name} request`));
 
             pending.push({ name, resolve, reject });
             ws.send(Request.encode(Request.create({ [name]: request })).finish());

@@ -3,6 +3,9 @@ import { createAStar } from '../utils/pathing/astar.ts';
 import type { InfluenceGrid, InfluenceLayer, Point2D, ResourceDefinition } from '../types.ts';
 
 const RETARGET_RADIUS = 3;
+const LOW_PRIORITY_SENSITIVITY = 4;
+const LOW_PRIORITY_MIN_POINTS = 10;
+const LOW_PRIORITY_SAMPLES = 8;
 
 type AStar = ReturnType<typeof createAStar>;
 
@@ -28,6 +31,28 @@ function closestFinite(grid: InfluenceGrid, index: number, radius: number): numb
         }
     }
     return best;
+}
+
+function lowestCostPoints(grid: InfluenceGrid, from: Point2D, radius: number): Point2D[] {
+    const { width, height, data } = grid;
+    const r2 = radius * radius;
+    let bestCost = Infinity;
+    let points: Point2D[] = [];
+    for (let x = Math.max(0, Math.floor(from.x - radius)); x <= Math.min(width - 1, from.x + radius); x++) {
+        for (let y = Math.max(0, Math.floor(from.y - radius)); y <= Math.min(height - 1, from.y + radius); y++) {
+            const centre = { x: x + 0.5, y: y + 0.5 };
+            const cost = data[y * width + x];
+            if ((centre.x - from.x) ** 2 + (centre.y - from.y) ** 2 > r2 || cost === Infinity || cost > bestCost) {
+                continue;
+            }
+            if (cost < bestCost) {
+                bestCost = cost;
+                points = [];
+            }
+            points.push(centre);
+        }
+    }
+    return points;
 }
 
 export const pathingResource: ResourceDefinition<'pathing'> = {
@@ -61,10 +86,44 @@ export const pathingResource: ResourceDefinition<'pathing'> = {
         };
 
         return {
-            findPath(start, goal, { layer, maxExpanded } = {}) {
+            findPath(start, goal, { layer, maxExpanded, sensitivity = 1 } = {}) {
                 const grid = resolve(layer);
                 const path = pathIndices(grid, start, goal, maxExpanded);
-                return path ? Array.from(path, (index) => cellCentre(index, grid.width)) : [];
+                if (!path) return [];
+                const step = Math.max(1, Math.floor(sensitivity));
+                const points: Point2D[] = [];
+                for (let i = step - 1; i < path.length; i += step) points.push(cellCentre(path[i], grid.width));
+                return points;
+            },
+            findLowPriorityPath(start, goal, { layer } = {}) {
+                const grid = resolve(layer);
+                const path = pathIndices(grid, start, goal);
+                if (!path) return [goal];
+                const points: number[] = [];
+                for (let i = LOW_PRIORITY_SENSITIVITY - 1; i < path.length; i += LOW_PRIORITY_SENSITIVITY) {
+                    points.push(path[i]);
+                }
+                if (points.length < LOW_PRIORITY_MIN_POINTS) return [goal];
+                const last = points.length - 1;
+                const sampled = Array.from({ length: LOW_PRIORITY_SAMPLES }, (_, i) =>
+                    cellCentre(points[Math.floor((i * last) / (LOW_PRIORITY_SAMPLES - 1))], grid.width),
+                );
+                return [...sampled, goal];
+            },
+            findFurthestSafeSpot(from, { layer, radius = 15 } = {}) {
+                let best: Point2D | undefined;
+                let bestD2 = -1;
+                for (const point of lowestCostPoints(resolve(layer), from, radius)) {
+                    const d2 = (point.x - from.x) ** 2 + (point.y - from.y) ** 2;
+                    if (d2 >= bestD2) {
+                        best = point;
+                        bestD2 = d2;
+                    }
+                }
+                return best;
+            },
+            findLowestCostPoints(from, { layer, radius = 11 } = {}) {
+                return lowestCostPoints(resolve(layer), from, radius);
             },
             nextPoint(
                 start,

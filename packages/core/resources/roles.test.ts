@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test';
+import { Alliance } from '../constants/enums.ts';
 import { ATTACKING, BUILDING, DEFENDING, GATHERING, SCOUTING } from '../constants/unit-role.ts';
 import { MARINE, MULE, SCV } from '../constants/unit-type.ts';
-import { createTestWorld, stepTo } from '../test/create-test-world.ts';
+import { createTestWorld, observationAt, stepTo } from '../test/create-test-world.ts';
 import { rawUnit } from '../test/factories.ts';
 import { currentCommander } from './command-context.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
@@ -10,20 +11,12 @@ import type { CommandResult, Unit } from '../types.ts';
 const SCVS = ['4345823233', '4343988225', '4343726081'];
 const MARINE_TAG = '4354211841';
 
-function observation(
-    world: TestWorld,
-    gameLoop: number,
-    { hide = [], add = [], dead = [] }: { hide?: string[]; add?: SC2APIProtocol.Unit[]; dead?: string[] } = {},
-): SC2APIProtocol.ResponseObservation {
-    const responseObservation = structuredClone(world.client.fixture.observations[896]);
-    const { observation: raw } = responseObservation;
-    raw!.gameLoop = gameLoop;
-    raw!.rawData!.units = [...raw!.rawData!.units!.filter((unit) => !hide.includes(unit.tag!)), ...add];
-    if (dead.length > 0) raw!.rawData!.event = { deadUnits: dead };
-    return responseObservation;
-}
-
 const tags = (units: Unit[]) => units.map((unit) => unit.tag);
+
+const withDead = (responseObservation: SC2APIProtocol.ResponseObservation, deadUnits: string[]) => {
+    responseObservation.observation!.rawData!.event = { deadUnits };
+    return responseObservation;
+};
 
 describe('roles', () => {
     it('assigns, replaces, clears and switches roles by unit or tag, and gets current own units by type without labelling them', async () => {
@@ -53,7 +46,7 @@ describe('roles', () => {
         const mule = rawUnit({ unitType: MULE });
         const unfinished = rawUnit({ buildProgress: 0.5 });
 
-        await stepTo(world, observation(world, 900, { add: [mule, unfinished] }));
+        await stepTo(world, observationAt(world, 900, { add: [mule, unfinished] }));
         expect(SCVS.map((tag) => roles.roleOf(tag))).toEqual([GATHERING, GATHERING, GATHERING]);
         expect([roles.roleOf(MARINE_TAG), roles.roleOf(mule.tag), roles.roleOf(unfinished.tag)]).toEqual([
             undefined,
@@ -63,14 +56,21 @@ describe('roles', () => {
 
         roles.clear(SCVS[0]);
         roles.assign(MARINE_TAG, ATTACKING);
-        await stepTo(world, observation(world, 904, { hide: [MARINE_TAG], dead: [SCVS[1]] }));
+        await stepTo(world, withDead(observationAt(world, 904, { hide: [MARINE_TAG] }), [SCVS[1]]));
         expect(roles.roleOf(SCVS[0])).toBeUndefined();
         expect(roles.roleOf(SCVS[1])).toBeUndefined();
         expect(roles.roleOf(MARINE_TAG)).toBe(ATTACKING);
         expect(roles.get(ATTACKING)).toHaveLength(0);
 
-        await stepTo(world, observation(world, 908));
+        await stepTo(world, observationAt(world, 908));
         expect(tags(roles.get(ATTACKING))).toEqual([MARINE_TAG]);
+
+        const enemy = rawUnit({ alliance: Alliance.ENEMY, unitType: MARINE });
+        await stepTo(world, observationAt(world, 912, { add: [enemy] }));
+        roles.assign(enemy.tag, ATTACKING);
+        expect(roles.get(ATTACKING).map((unit) => unit.tag)).toEqual([MARINE_TAG]);
+        await stepTo(world, observationAt(world, 916));
+        expect(roles.roleOf(enemy.tag)).toBeUndefined();
     });
 
     it('proposes inside as() under the role owner, inheriting the priority unless given', async () => {

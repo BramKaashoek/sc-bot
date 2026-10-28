@@ -13,8 +13,8 @@ describe.each(MAPS)('mapAnalysis on %s', (mapName) => {
     it('separates the main from the natural and defends both at their own chokes', async () => {
         const world = await createTestWorld(mapName, { loop: 896 });
         const { map, mapAnalysis } = world.resources.get();
-        const main = map.getMain();
-        const natural = map.getNatural();
+        const main = map.getMain()!;
+        const natural = map.getNatural()!;
         const mainRegion = mapAnalysis.getRegion(main.townhallPosition)!;
         const naturalRegion = mapAnalysis.getRegion(natural.townhallPosition)!;
 
@@ -38,7 +38,7 @@ describe.each(MAPS)('mapAnalysis on %s', (mapName) => {
         const { x: width = 0, y: height = 0 } = map.getSize();
         const pathLength = (expansion: Expansion) => expansion.pathFromEnemy?.length ?? 999;
         const unwalkable = { x: 0, y: 0 };
-        const mainRegion = mapAnalysis.getRegion(map.getMain().townhallPosition)!;
+        const mainRegion = mapAnalysis.getRegion(map.getMain()!.townhallPosition)!;
         const perimeter = mapAnalysis.getPerimeter(mainRegion);
         const angles = perimeter.map(({ x, y }) => Math.atan2(y - mainRegion.center.y, x - mainRegion.center.x));
         const isEdge = ({ x, y }: { x: number; y: number }) =>

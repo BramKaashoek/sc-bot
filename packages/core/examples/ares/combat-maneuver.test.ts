@@ -2,20 +2,17 @@ import { describe, expect, it } from 'bun:test';
 import { MOVE, SMART, UNLOADALLAT } from '@sc-bot/core/constants/ability';
 import { Alliance } from '@sc-bot/core/constants/enums';
 import { MARINE, MEDIVAC, WIDOWMINE, ZERGLING } from '@sc-bot/core/constants/unit-type';
-import { createTestWorld, stepTo } from '../../test/create-test-world.ts';
+import { createTestWorld, stepWith } from '../../test/create-test-world.ts';
 import { rawUnit } from '../../test/factories.ts';
 import { createBot } from './combat-maneuver.ts';
 
 const MEDIVAC_TAG = 'medivac';
 const MINE_TAG = 'mine';
 
-async function stepWith(units: SC2APIProtocol.Unit[]) {
+async function runWith(units: SC2APIProtocol.Unit[]) {
     const world = await createTestWorld('blueshift', { loop: 896, agent: createBot() });
-    const responseObservation = structuredClone(world.client.fixture.observations[896]);
-    responseObservation.observation!.gameLoop = 900;
-    responseObservation.observation!.rawData!.units!.push(...units);
     const before = world.client.sent.actions.length;
-    await stepTo(world, responseObservation);
+    await stepWith(world, 900, units);
     const sent = world.client.sent.actions
         .slice(before)
         .flatMap(({ actions }) => actions ?? [])
@@ -41,7 +38,7 @@ const medivac = (x: number, y: number, cargoSpaceTaken = 0) =>
 
 describe('combat-maneuver example', () => {
     it('picks up a mine within reach', async () => {
-        const { sent } = await stepWith([
+        const { sent } = await runWith([
             medivac(14.4, 10.8),
             rawUnit({ tag: MINE_TAG, unitType: WIDOWMINE, pos: { x: 16, y: 11, z: 10 } }),
         ]);
@@ -50,7 +47,7 @@ describe('combat-maneuver example', () => {
     });
 
     it('with cargo flies toward the enemy start, and drops once it is there', async () => {
-        const probe = await stepWith([medivac(14.4, 10.8, 2)]);
+        const probe = await runWith([medivac(14.4, 10.8, 2)]);
         const enemyStart = probe.world.resources.get().map.getLocations().enemy[0];
 
         expect(probe.sent).toHaveLength(1);
@@ -70,16 +67,16 @@ describe('combat-maneuver example', () => {
         ]
             .map(([dx, dy]) => ({ x: enemyStart.x + dx, y: enemyStart.y + dy }))
             .find((spot) => map.isPathable(spot))!;
-        const arrived = await stepWith([medivac(dropSpot.x, dropSpot.y, 2)]);
+        const arrived = await runWith([medivac(dropSpot.x, dropSpot.y, 2)]);
 
         expect(arrived.sent).toEqual([{ abilityId: UNLOADALLAT, tags: [MEDIVAC_TAG], target: MEDIVAC_TAG }]);
     });
 
     it('empty with nothing to pick up, stays put when safe or only ground-threatened, and retreats from an anti-air enemy', async () => {
-        expect((await stepWith([medivac(14.4, 10.8)])).sent).toEqual([]);
+        expect((await runWith([medivac(14.4, 10.8)])).sent).toEqual([]);
         expect(
             (
-                await stepWith([
+                await runWith([
                     medivac(14.4, 10.8),
                     rawUnit({
                         tag: 'ling',
@@ -91,7 +88,7 @@ describe('combat-maneuver example', () => {
             ).sent,
         ).toEqual([]);
 
-        const { sent } = await stepWith([
+        const { sent } = await runWith([
             medivac(14.4, 10.8),
             rawUnit({ tag: 'hostile', alliance: Alliance.ENEMY, unitType: MARINE, pos: { x: 17, y: 10.8, z: 10 } }),
         ]);

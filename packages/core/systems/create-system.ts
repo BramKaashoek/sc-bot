@@ -2,7 +2,8 @@ import createDebug from 'debug';
 import pascalCase from 'pascal-case';
 import unitPlugin from './unit-plugin.ts';
 import { builderPlugin } from './builder-plugin.ts';
-import { NodeSC2Error, GameEndedError, ConnectionClosedError } from '../engine/errors.ts';
+import { triageError } from '../engine/errors.ts';
+import { NOOP } from '../utils/collections.ts';
 import type {
     BuildSystemObject,
     EventReader,
@@ -17,9 +18,14 @@ import type {
 
 const debug = createDebug('sc2:debug:system');
 const debugSilly = createDebug('sc2:silly:system');
-const debugState = createDebug('sc2:debug:state');
 
-const NOOP = () => {};
+const logHandlerError = (label: string, err: Error) => {
+    debug(label);
+    debug(err.message);
+    debug(err.stack);
+};
+const systemSinks = { expected: logHandlerError, unexpected: logHandlerError };
+const debugState = createDebug('sc2:debug:state');
 
 // structuredClone throws on functions and drops class prototypes, both of which users keep in system state
 function clonePlain<T>(value: T): T {
@@ -116,35 +122,21 @@ export default function createSystem(
                           }
 
                           _setState({ lastRan: _state.currentFrame });
-                          return system[`on${pascalCase(event.name)}`](world, event.data, event).catch((err: Error) => {
-                              if (err instanceof GameEndedError || err instanceof ConnectionClosedError) {
-                                  throw err;
-                              } else if (err instanceof NodeSC2Error) {
-                                  debugSilly(
-                                      `System onStep error: on${pascalCase(event.name)} in ${system.name}: `,
-                                      err,
-                                  );
-                              } else {
-                                  debug(`System onStep error: on${pascalCase(event.name)} in ${system.name}: `);
-                                  debug(err.message);
-                                  debug(err.stack);
-                              }
-                          });
+                          return system[`on${pascalCase(event.name)}`](world, event.data, event).catch((err: Error) =>
+                              triageError(
+                                  err,
+                                  `System onStep error: on${pascalCase(event.name)} in ${system.name}: `,
+                                  systemSinks,
+                              ),
+                          );
                       } else {
-                          return system[`on${pascalCase(event.name)}`](world, event.data, event).catch((err: Error) => {
-                              if (err instanceof GameEndedError || err instanceof ConnectionClosedError) {
-                                  throw err;
-                              } else if (err instanceof NodeSC2Error) {
-                                  debugSilly(
-                                      `Event handler error: on${pascalCase(event.name)} in ${system.name}: `,
-                                      err,
-                                  );
-                              } else {
-                                  debug(`Event handler error: on${pascalCase(event.name)} in ${system.name}: `);
-                                  debug(err.message);
-                                  debug(err.stack);
-                              }
-                          });
+                          return system[`on${pascalCase(event.name)}`](world, event.data, event).catch((err: Error) =>
+                              triageError(
+                                  err,
+                                  `Event handler error: on${pascalCase(event.name)} in ${system.name}: `,
+                                  systemSinks,
+                              ),
+                          );
                       }
                   })
                 : [];

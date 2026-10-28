@@ -5,7 +5,7 @@ type ErrorClass<Name extends string> = new (
     properties?: object,
 ) => Error & { readonly name: Name };
 
-const nodeSc2Error = createError('NodeSc2Error');
+const nodeSc2Error = createError('NodeSC2Error');
 const actionManagerError = createError(nodeSc2Error, 'ActionManagerError');
 
 const defaultProps = { data: {}, status: 0 };
@@ -29,10 +29,26 @@ const ActionManagerError = actionManagerError as unknown as ErrorClass<
     'ActionManagerError' | 'BuildError' | 'TrainError' | 'GatherError'
 >;
 const NodeSC2Error = nodeSc2Error as unknown as ErrorClass<
-    'NodeSc2Error' | 'ActionManagerError' | 'BuildError' | 'TrainError' | 'GatherError' | 'MapDecompositionError'
+    'NodeSC2Error' | 'ActionManagerError' | 'BuildError' | 'TrainError' | 'GatherError' | 'MapDecompositionError'
 >;
 
+const isFatalGameError = (err: unknown): boolean =>
+    err instanceof GameEndedError || err instanceof ConnectionClosedError;
+
+type TriageSinks = {
+    expected: (message: string, err: Error) => void;
+    unexpected: (message: string, err: Error) => void;
+};
+
+function triageError(err: unknown, label: string, sinks: TriageSinks): void {
+    if (isFatalGameError(err)) throw err;
+    if (err instanceof NodeSC2Error) sinks.expected(label, err);
+    else sinks.unexpected(label, err as Error);
+}
+
 export {
+    isFatalGameError,
+    triageError,
     GameEndedError,
     ConnectionClosedError,
     NodeSC2Error,

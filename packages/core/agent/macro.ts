@@ -11,12 +11,15 @@ import {
     techLabTypes,
 } from '../constants/groups.ts';
 import { TownhallRace, TownhallWithFlyingRace, WorkerRace } from '../constants/race-map.ts';
+import getRandom from '../utils/get-random.ts';
 import { techAlias } from '../constants/dicts/tech-alias.ts';
 import { techRequirement } from '../constants/dicts/tech-requirement.ts';
 import { trainedFrom } from '../constants/dicts/trained-from.ts';
 import { researchedFrom } from '../constants/dicts/researched-from.ts';
 import { researchRequirements } from '../constants/dicts/research-requirements.ts';
-import { distance } from '../utils/geometry/point.ts';
+import { NodeSC2Error } from '../engine/errors.ts';
+import { distance, pointKey } from '../utils/geometry/point.ts';
+import { generalAbility } from '../engine/data-storage.ts';
 import { townhallCenter } from '../utils/map/townhall.ts';
 import type { Agent, Cost, OwnedExpansion, Point2D, Unit, World } from '../types.ts';
 
@@ -106,9 +109,11 @@ export const REQUIRES_TECHLAB = [
     UnitType.RAVEN,
 ];
 
-type AbilityProgress = { counts: Map<number, number>; maxProgress: Map<number, number> };
+type AbilityProgress = {
+    counts: Map<number, number>;
+    maxProgress: Map<number, number>;
+};
 
-// python-sc2's hand-written equivalents plus the API's tech aliases, so e.g. a TECHLAB requirement is met by any add-on tech lab
 export function techEquivalents(unitType: number): number[] {
     const aliased = Object.entries(techAlias)
         .filter(([, aliases]) => aliases.includes(unitType))
@@ -126,10 +131,6 @@ function orderTarget(unit: Unit): string | Point2D | undefined {
     return order.targetWorldSpacePos
         ? { x: order.targetWorldSpacePos.x!, y: order.targetWorldSpacePos.y! }
         : order.targetUnitTag;
-}
-
-function randomOf<T>(items: T[]): T {
-    return items[Math.floor(Math.random() * items.length)];
 }
 
 function context(agent: Agent) {
@@ -159,10 +160,6 @@ function receivedThisFrame(agent: Agent): Set<string> {
 
 function creationAbility({ _world: world }: Agent, unitType: number): number | undefined {
     return creationAbilityOverrides[unitType] ?? (world.data.getUnitTypeData(unitType)?.abilityId || undefined);
-}
-
-function generalAbility({ _world: world }: Agent, abilityId: number): number {
-    return world.data.getAbilityData(abilityId)?.remapsToAbilityId || abilityId;
 }
 
 export function researchAbilityOf({ _world: world }: Agent, upgradeId: number): number | undefined {
@@ -326,36 +323,21 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
         const inProduction = new Set(
             structures
                 .filter((structure) => TERRAN_STRUCTURES_REQUIRE_SCV.includes(structure.unitType))
-                .flatMap((structure) => [`${structure.pos.x},${structure.pos.y}`, `tag:${structure.tag}`]),
+                .flatMap((structure) => [pointKey(structure.pos), `tag:${structure.tag}`]),
         );
 
         return workers
             .flatMap((worker) => worker.orders ?? [])
             .filter((order) => {
                 const target = order.targetWorldSpacePos
-                    ? `${order.targetWorldSpacePos.x},${order.targetWorldSpacePos.y}`
+                    ? pointKey(order.targetWorldSpacePos as Point2D)
                     : `tag:${order.targetUnitTag}`;
                 return !inProduction.has(target) && order.abilityId === abilityId;
             }).length;
     },
     async getNextExpansion() {
-        const { map } = context(this);
-        const { x, y } = map.getLocations().self;
-        const start = { x, y };
-
-        let closest: Point2D | null = null;
-        let bestDistance = Infinity;
-        for (const expansion of map.getAvailableExpansions()) {
-            const location = townhallCenter(expansion);
-            const pathingDistance = await map.queryPathing(start, location);
-            if (pathingDistance === null) continue;
-
-            if (pathingDistance < bestDistance) {
-                bestDistance = pathingDistance;
-                closest = location;
-            }
-        }
-        return closest;
+        const spot = this._world.resources.get().buildings.getNextExpansion();
+        return spot ? { x: spot.x + 0.5, y: spot.y + 0.5 } : null;
     },
     ownedExpansions() {
         const { map } = context(this);
@@ -374,12 +356,16 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
             return;
         }
         const { buildings } = this._world.resources.get();
-        // money is only spent once BUILD is ordered, so canAfford keeps passing while the worker walks
+        // money is only spent once BUILD is ordered, so canAfford keeps passing while the worker walks; the picker skips
+        // a targeted spot, so without a location the pending build itself has to stop a second one
         const tracked = buildings
             .getTracked()
             .some(
                 ({ unitType, target: at, status }) =>
-                    unitType === building && status !== 'done' && status !== 'failed' && distance(at, target) < 1,
+                    unitType === building &&
+                    status !== 'done' &&
+                    status !== 'failed' &&
+                    (!location || distance(at, target) < 1),
             );
         if (tracked || !this.canAfford(building)) return;
         buildings.build(building, { at: target });
@@ -426,7 +412,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
         const trainFrom = (structure: Unit, queue: boolean) => {
             spend(this, this.calculateCost(unitType), supply);
             issue(this, {
-                abilityId: generalAbility(this, abilityId!),
+                abilityId: generalAbility(this._world.data, abilityId!),
                 unitTags: [structure.tag!],
                 queueCommand: queue,
             });
@@ -448,13 +434,16 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
             if (structure.unitType === UnitType.WARPGATE) {
                 const pylons = own.filter((unit) => unit.unitType === UnitType.PYLON);
                 if (pylons.length === 0) return trainedAmount;
-                const pylon = randomOf(pylons);
+                const pylon = getRandom(pylons);
                 const angle = Math.random() * 2 * Math.PI;
                 spend(this, this.calculateCost(unitType), supply);
                 issue(this, {
                     abilityId: WarpUnitAbility[unitType],
                     unitTags: [structure.tag!],
-                    targetWorldSpacePos: { x: pylon.pos.x + Math.cos(angle) * 4, y: pylon.pos.y + Math.sin(angle) * 4 },
+                    targetWorldSpacePos: {
+                        x: pylon.pos.x + Math.cos(angle) * 4,
+                        y: pylon.pos.y + Math.sin(angle) * 4,
+                    },
                     queueCommand: false,
                 });
             } else {
@@ -481,7 +470,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
     async research(upgradeId) {
         const researchStructureType = researchedFrom[upgradeId];
         if (researchStructureType === undefined) {
-            throw new Error(`Could not find upgrade ${upgradeId} in the researched-from dictionary`);
+            throw new NodeSC2Error(`Could not find upgrade ${upgradeId} in the researched-from dictionary`);
         }
 
         const researchAbility = researchAbilityOf(this, upgradeId);

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import findP from 'find-process';
+import { NodeSC2Error } from './errors.ts';
 import type { LauncherOptions, Sc2Install } from '../types.ts';
 
 const debug = createDebug('sc2:debug:launcher');
@@ -20,7 +21,7 @@ function latestExecutable(basePath: string) {
         .filter((name) => /^Base\d+$/.test(name))
         .sort((left, right) => Number(right.slice(4)) - Number(left.slice(4)));
 
-    if (!latest) throw new Error(`No Versions/Base* directory found in ${basePath}`);
+    if (!latest) throw new NodeSC2Error(`No Versions/Base* directory found in ${basePath}`);
 
     return path.join(versionsDir, latest, BINARY_PATH[os.platform()] ?? 'SC2_x64');
 }
@@ -50,7 +51,7 @@ function resolveSc2Install(homeDir = os.homedir()): Sc2Install {
         return { executablePath: latestExecutable(linuxDefault), basePath: linuxDefault };
     }
 
-    throw new Error(`StarCraft II not found: set SC2PATH, or provide ${executeInfoPath}`);
+    throw new NodeSC2Error(`StarCraft II not found: set SC2PATH, or provide ${executeInfoPath}`);
 }
 
 async function launcher(options: LauncherOptions = {}) {
@@ -152,7 +153,9 @@ async function findMap(mapName: string, homeDir = os.homedir()) {
         (candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile(),
     );
     if (!found)
-        throw new Error(`Map "${mapName}" not found under ${mapsDirs.join(' or ') || path.join(basePath, 'Maps')}`);
+        throw new NodeSC2Error(
+            `Map "${mapName}" not found under ${mapsDirs.join(' or ') || path.join(basePath, 'Maps')}`,
+        );
 
     debug(`Map ${mapName} found in path: ${found}`);
     return found;

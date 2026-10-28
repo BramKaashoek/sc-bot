@@ -3,11 +3,12 @@ import * as UnitType from '../constants/unit-type.ts';
 import { Alliance, Race, PlayerType, Attribute } from '../constants/enums.ts';
 import { halfSupplyTypes } from '../constants/groups.ts';
 import { trainedFrom } from '../constants/dicts/trained-from.ts';
+import { NodeSC2Error } from '../engine/errors.ts';
+import { NOOP } from '../utils/collections.ts';
 import { affordable, macroHelpers } from './macro.ts';
 import type { Agent, Cost, EventReader, AgentObject, World, SystemWrapper, System } from '../types.ts';
 
 const debug = createDebug('sc2:debug:Bot');
-const NOOP = () => {};
 const PLAYABLE_RACES: SC2APIProtocol.Race[] = [Race.TERRAN, Race.ZERG, Race.PROTOSS];
 
 const FREE_MORPH_LINK_NAMES = ['Lower', 'Raise', 'Land', 'Lift', 'Hold', 'Harvest'];
@@ -23,7 +24,6 @@ function zergSupplyCorrection(world: World | null): number {
     return world.resources.get().units.getById(halfSupplyTypes).length % 2;
 }
 
-// Assigning used to create a plain property before these accessors existed
 function shadowWithValue(target: object, key: string, value: number) {
     Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
 }
@@ -124,7 +124,9 @@ export default function createAgent(blueprint: EventReader<AgentObject> = {} as 
             return unitCost(this._world, unitTypeId);
         },
         calculateUpgradeCost(upgradeId) {
-            return toCost(this._world.data.getUpgradeData(upgradeId));
+            const upgradeData = this._world.data.getUpgradeData(upgradeId);
+            if (!upgradeData) throw new NodeSC2Error(`No upgrade data for upgrade ${upgradeId}`);
+            return toCost(upgradeData);
         },
         calculateSupplyCost(unitTypeId) {
             if (unitTypeId === UnitType.ZERGLING) return 1;

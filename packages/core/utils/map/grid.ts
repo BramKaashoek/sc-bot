@@ -1,46 +1,4 @@
-import chalk from 'chalk';
 import type { Grid2D, Grids, Point2D } from '../../types.ts';
-
-function debugGrid(grid: Grid2D, playable: { p0: Point2D; p1: Point2D }, height = false) {
-    const pointInRect = ({ p0, p1 }: { p0: Point2D; p1: Point2D }, x: number, y: number) =>
-        x > p0.x && x < p1.x && y > p0.y && y < p1.y;
-
-    const displayGrid = grid.slice().reverse();
-
-    displayGrid.forEach((row, x) => {
-        console.log(
-            [...row]
-                .map((pixel, y) => {
-                    if (height === true) {
-                        return chalk.rgb(0, Number(pixel), 0)('X');
-                    }
-                    switch (pixel) {
-                        case 0:
-                            if (!pointInRect(playable, x, y)) {
-                                return chalk.bgRed` `;
-                            } else {
-                                return chalk.bgGreen` `;
-                            }
-                        case 1:
-                            return '░';
-                        case 66:
-                            return chalk.bgBlue` `;
-                        case 114:
-                            // @ts-ignore
-                            return chalk.bgCyanBright`░`;
-                        case 104:
-                            return;
-                        case 72:
-                            // @ts-ignore
-                            return chalk.bgRed`░`;
-                        default:
-                            return pixel;
-                    }
-                })
-                .join(''),
-        );
-    });
-}
 
 function readSingleBit(buffer: Uint8Array, i: number, bit: number) {
     return (buffer[i] >> bit) % 2;
@@ -122,4 +80,4 @@ function consumeRawGrids(raw: SC2APIProtocol.StartRaw): Grids {
     };
 }
 
-export { consumeRawGrids, consumeImageData, debugGrid };
+export { consumeRawGrids, consumeImageData };

@@ -51,8 +51,9 @@ export const getOffenseTargets = ({
         return offenseTargets;
     }
 
-    if (scoutedEmpty[map.getExpansions().indexOf(map.getEnemyMain())] === undefined) {
-        return [{ pos: map.getEnemyMain().townhallPosition, buildings: new Units(), units: new Units(), score: 1 }];
+    const enemyMain = map.getEnemyMain();
+    if (enemyMain && scoutedEmpty[map.getExpansions().indexOf(enemyMain)] === undefined) {
+        return [{ pos: enemyMain.townhallPosition, buildings: new Units(), units: new Units(), score: 1 }];
     }
 
     return [];

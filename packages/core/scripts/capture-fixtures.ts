@@ -267,10 +267,10 @@ function createCapture(target: MapTarget, dir: string, { observeDirect, frameRes
 
     const captureQueries = async (loop: number, units: RawUnit[]) => {
         const { map } = world.resources.get();
-        const main = map.getMain().townhallPosition;
-        const natural = map.getNatural().townhallPosition;
-        const enemyNatural = map.getEnemyNatural().townhallPosition;
-        const enemyMain = map.getEnemyMain().townhallPosition;
+        const main = map.getMain()!.townhallPosition;
+        const natural = map.getNatural()!.townhallPosition;
+        const enemyNatural = map.getEnemyNatural()!.townhallPosition;
+        const enemyMain = map.getEnemyMain()!.townhallPosition;
 
         await runPlacements(
             loop,
@@ -376,7 +376,7 @@ function createCapture(target: MapTarget, dir: string, { observeDirect, frameRes
 
     const startOpening = async (units: RawUnit[]) => {
         const { map } = world.resources.get();
-        const main = map.getMain().townhallPosition;
+        const main = map.getMain()!.townhallPosition;
         const commandCenter = ownUnits(units).find((unit) => unit.unitType === UnitType.COMMANDCENTER)!;
         const scvs = ownUnits(units).filter((unit) => unit.unitType === UnitType.SCV);
         const minerals = units
@@ -466,7 +466,7 @@ function createCapture(target: MapTarget, dir: string, { observeDirect, frameRes
     };
 
     const spawnScout = async () => {
-        const enemyMain = world.resources.get().map.getEnemyMain().townhallPosition;
+        const enemyMain = world.resources.get().map.getEnemyMain()!.townhallPosition;
         await debugCommands([
             {
                 createUnit: {
@@ -480,7 +480,7 @@ function createCapture(target: MapTarget, dir: string, { observeDirect, frameRes
     };
 
     const killScout = async (units: RawUnit[]) => {
-        const enemyMain = world.resources.get().map.getEnemyMain().townhallPosition;
+        const enemyMain = world.resources.get().map.getEnemyMain()!.townhallPosition;
         const scout = ownUnits(units)
             .filter((unit) => unit.unitType === UnitType.MARINE)
             .sort((first, second) => distance(first.pos!, enemyMain) - distance(second.pos!, enemyMain))[0];
@@ -490,8 +490,8 @@ function createCapture(target: MapTarget, dir: string, { observeDirect, frameRes
 
     const pointFromMain = (fraction: number) => {
         const { map } = world.resources.get();
-        const main = map.getMain().townhallPosition;
-        const natural = map.getNatural().townhallPosition;
+        const main = map.getMain()!.townhallPosition;
+        const natural = map.getNatural()!.townhallPosition;
         return { x: main.x! + (natural.x! - main.x!) * fraction, y: main.y! + (natural.y! - main.y!) * fraction };
     };
 
@@ -566,7 +566,7 @@ function createCapture(target: MapTarget, dir: string, { observeDirect, frameRes
     };
 
     const stepTypeAbilities = async (units: RawUnit[]) => {
-        const natural = world.resources.get().map.getNatural().townhallPosition;
+        const natural = world.resources.get().map.getNatural()!.townhallPosition;
         const spawned = ownUnits(units).filter((unit) => !knownTags.has(unit.tag!));
 
         if (!typeQueue) {
@@ -657,7 +657,7 @@ function createCapture(target: MapTarget, dir: string, { observeDirect, frameRes
         );
 
     const zergOpening = async (units: RawUnit[]) => {
-        const main = world.resources.get().map.getMain().townhallPosition;
+        const main = world.resources.get().map.getMain()!.townhallPosition;
         const [hatchery] = ofType(units, UnitType.HATCHERY);
         const [extractorDrone, chamberDrone, ...miners] = ofType(units, UnitType.DRONE);
         const larva = ofType(units, UnitType.LARVA);
@@ -701,7 +701,7 @@ function createCapture(target: MapTarget, dir: string, { observeDirect, frameRes
     };
 
     const protossOpening = async (units: RawUnit[]) => {
-        const main = world.resources.get().map.getMain().townhallPosition;
+        const main = world.resources.get().map.getMain()!.townhallPosition;
         const [nexus] = ofType(units, UnitType.NEXUS);
         const [pylonProbe, ...miners] = ofType(units, UnitType.PROBE);
         const [pylonSpot, spawnedPylonSpot] = await findPlacements(main, Ability.BUILD_PYLON, {

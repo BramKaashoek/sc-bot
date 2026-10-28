@@ -6,11 +6,20 @@ import createSystem from './create-system.ts';
 import { consumeRawGrids, consumeImageData } from '../utils/map/grid.ts';
 import { createClusters as findClusters } from '../utils/map/cluster.ts';
 import createExpansion from '../engine/create-expansion.ts';
+import { perWorld } from '../engine/per-world.ts';
 import floodFill from '../utils/map/flood.ts';
 import { distanceAAShapeAndPoint } from '../utils/geometry/plane.ts';
-import { distance, avgPoints, areEqual, closestPoint, createPoint2D, getNeighbors } from '../utils/geometry/point.ts';
+import {
+    distance,
+    avgPoints,
+    areEqual,
+    closestPoint,
+    createPoint2D,
+    getNeighbors,
+    pointKey,
+} from '../utils/geometry/point.ts';
 import { frontOfGrid } from '../utils/map/region.ts';
-import { claimableCells, livePathing, releasableCells } from '../utils/map/blockers.ts';
+import { claimableCells, livePathing, releasableCells, resetLivePathing } from '../utils/map/blockers.ts';
 import { gridsInCircle } from '../utils/geometry/angle.ts';
 import {
     MineralField,
@@ -31,37 +40,27 @@ import {
     townhallTypes,
     unbuildablePlateTypes,
 } from '../constants/groups.ts';
-import type { Expansion, Grid2D, MapResource, MapSystem, Point2D, Unit, WPoint, World } from '../types.ts';
+import type { Expansion, Grid2D, MapResource, MapSystem, OwnedEffect, Point2D, Unit, WPoint, World } from '../types.ts';
 
 const debugDrawPlacement = createDebug('sc2:DrawPlacementMap');
 const debugDrawMap = createDebug('sc2:DrawDebugMap');
 const debugDrawWalls = createDebug('sc2:DrawDebugWalls');
-const debugDebug = createDebug('sc2:debug:MapSystem');
+const debugMap = createDebug('sc2:debug:MapSystem');
 const silly = createDebug('sc2:silly:MapSystem');
+
+const OUTSIDE_TOWNHALL_OFFSET_X = 3;
 
 type PointCluster = Point2D[] & { centroid?: Point2D };
 
 type BlockedStructure = { unitType: number; pos: Point2D };
 
-// mapSystem is a shared module object, so per-game state is keyed by world
-const blockedStructures = new WeakMap<
-    World,
-    { own: Map<string, BlockedStructure>; enemy: Map<string, BlockedStructure> }
->();
-
-function structureBlocks(world: World) {
-    let blocked = blockedStructures.get(world);
-    if (!blocked) {
-        blocked = { own: new Map(), enemy: new Map() };
-        blockedStructures.set(world, blocked);
-    }
-    return blocked;
-}
+const structureBlocks = perWorld(() => ({
+    own: new Map<string, BlockedStructure>(),
+    enemy: new Map<string, BlockedStructure>(),
+}));
 
 // uprooted crawlers count as ground structures but walk, so they hold no cells
 const mobileStructureTypes = [...flyingStructureTypes, UnitType.SPINECRAWLERUPROOTED, UnitType.SPORECRAWLERUPROOTED];
-
-const cellKey = ({ x, y }: Point2D) => `${x},${y}`;
 
 function blockStructure(world: World, unitType: number, pos: Point2D) {
     const { map } = world.resources.get();
@@ -73,7 +72,10 @@ function blockOwnStructure(world: World, unit: Unit) {
     blockStructure(world, unit.unitType!, unit.pos);
     if (unit.isGasMine()) return;
 
-    structureBlocks(world).own.set(unit.tag!, { unitType: unit.unitType!, pos: { x: unit.pos.x, y: unit.pos.y } });
+    structureBlocks.get(world).own.set(unit.tag!, {
+        unitType: unit.unitType!,
+        pos: { x: unit.pos.x, y: unit.pos.y },
+    });
 }
 
 // own and enemy footprints can overlap through a stale enemy record, so a cell another structure still covers stays blocked
@@ -83,10 +85,10 @@ function heldCells(world: World, tag: string, pos: Point2D, reach = 5) {
     const hold = (heldType: number, heldPos: Point2D) => {
         // structure footprints are at most 5x5, so farther centres can't share a cell
         if (Math.abs(heldPos.x - pos.x) >= reach || Math.abs(heldPos.y - pos.y) >= reach) return;
-        footprintCells(world, heldType, heldPos).forEach((cell) => heldPlacement.add(cellKey(cell)));
-        pathingCells(world, heldType, heldPos).forEach((cell) => heldPathing.add(cellKey(cell)));
+        footprintCells(world, heldType, heldPos).forEach((cell) => heldPlacement.add(pointKey(cell)));
+        pathingCells(world, heldType, heldPos).forEach((cell) => heldPathing.add(pointKey(cell)));
     };
-    const { own, enemy } = structureBlocks(world);
+    const { own, enemy } = structureBlocks.get(world);
     for (const [otherTag, other] of [...own, ...enemy]) {
         if (otherTag !== tag) hold(other.unitType, other.pos);
     }
@@ -99,18 +101,18 @@ function releaseStructure(world: World, tag: string, unitType: number, pos: Poin
 
     if (placement) {
         footprintCells(world, unitType, pos)
-            .filter((cell) => !heldPlacement.has(cellKey(cell)))
+            .filter((cell) => !heldPlacement.has(pointKey(cell)))
             .forEach((cell) => map.setPlaceable(cell, true));
     }
     pathingCells(world, unitType, pos)
-        .filter((cell) => !heldPathing.has(cellKey(cell)))
+        .filter((cell) => !heldPathing.has(pointKey(cell)))
         .forEach((cell) => map.setPathable(cell, true));
 }
 
 // unitCreated and unitTypeChanged are own-only, so enemy structures are diffed against what was blocked for them
 function reconcileEnemyStructures(world: World) {
     const { units, map } = world.resources.get();
-    const blocked = structureBlocks(world).enemy;
+    const blocked = structureBlocks.get(world).enemy;
     const inSight = new Set<string>();
 
     // getStructures throws on unknown types; isStructure doesn't
@@ -145,7 +147,7 @@ function assignBase(map: MapResource, townhall: Unit) {
         return areEqual(candidate.townhallPosition, map.getClosestExpansion(townhall.pos).townhallPosition);
     });
 
-    // allow for misplaced townhalls, but not macro hatches
+    // 4.5 tolerates misplaced townhalls but not macro hatches
     if (expansion && distance(expansion.townhallPosition, townhall.pos) < 4.5) {
         expansion.base = townhall.tag;
     }
@@ -154,16 +156,7 @@ function assignBase(map: MapResource, townhall: Unit) {
 // live SC2 lets ground units cross unbuildable rocks, bricks and plates, but not rocks, debris or Xel'Naga towers
 const walkableBlockerTypes = [...unbuildablePlateTypes, UnitType.UNBUILDABLEROCKSDESTRUCTIBLE];
 
-const blockerCells = new WeakMap<World, Map<string, Point2D[]>>();
-
-function blockerClaims(world: World) {
-    let claims = blockerCells.get(world);
-    if (!claims) {
-        claims = new Map();
-        blockerCells.set(world, claims);
-    }
-    return claims;
-}
+const blockerClaims = perWorld(() => new Map<string, Point2D[]>());
 
 const isRockOrTower = (unit: Unit) =>
     unit.alliance === Alliance.NEUTRAL &&
@@ -174,7 +167,7 @@ const isRockOrTower = (unit: Unit) =>
 // footprints can't shape huge, diagonal or ramp rocks, so their cells come from SC2's live pathing grid
 async function claimNewBlockers(world: World) {
     const { units, map } = world.resources.get();
-    const claims = blockerClaims(world);
+    const claims = blockerClaims.get(world);
     const fresh = [...units.getDestructables(), ...units.getWatchtowers()].filter(
         (blocker) => blocker.isStructure() && !claims.has(blocker.tag!),
     );
@@ -206,9 +199,9 @@ function recalculateNaturalWall(world: World, rockCells: Point2D[]) {
 
     const { areaFill, hull } = natural.areas;
     const searched = new Set(
-        [...areaFill, ...hull].flatMap((cell) => [cell, ...getNeighbors(cell)]).map((cell) => cellKey(cell)),
+        [...areaFill, ...hull].flatMap((cell) => [cell, ...getNeighbors(cell)]).map((cell) => pointKey(cell)),
     );
-    if (!rockCells.some((cell) => searched.has(cellKey(cell)))) return;
+    if (!rockCells.some((cell) => searched.has(pointKey(cell)))) return;
 
     natural.areas = updateAreas(world, natural).areas;
     calculateWall(world, natural);
@@ -217,7 +210,7 @@ function recalculateNaturalWall(world: World, rockCells: Point2D[]) {
 async function releaseBlocker(world: World, blocker: Unit) {
     const { map } = world.resources.get();
     const { tag, unitType, pos, radius = 0 } = blocker;
-    const claims = blockerClaims(world);
+    const claims = blockerClaims.get(world);
     const claimed = claims.get(tag!) ?? [];
     claims.delete(tag!);
     const footprint = getFootprint(unitType!, footprintData(world)) ? footprintCells(world, unitType!, pos) : [];
@@ -230,8 +223,8 @@ async function releaseBlocker(world: World, blocker: Unit) {
 
     const { heldPlacement, heldPathing } = heldCells(world, tag!, pos, radius + 3);
     const { pathing, placement } = releasableCells(world, blocker, [...claimed, ...footprint], live);
-    pathing.filter((cell) => !heldPathing.has(cellKey(cell))).forEach((cell) => map.setPathable(cell, true));
-    placement.filter((cell) => !heldPlacement.has(cellKey(cell))).forEach((cell) => map.setPlaceable(cell, true));
+    pathing.filter((cell) => !heldPathing.has(pointKey(cell))).forEach((cell) => map.setPathable(cell, true));
+    placement.filter((cell) => !heldPlacement.has(pointKey(cell))).forEach((cell) => map.setPlaceable(cell, true));
 }
 
 const placementBlockers = (world: World) => {
@@ -253,7 +246,7 @@ function updateAreas(world: World, expansion: Expansion) {
 
     const placementGrid = floodFill(
         map.getGrids().miniMap!,
-        Math.trunc(thPos.x + 3), // adding 3 to start at an x,y not occupied by the townhall
+        Math.trunc(thPos.x + OUTSIDE_TOWNHALL_OFFSET_X),
         Math.trunc(thPos.y),
         null,
         104,
@@ -340,7 +333,10 @@ function calculateWall(world: World, expansion: Expansion) {
     function findAllPossibleWalls(rampDesired = true): Point2D[][] {
         const rampTest = (point: Point2D) => (rampDesired ? map.isRamp(point) : !map.isRamp(point));
 
-        const { deadHull, liveHull } = foeHull.reduce<{ deadHull: Point2D[]; liveHull: Point2D[] }>(
+        const { deadHull, liveHull } = foeHull.reduce<{
+            deadHull: Point2D[];
+            liveHull: Point2D[];
+        }>(
             (decomp, point) => {
                 const neighbors = getNeighbors(point, false);
                 const diagNeighbors = getNeighbors(point, true, true);
@@ -404,7 +400,7 @@ function calculateWall(world: World, expansion: Expansion) {
                     cluster.map((cell) => {
                         const notOwnClusters = deadHullClusters.filter((c, j) => j !== i);
                         return notOwnClusters.map((jcluster) => {
-                            const closestCell = closestPoint(cell, jcluster);
+                            const closestCell = closestPoint(cell, jcluster)!;
                             const line: Point2D[] = [];
                             bresenham(cell.x, cell.y, closestCell.x, closestCell.y, (x, y) => line.push({ x, y }));
                             return line;
@@ -423,7 +419,10 @@ function calculateWall(world: World, expansion: Expansion) {
                 newGraph.setWalkableAt(first.x, first.y, true);
                 newGraph.setWalkableAt(last.x, last.y, true);
                 return map
-                    .path(wall[0], wall[wall.length - 1], { graph: newGraph, diagonal: true })
+                    .path(wall[0], wall[wall.length - 1], {
+                        graph: newGraph,
+                        diagonal: true,
+                    })
                     .map(([x, y]) => ({ x, y }));
             })
             .map((wall) => {
@@ -486,7 +485,13 @@ function calculateExpansions(world: World) {
     };
 
     const expansions = findClusters([...mineralFields, ...vespeneGeysers!])
-        .map((cluster) => createExpansion(world, cluster))
+        .map((cluster) => {
+            const expansion = createExpansion(world, cluster);
+            if (!expansion)
+                debugMap(`skipping resource cluster at ${JSON.stringify(cluster.centroid)}: no valid townhall spot`);
+            return expansion;
+        })
+        .filter((expansion): expansion is Expansion => !!expansion)
         .map((expansion) => {
             const start = { ...expansion.townhallPosition };
             start.x = start.x + 3;
@@ -497,7 +502,11 @@ function calculateExpansions(world: World) {
         })
         .sort((a, b) => a.pathFromMain!.length - b.pathFromMain!.length)
         .map((expansion) => updateAreas(world, expansion))
-        .map((expansion) => Object.assign(expansion, { centroid: avgPoints(expansion.areas!.areaFill) }));
+        .map((expansion) =>
+            Object.assign(expansion, {
+                centroid: avgPoints(expansion.areas!.areaFill),
+            }),
+        );
 
     if (expansions[0] && mainBase) expansions[0].base = mainBase.tag;
 
@@ -518,15 +527,19 @@ const mapSystem: MapSystem = {
     },
     async onGameStart(world: World) {
         const { units, frame, map, debug } = world.resources.get();
-        blockedStructures.delete(world);
-        blockerCells.delete(world);
+        structureBlocks.clear(world);
+        blockerClaims.clear(world);
+        resetLivePathing(world);
         const startRaw = frame.getGameInfo().startRaw!;
 
         const ownStartingTh = units.getAlive(Alliance.SELF).find((u) => u.isTownhall());
 
         map.setLocations({
             ...(ownStartingTh ? { self: ownStartingTh.pos } : {}),
-            enemy: (startRaw.startLocations ?? []).map(({ x, y }) => ({ x: x!, y: y! })),
+            enemy: (startRaw.startLocations ?? []).map(({ x, y }) => ({
+                x: x!,
+                y: y!,
+            })),
         });
 
         map.setGrids(consumeRawGrids(startRaw));
@@ -539,16 +552,15 @@ const mapSystem: MapSystem = {
             console.warn('Could not analyze ramps and expansion locations from the start grids', e);
         }
 
-        map.setRamps(
-            calculateRamps(map._grids.miniMap!).map((rPoint) => {
-                return Object.assign(rPoint, { z: map.getHeight(rPoint) });
-            }),
-        );
+        const candidateRamps = calculateRamps(map.getGrids().miniMap!).map((rPoint) => {
+            return Object.assign(rPoint, { z: map.getHeight(rPoint) });
+        });
+        map.setRamps(candidateRamps);
 
         map.setRamps(
-            map._ramps.filter((possibleRamp) => {
+            candidateRamps.filter((possibleRamp) => {
                 const { x, y } = possibleRamp;
-                // this is necessary because some maps have random tiles that aren't placeable but are pathable
+                // some maps have random tiles that aren't placeable but are pathable
                 const neighbors = [
                     { y: y - 1, x },
                     { y, x: x - 1 },
@@ -586,9 +598,10 @@ const mapSystem: MapSystem = {
         const { data, resources } = world;
         const { frame, map, events, debug } = resources.get();
         const newMapState = frame.getMapState();
+        const { x: mapWidth } = map.getSize();
         const mapState = {
-            creep: consumeImageData(newMapState.creep!, map._mapSize.x!),
-            visibility: consumeImageData(newMapState.visibility!, map._mapSize.x!),
+            creep: consumeImageData(newMapState.creep!, mapWidth!),
+            visibility: consumeImageData(newMapState.visibility!, mapWidth!),
         };
 
         map.setMapState(mapState);
@@ -598,8 +611,10 @@ const mapSystem: MapSystem = {
         const currEffectData = map.getEffects();
         const newEffectData = frame.getEffects();
 
-        const sameEffect = (left: SC2APIProtocol.Effect, right: SC2APIProtocol.Effect) =>
+        const sameEffect = (left: OwnedEffect, right: OwnedEffect) =>
             left.effectId === right.effectId &&
+            left.alliance === right.alliance &&
+            left.owner === right.owner &&
             left.pos![0].x === right.pos![0].x &&
             left.pos![0].y === right.pos![0].y &&
             left.pos!.length === right.pos!.length;
@@ -609,7 +624,11 @@ const mapSystem: MapSystem = {
             .map((effect) => {
                 const effectData = data.getEffectData(effect.effectId!);
                 const effectGrid = effect.pos!.reduce<Point2D[]>((grid, pos) => {
-                    return grid.concat(gridsInCircle(pos as Point2D, effectData.radius!, { normalize: true }));
+                    return grid.concat(
+                        gridsInCircle(pos as Point2D, effectData?.radius ?? 0, {
+                            normalize: true,
+                        }),
+                    );
                 }, []);
 
                 return {
@@ -678,7 +697,7 @@ const mapSystem: MapSystem = {
         if (newUnit.isStructure()) blockOwnStructure(world, newUnit);
 
         if (newUnit.isTownhall()) {
-            debugDebug(`new townhall detected: ${UnitTypeId[newUnit.unitType!]}`);
+            debugMap(`new townhall detected: ${UnitTypeId[newUnit.unitType!]}`);
 
             // @TODO: this should happen on frame 1, so we can re-sync to existing games
             if (frame.getGameLoop() <= 8) return;
@@ -693,7 +712,7 @@ const mapSystem: MapSystem = {
             return;
         }
 
-        const { own, enemy } = structureBlocks(world);
+        const { own, enemy } = structureBlocks.get(world);
         const blocked = deadUnit.alliance === Alliance.ENEMY ? enemy : own;
         const record = blocked.get(deadUnit.tag!);
         if (!record) return;
@@ -705,13 +724,15 @@ const mapSystem: MapSystem = {
         const wasFlying = mobileStructureTypes.includes(previousType);
         const isFlying = mobileStructureTypes.includes(unit.unitType!);
         const { map } = world.resources.get();
-        const { own } = structureBlocks(world);
+        const { own } = structureBlocks.get(world);
         const record = own.get(unit.tag!);
 
         if (wasFlying === isFlying) {
             if (!record) return;
 
-            releaseStructure(world, unit.tag!, record.unitType, record.pos, { placement: false });
+            releaseStructure(world, unit.tag!, record.unitType, record.pos, {
+                placement: false,
+            });
             pathingCells(world, unit.unitType!, record.pos).forEach((cell) => map.setPathable(cell, false));
             record.unitType = unit.unitType!;
             return;

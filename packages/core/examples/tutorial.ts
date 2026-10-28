@@ -41,7 +41,7 @@ const eightGateAllIn = createSystem({
 
                 return Promise.all(
                     [enemyNat, enemyMain].map((expansion) => {
-                        return actions.attackMove(idleCombatUnits, expansion.townhallPosition, true);
+                        return actions.attackMove(idleCombatUnits, expansion.townhallPosition, { queue: true });
                     }),
                 );
             }
@@ -65,7 +65,7 @@ const eightGateAllIn = createSystem({
 
             return Promise.all(
                 [enemyNat, enemyMain].map((expansion) => {
-                    return actions.attackMove(combatUnits, expansion.townhallPosition, true);
+                    return actions.attackMove(combatUnits, expansion.townhallPosition, { queue: true });
                 }),
             );
         }
@@ -75,7 +75,6 @@ const eightGateAllIn = createSystem({
             const { units, actions } = resources.get();
 
             const threeWorkers = units.getMineralWorkers().closestNUnits(newBuilding.pos, 3);
-            threeWorkers.forEach((worker: Unit) => worker.labels.set('gasWorker', true));
             return actions.mine(threeWorkers, newBuilding);
         }
     },

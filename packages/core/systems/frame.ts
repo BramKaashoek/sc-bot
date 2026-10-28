@@ -2,6 +2,7 @@ import createDebug from 'debug';
 import createSystem from './create-system.ts';
 import { GameEndedError } from '../engine/errors.ts';
 import { Alliance } from '../constants/enums.ts';
+import { forgetUnit } from '../resources/units.ts';
 import type { FrameSystem } from '../types.ts';
 
 const debugFrame = createDebug('sc2:debug:frameSystem');
@@ -107,7 +108,7 @@ const createFrameSystem = (isRealtime: () => boolean): FrameSystem => ({
 
             deadUnits.forEach((unit) => unit.labels.set('dead', true));
             // enemies are kept as memory after leaving vision, so a dead one would otherwise linger forever
-            deadUnits.forEach((unit) => units._units[Alliance.ENEMY].delete(unit.tag!));
+            deadUnits.forEach((unit) => forgetUnit(units, Alliance.ENEMY, unit.tag!));
 
             deadUnits.forEach((unit) =>
                 events.write({

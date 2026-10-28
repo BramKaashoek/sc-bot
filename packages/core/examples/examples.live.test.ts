@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, expect, it } from 'bun:test';
 import { Alliance, PlayerType } from '../constants/enums.ts';
 import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
 import { BARRACKS, FACTORY, MARINE, SUPPLYDEPOT, SUPPLYDEPOTLOWERED } from '../constants/unit-type.ts';
 import createEngine from '../engine/create-engine.ts';
-import { killNewSc2, Race, sc2Pids, veryEasyZerg } from '../test/live.ts';
+import { describeLive, killNewSc2, Race, sc2Pids, veryEasyZerg } from '../test/live.ts';
 import type { Agent, System, World } from '../types.ts';
 import { configFile, createBot as createBuildRunnerBot } from './ares/build-runner.ts';
 import { createBot as createProductionBot } from './ares/managing-production.ts';
@@ -51,7 +51,7 @@ const onEachStep = (agent: Agent, observe: (world: World) => void) => {
     };
 };
 
-describe.skipIf(!process.env.SC2PATH)('examples live smoke', () => {
+describeLive('examples live smoke', () => {
     it('ramp-wall puts a depot and a barracks on wall placements by 4:00', async () => {
         const agent = createRampWallBot();
         let taken: string[] = [];

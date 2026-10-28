@@ -1,4 +1,4 @@
-import type { Point2D, Point3D } from '../../types.ts';
+import type { Point2D, Point3D, Unit } from '../../types.ts';
 
 function dotProduct(a: Point2D, b: Point2D) {
     return a.x * b.x + a.y * b.y;
@@ -85,7 +85,7 @@ function areEqual(a: Point2D, b: Point2D) {
     return a.x === b.x && a.y === b.y;
 }
 
-function closestPoint(pos: Point2D, points: Point2D[]): Point2D {
+function closestPoint(pos: Point2D, points: Point2D[]): Point2D | undefined {
     return points
         .map((point) => ({ point, distance: distance(pos, point) }))
         .sort((a, b) => a.distance - b.distance)
@@ -114,9 +114,20 @@ function normalize(vec: Point2D): Point2D {
     };
 }
 
-const createPoint2D = ({ x, y }: Point2D): Point2D => ({ x: Math.floor(x), y: Math.floor(y) });
+const createPoint2D = ({ x, y }: Point2D): Point2D => ({
+    x: Math.floor(x),
+    y: Math.floor(y),
+});
 
-const createPoint = ({ x, y, z }: Point3D): Point3D => ({ x: Math.floor(x), y: Math.floor(y), z: Math.floor(z) });
+const toPoint = (position: Unit | Point2D): Point2D => ('pos' in position ? position.pos : position);
+
+const pointKey = ({ x, y }: Point2D): string => `${x},${y}`;
+
+const createPoint = ({ x, y, z }: Point3D): Point3D => ({
+    x: Math.floor(x),
+    y: Math.floor(y),
+    z: Math.floor(z),
+});
 
 const getAdjacents = ({ x, y }: Point2D): Point2D[] => [
     { y: y - 1, x },
@@ -135,7 +146,10 @@ const getDiagonals = ({ x, y }: Point2D): Point2D[] => [
 function towards(from: Point2D, to: Point2D, step: number): Point2D {
     const length = distance(from, to);
     if (length === 0) return { x: from.x, y: from.y };
-    return { x: from.x + ((to.x - from.x) / length) * step, y: from.y + ((to.y - from.y) / length) * step };
+    return {
+        x: from.x + ((to.x - from.x) / length) * step,
+        y: from.y + ((to.y - from.y) / length) * step,
+    };
 }
 
 function getNeighbors(point: Point2D, includeDiagonals = true, diagonalsOnly = false): Point2D[] {
@@ -155,6 +169,8 @@ function getNeighbors(point: Point2D, includeDiagonals = true, diagonalsOnly = f
 export {
     createPoint,
     createPoint2D,
+    toPoint,
+    pointKey,
     getNeighbors,
     areEqual,
     avgPoints,

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import Bluebird from 'bluebird';
 import { plan } from '@sc-bot/core/behaviors';
 import { ATTACKING } from '../constants/unit-role.ts';
-import { createTestWorld, stepTo } from '../test/create-test-world.ts';
+import { createTestWorld, observationAt, stepTo } from '../test/create-test-world.ts';
 import { currentCommander } from './command-context.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
 import type { Behavior, BehaviorContext, CommandResult } from '../types.ts';
@@ -13,12 +13,6 @@ const MARINE_TAG = '4354211841';
 const SCV_TAG = '4345823233';
 
 const behavior = (name: string, execute: Behavior['execute']): Behavior => ({ name, execute });
-
-const atLoop = (world: TestWorld, gameLoop: number) => {
-    const responseObservation = structuredClone(world.client.fixture.observations[896]);
-    responseObservation.observation!.gameLoop = gameLoop;
-    return responseObservation;
-};
 
 const sentCommands = (world: TestWorld) =>
     world.client.sent.actions.flatMap(({ actions }) => actions ?? []).map(({ actionRaw }) => actionRaw!.unitCommand!);
@@ -74,7 +68,7 @@ describe('behaviors', () => {
             behaviors.run(behavior('other', ({ order }) => record(order(marine, MOVE, { x: 1, y: 1 })))),
         );
         await actions.flushQueuedActions();
-        await stepTo(world, atLoop(world, 900));
+        await stepTo(world, observationAt(world, 900));
         await behaviors.run(behavior('next loop', ({ order }) => record(order(marine, MOVE, { x: 2, y: 2 }))));
         world.resources.reset(world);
         await behaviors.run(behavior('after reset', ({ order }) => record(order(marine, MOVE, { x: 3, y: 3 }))));

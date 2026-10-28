@@ -3,7 +3,7 @@ import { ATTACK } from '@sc-bot/core/constants/ability';
 import { Alliance } from '@sc-bot/core/constants/enums';
 import { ATTACKING, CONTROL_GROUP_ONE, GATHERING } from '@sc-bot/core/constants/unit-role';
 import { DRONE, MARINE, ROACH, SPINECRAWLER } from '@sc-bot/core/constants/unit-type';
-import { createTestWorld, stepTo } from '../../test/create-test-world.ts';
+import { createTestWorld, stepWith } from '../../test/create-test-world.ts';
 import { rawUnit } from '../../test/factories.ts';
 import { createBot } from './unit-squads.ts';
 import type { TestWorld } from '../../test/create-test-world.ts';
@@ -12,12 +12,9 @@ const AFTER_SIX_MINUTES = 8100;
 
 const roach = (tag: string, x: number, y: number) => rawUnit({ tag, unitType: ROACH, pos: { x, y, z: 10 } });
 
-async function stepWith(world: TestWorld, gameLoop: number, units: SC2APIProtocol.Unit[]) {
-    const responseObservation = structuredClone(world.client.fixture.observations[896]);
-    responseObservation.observation!.gameLoop = gameLoop;
-    responseObservation.observation!.rawData!.units!.push(...units);
+async function commandsAfter(world: TestWorld, gameLoop: number, units: SC2APIProtocol.Unit[]) {
     const before = world.client.sent.actions.length;
-    await stepTo(world, responseObservation);
+    await stepWith(world, gameLoop, units);
     return world.client.sent.actions
         .slice(before)
         .flatMap(({ actions }) => actions ?? [])
@@ -42,17 +39,17 @@ describe('unit-squads example', () => {
         });
         const roaches = [roach('a1', 30, 30), roach('a2', 25, 30), roach('b1', 60, 60)];
 
-        await stepWith(world, 900, [...roaches, enemy]);
+        await commandsAfter(world, 900, [...roaches, enemy]);
         expect([...roles.getTags(ATTACKING)]).toEqual(expect.arrayContaining(['a1', 'a2', 'b1']));
         expect(roles.getTags(CONTROL_GROUP_ONE).size).toBe(0);
 
-        await stepWith(world, 904, [...roaches, enemy]);
+        await commandsAfter(world, 904, [...roaches, enemy]);
         expect(roles.getTags(CONTROL_GROUP_ONE).size).toBe(0);
 
-        await stepWith(world, AFTER_SIX_MINUTES, [...roaches, enemy]);
+        await commandsAfter(world, AFTER_SIX_MINUTES, [...roaches, enemy]);
         expect([...roles.getTags(CONTROL_GROUP_ONE)].sort()).toEqual(['a1', 'a2', 'b1']);
 
-        const engaged = await stepWith(world, AFTER_SIX_MINUTES + 4, [
+        const engaged = await commandsAfter(world, AFTER_SIX_MINUTES + 4, [
             ...roaches,
             enemy,
             roach('late', 60, 61),

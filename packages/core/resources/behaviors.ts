@@ -1,3 +1,4 @@
+import { toTag } from '../utils/collections.ts';
 import { currentCommander } from './command-context.ts';
 import type { BehaviorContext, BehaviorsResource, Point2D, ResourceDefinition, Unit, World } from '../types.ts';
 
@@ -41,7 +42,7 @@ function createBehaviors(world: World): BehaviorsResource {
             return true;
         },
         hasOrdered(unit) {
-            return orderedThisLoop().has(typeof unit === 'string' ? unit : unit.tag);
+            return orderedThisLoop().has(toTag(unit));
         },
     };
 

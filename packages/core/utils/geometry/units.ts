@@ -1,8 +1,9 @@
-import type { AAShape, Footprint, Point2D, UnitTypeId, World } from '../../types.ts';
+import type { AAShape, Footprint, Point2D, Unit, UnitTypeId, World } from '../../types.ts';
 import { cellsInFootprint } from './plane.ts';
 import { createPoint2D } from './point.ts';
 import * as UnitType from '../../constants/unit-type.ts';
 import { Attribute } from '../../constants/enums.ts';
+import { GRAVITONBEAM } from '../../constants/buff.ts';
 import {
     structureTypes,
     flyingStructureTypes,
@@ -172,3 +173,5 @@ function pathingCells(world: World, unitType: UnitTypeId, pos: Point2D): Point2D
 }
 
 export { MineralField, Townhall, VespeneGeyser, getFootprint, footprintData, footprintCells, pathingCells };
+
+export const isFlying = (unit: Unit): boolean => Boolean(unit.isFlying) || (unit.buffIds ?? []).includes(GRAVITONBEAM);

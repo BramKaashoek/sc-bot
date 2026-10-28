@@ -1,10 +1,12 @@
 import { Alliance } from '../constants/enums.ts';
-import { Units, isFlying } from './units-collection.ts';
+import { Units } from './units-collection.ts';
+import { isFlying } from '../utils/geometry/units.ts';
+import { forgetUnit } from './units.ts';
 import type { EnemyMemory, MemorySettings, ResourceDefinition, Unit, World } from '../types.ts';
 
 const DEFAULT_SETTINGS: MemorySettings = { expireGround: 30, expireAir: 30 };
 
-const settingsByMemory = new WeakMap<EnemyMemory, MemorySettings>();
+export const settingsByMemory = new WeakMap<EnemyMemory, MemorySettings>();
 
 const SURROUNDING_CELLS = [
     [0, 0],
@@ -47,7 +49,7 @@ export const memoryResource: ResourceDefinition<'memory'> = {
                 );
             },
             forget(tag) {
-                enemyStore().delete(tag);
+                forgetUnit(world.resources.get().units, Alliance.ENEMY, tag);
             },
             configure(settings) {
                 Object.assign(settingsByMemory.get(memory)!, settings);
@@ -56,14 +58,16 @@ export const memoryResource: ResourceDefinition<'memory'> = {
         settingsByMemory.set(memory, { ...DEFAULT_SETTINGS });
         return memory;
     },
+    // settings are the only state and survive; the default recreate would leave onStep reading the old ones
     reset() {},
     onStep(memory, world) {
         const { expireGround, expireAir } = settingsByMemory.get(memory)!;
-        const enemies = world.resources.get().units._units[Alliance.ENEMY];
-        enemies.forEach((unit, tag) => {
+        const { units } = world.resources.get();
+        units.getAll(Alliance.ENEMY).forEach((unit) => {
             if (unit.isCurrent()) return;
             const expired = unit.age() > (isFlying(unit) ? expireAir : expireGround);
-            if (expired || (!unit.isBurrowed && isSurroundedByVision(world, unit))) enemies.delete(tag);
+            if (expired || (!unit.isBurrowed && isSurroundedByVision(world, unit)))
+                forgetUnit(units, Alliance.ENEMY, unit.tag!);
         });
     },
 };

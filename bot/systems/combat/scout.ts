@@ -97,6 +97,7 @@ export const scout = async ({
         return;
     }
 
+    const home = map.getMain();
     if (expansionsToScout[0]) {
         await actions.move(scoutUnit, expansionsToScout[0].townhallPosition);
         log(
@@ -104,8 +105,8 @@ export const scout = async ({
             `scout: heading to expansion ${map.getExpansions().indexOf(expansionsToScout[0])} | dist ${scoutUnit.distanceTo(expansionsToScout[0].townhallPosition).toFixed(1)} | nearest ${map.getExpansions().indexOf(nearestExpansion)} | enemy structures ${units.getEnemyStructures().closerThan(25, expansionsToScout[0].townhallPosition).length}`,
             'magenta',
         );
-    } else if (scoutUnit.distanceTo(map.getMain().townhallPosition) > 10) {
-        await actions.move(scoutUnit, map.getMain().townhallPosition);
+    } else if (home && scoutUnit.distanceTo(home.townhallPosition) > 10) {
+        await actions.move(scoutUnit, home.townhallPosition);
         log({ resources }, 'scout: nothing left to scout, returning to main', 'magenta');
     }
 };

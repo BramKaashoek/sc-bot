@@ -26,13 +26,13 @@ export function mineralTargets(
     const targets = new Map<string, Point2D>();
     if (townhalls.length === 0) return targets;
     for (const mineral of minerals) {
-        const centre = closestPoint(mineral.pos, townhalls);
+        const centre = closestPoint(mineral.pos, townhalls)!;
         const start = towards(mineral.pos, centre, radius);
         let target = start;
         for (const other of minerals) {
             if (other.tag === mineral.tag || distance(other.pos, start) >= radius) continue;
             const points = circleIntersections(mineral.pos, radius, other.pos, radius);
-            if (points.length === 2) target = closestPoint(centre, points);
+            if (points.length === 2) target = closestPoint(centre, points)!;
         }
         targets.set(mineral.tag, target);
     }

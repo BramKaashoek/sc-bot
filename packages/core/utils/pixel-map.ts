@@ -1,10 +1,6 @@
 import type { Point2D } from '../types.ts';
 
-type ImageSource = {
-    bitsPerPixel: number;
-    size: { x: number; y: number };
-    data: Uint8Array;
-};
+type ImageSource = SC2APIProtocol.ImageData;
 
 const NEIGHBOUR_OFFSETS: Array<[number, number]> = [
     [-1, -1],
@@ -24,6 +20,9 @@ export class PixelMap {
     private readonly values: Uint8Array;
 
     constructor({ bitsPerPixel, size, data }: ImageSource) {
+        if (bitsPerPixel === undefined || size?.x === undefined || size.y === undefined || !data) {
+            throw new TypeError('Image data needs bitsPerPixel, size.x, size.y and data');
+        }
         this.width = size.x;
         this.height = size.y;
         this.bitsPerPixel = bitsPerPixel;

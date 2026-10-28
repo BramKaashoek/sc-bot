@@ -313,6 +313,28 @@ describe('MapResource', () => {
         expect(byPosition(map.getVisionBlockers())).toEqual(VISION_BLOCKERS.map(([x, y]) => ({ x, y })));
     });
 
+    it('answers false (height 0) for points off the grid instead of throwing or claiming pathable', async () => {
+        const world = await createTestWorld('blueshift');
+        const { map } = world.resources.get();
+        const { x: width = 0, y: height = 0 } = map.getSize();
+        const off = [
+            { x: -1, y: 5 },
+            { x: 5, y: -1 },
+            { x: width, y: 5 },
+            { x: 5, y: height },
+        ];
+
+        expect(
+            off.map((point) => [
+                map.isPathable(point),
+                map.isPlaceable(point),
+                map.isVisible(point),
+                map.hasCreep(point),
+                map.getHeight(point),
+            ]),
+        ).toEqual(off.map(() => [false, false, false, false, 0]));
+    });
+
     it('reads terrain height, z-height, pathing and placement at the floored cell of a point, with watchtowers unpathable and unbuildable rocks walkable but unplaceable', async () => {
         const world = await createTestWorld('blueshift');
         const { map } = world.resources.get();
@@ -363,7 +385,7 @@ describe('MapResource', () => {
     it('leaves a natural without a wall-off empty and rallies from the natural townhall instead', async () => {
         const { map } = (await createTestWorld('simple64')).resources.get();
 
-        expect(map.getNatural().getWall()).toEqual([]);
+        expect(map.getNatural()!.getWall()).toEqual([]);
         expect(map.getCombatRally()).toEqual({ x: 49, y: 51 });
     });
 
@@ -395,4 +417,18 @@ describe('MapResource', () => {
             expect(map.getClosestExpansion({ x: 30, y: 5 }).townhallPosition).toEqual({ x: 23, y: 15 });
         },
     );
+
+    it('throws when no cell near the map center or the natural is pathable instead of rallying from nowhere', async () => {
+        const { map } = (await createTestWorld(toyFixture())).resources.get();
+        expect(map.getCenter(true)).toEqual({ x: 16, y: 16 });
+
+        for (let y = 0; y < 32; y++) {
+            for (let x = 0; x < 32; x++) {
+                map.setPathable({ x, y }, false);
+            }
+        }
+
+        expect(() => map.getCenter(true)).toThrow('No pathable points within 5 radius');
+        expect(() => map.getCombatRally()).toThrow('No pathable points within 5 radius');
+    });
 });

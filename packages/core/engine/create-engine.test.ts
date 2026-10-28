@@ -5,12 +5,12 @@ import { join } from 'node:path';
 import createEngine from './create-engine.ts';
 import * as clientModule from './create-client.ts';
 import * as launcherModule from './launcher.ts';
-import { ConnectionClosedError } from './errors.ts';
+import { ConnectionClosedError, GameEndedError, NodeSC2Error } from './errors.ts';
 import createAgent from '../agent/create-agent.ts';
 import { Ability } from '../constants/index.ts';
 import { GameResult, PlayerType, Race } from '../constants/enums.ts';
 import { createFakeClient } from '../test/fake-client.ts';
-import { loadFixture } from '../test/create-test-world.ts';
+import { createTestWorld, loadFixture, stepTo } from '../test/create-test-world.ts';
 import { observation, toyFixture } from '../test/factories.ts';
 import type { FakeClient } from '../test/fake-client.ts';
 import type { GamePlayer, StepTime } from '../types.ts';
@@ -268,5 +268,49 @@ describe('engine game loop', () => {
                 gameTimeLimit: 1,
             }),
         ).rejects.toThrow('Could not create a game on "Nowhere LE" (InvalidMapName): Battle.net map not found');
+    });
+
+    it('rejects runGame without an agent player, and createGame throws on a refused game but returns the response of a created one', async () => {
+        const computers = [
+            { type: PlayerType.COMPUTER, race: Race.TERRAN },
+            { type: PlayerType.COMPUTER, race: Race.ZERG },
+        ];
+        await expect(
+            createEngine({ client: createLobbyClient().client, launch: false }).runGame(MAP, computers),
+        ).rejects.toBeInstanceOf(NodeSC2Error);
+
+        const { client } = createLobbyClient();
+        const created = await createEngine({ client, launch: false }).createGame(MAP, computers);
+        expect(created).toBeDefined();
+
+        const refused = createLobbyClient().client;
+        refused.createGame = async () => ({ error: 4, errorDetails: 'Battle.net map not found' });
+        const error = await createEngine({ client: refused, launch: false })
+            .createGame('Nowhere LE', computers)
+            .catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(NodeSC2Error);
+        expect((error as Error).message).toBe(
+            'Could not create a game on "Nowhere LE" (InvalidMapName): Battle.net map not found',
+        );
+    });
+
+    it('rejects dispatch with a fatal error thrown by an agent handler but logs and survives any other', async () => {
+        let failure: Error = new Error('boom');
+        const agent = createAgent({
+            async onStep() {
+                throw failure;
+            },
+        });
+        const warn = spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            const world = await createTestWorld(toyFixture(), { agent });
+            await stepTo(world, observation({ gameLoop: 8 }));
+            expect(warn).toHaveBeenCalledWith('Agent handler error: onStep: ', failure);
+
+            failure = new GameEndedError('over');
+            await expect(stepTo(world, observation({ gameLoop: 16 }))).rejects.toBe(failure);
+        } finally {
+            warn.mockRestore();
+        }
     });
 });

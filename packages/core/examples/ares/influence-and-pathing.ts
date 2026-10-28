@@ -27,7 +27,7 @@ const bot = createAgent({
     settings: { race: Race.PROTOSS },
     async onStep({ resources }: World) {
         const { map, units, influence, pathing, behaviors } = resources.get();
-        const start = map.getLocations().self;
+        const start = map.getLocations().self!;
         const [enemyStart] = map.getLocations().enemy;
 
         influence.addCost('ground', enemyStart, 20, 100.5);

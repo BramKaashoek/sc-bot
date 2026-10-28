@@ -1,13 +1,13 @@
 import { ATTACK, HARVEST_GATHER, MOVE } from '../../constants/ability.ts';
 import { CloakState } from '../../constants/enums.ts';
 import * as UnitType from '../../constants/unit-type.ts';
-import { isFlying } from '../../resources/units-collection.ts';
-import { distance, distanceSquared, towards } from '../../utils/geometry/point.ts';
-import { attackReady, center, inAttackRange, layerFor, pickEnemyTarget, positionOf, type Target } from './helpers.ts';
-import type { Behavior, InfluenceLayer, Point2D, Unit } from '../../types.ts';
+import { distance, distanceSquared, toPoint, towards } from '../../utils/geometry/point.ts';
+import { isFlying } from '../../utils/geometry/units.ts';
+import { attackReady, center, inAttackRange, layerFor, pickEnemyTarget, type Target } from './helpers.ts';
+import type { Behavior, InfluenceGrid, InfluenceLayer, Point2D, Unit } from '../../types.ts';
 
 type PathOptions = {
-    layer?: InfluenceLayer;
+    layer?: InfluenceLayer | InfluenceGrid;
     sensitivity?: number;
     senseDanger?: boolean;
     dangerDistance?: number;
@@ -41,7 +41,7 @@ export function aMove({
     return {
         name: 'aMove',
         execute(ctx) {
-            if (successAtDistance > 0 && distance(unit.pos, positionOf(target)) < successAtDistance) return false;
+            if (successAtDistance > 0 && distance(unit.pos, toPoint(target)) < successAtDistance) return false;
             ctx.order(unit, ATTACK, target);
             return true;
         },
@@ -114,7 +114,7 @@ export function stutterUnitBack({
 }: {
     unit: Unit;
     target: Unit;
-    layer?: InfluenceLayer;
+    layer?: InfluenceLayer | InfluenceGrid;
 }): Behavior {
     return {
         name: 'stutterUnitBack',
@@ -152,7 +152,7 @@ export function pathUnitToTarget({
     };
 }
 
-export function keepUnitSafe({ unit, layer }: { unit: Unit; layer?: InfluenceLayer }): Behavior {
+export function keepUnitSafe({ unit, layer }: { unit: Unit; layer?: InfluenceLayer | InfluenceGrid }): Behavior {
     return {
         name: 'keepUnitSafe',
         execute(ctx) {
@@ -205,7 +205,7 @@ export function shootAndMoveToTarget({
     unit: Unit;
     enemies: Unit[];
     target: Point2D;
-    layer?: InfluenceLayer;
+    layer?: InfluenceLayer | InfluenceGrid;
     distToTarget?: number;
     attackDestructables?: boolean;
 }): Behavior {
@@ -243,7 +243,8 @@ export function workerKiteBack({
             const minerals = units.getMineralFields();
             if (minerals.length === 0) return false;
 
-            const start = map.getMain().townhallPosition;
+            // own main exists once the game has started
+            const start = map.getMain()!.townhallPosition;
             const enemies = spatial
                 .unitsInRange(unit, 6.5, 'enemyGround')
                 .filter(({ unitType }) => !KITE_IGNORED_TYPES.includes(unitType));

@@ -1,20 +1,12 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 import { Ability, UnitType, Upgrade } from '../../constants/index.ts';
-import { createTestWorld, loadFixture } from '../../test/create-test-world.ts';
-import { observation, rawUnit } from '../../test/factories.ts';
-import type { Behavior, TrackedBuild } from '../../types.ts';
+import { executeBehavior, macroWorld } from '../../test/behavior-helpers.ts';
+import { rawUnit } from '../../test/factories.ts';
+import type { TrackedBuild } from '../../types.ts';
 import { techUp, upgradeController } from './tech.ts';
 
 async function setup(units: SC2APIProtocol.Unit[], minerals = 1000) {
-    const fixture = loadFixture('blueshift');
-    fixture.observations = {
-        0: observation({
-            mapSize: fixture.gameInfo.startRaw!.mapSize,
-            playerCommon: { minerals, vespene: 1000, foodCap: 100, foodUsed: 20 },
-            units,
-        }),
-    };
-    const world = await createTestWorld(fixture);
+    const world = await macroWorld(units, { minerals });
     const { actions, buildings } = world.resources.get();
     return {
         world,
@@ -22,9 +14,6 @@ async function setup(units: SC2APIProtocol.Unit[], minerals = 1000) {
         queued: spyOn(actions, 'queueAction'),
     };
 }
-
-const execute = (world: Awaited<ReturnType<typeof setup>>['world'], behavior: Behavior) =>
-    world.resources.get().behaviors.run(behavior);
 
 const unit = (tag: string, unitType: number, overrides: SC2APIProtocol.Unit = {}) =>
     rawUnit({ tag, unitType, ...overrides });
@@ -35,7 +24,7 @@ describe('techUp', () => {
             unit('busy', UnitType.BARRACKS, { orders: [{ abilityId: Ability.TRAIN_MARINE }] }),
             unit('rax', UnitType.BARRACKS),
         ]);
-        expect(await execute(world, techUp({ desired: { unit: UnitType.MARAUDER } }))).toBe(true);
+        expect(await executeBehavior(world, techUp({ desired: { unit: UnitType.MARAUDER } }))).toBe(true);
         expect(queued.mock.calls.map(([command]) => command)).toMatchObject([
             { abilityId: Ability.BUILD_TECHLAB_BARRACKS, unitTags: ['rax'] },
         ]);
@@ -47,13 +36,15 @@ describe('techUp', () => {
             unit('rax', UnitType.BARRACKS, { addOnTag: 'lab' }),
             unit('lab', UnitType.BARRACKSTECHLAB),
         ]);
-        expect(await execute(world, techUp({ desired: { unit: UnitType.MARAUDER } }))).toBe(false);
+        expect(await executeBehavior(world, techUp({ desired: { unit: UnitType.MARAUDER } }))).toBe(false);
         expect(queued).not.toHaveBeenCalled();
     });
 
     it('builds the missing research structure through buildStructure', async () => {
         const { world, build } = await setup([unit('factory', UnitType.FACTORY)]);
-        expect(await execute(world, techUp({ desired: { upgrade: Upgrade.TERRANVEHICLEWEAPONSLEVEL1 } }))).toBe(true);
+        expect(await executeBehavior(world, techUp({ desired: { upgrade: Upgrade.TERRANVEHICLEWEAPONSLEVEL1 } }))).toBe(
+            true,
+        );
         expect(build).toHaveBeenCalledWith(UnitType.ARMORY, { placement: { findAlternative: true } });
     });
 });
@@ -63,7 +54,7 @@ describe('upgradeController', () => {
 
     it('researches stim from an idle techlab', async () => {
         const { world, queued } = await setup(stim);
-        expect(await execute(world, upgradeController({ upgrades: [Upgrade.STIMPACK] }))).toBe(true);
+        expect(await executeBehavior(world, upgradeController({ upgrades: [Upgrade.STIMPACK] }))).toBe(true);
         expect(queued.mock.calls.map(([command]) => command)).toMatchObject([
             { abilityId: Ability.RESEARCH_STIMPACK, unitTags: ['lab'] },
         ]);
@@ -76,9 +67,9 @@ describe('upgradeController', () => {
             }),
             unit('ebay2', UnitType.ENGINEERINGBAY),
         ]);
-        expect(await execute(world, upgradeController({ upgrades: [Upgrade.TERRANINFANTRYWEAPONSLEVEL1] }))).toBe(
-            false,
-        );
+        expect(
+            await executeBehavior(world, upgradeController({ upgrades: [Upgrade.TERRANINFANTRYWEAPONSLEVEL1] })),
+        ).toBe(false);
         expect(queued).not.toHaveBeenCalled();
     });
 
@@ -87,14 +78,18 @@ describe('upgradeController', () => {
             unit('ebay', UnitType.ENGINEERINGBAY),
             unit('factory', UnitType.FACTORY),
         ]);
-        expect(await execute(world, upgradeController({ upgrades: [Upgrade.TERRANINFANTRYWEAPONSLEVEL2] }))).toBe(true);
+        expect(
+            await executeBehavior(world, upgradeController({ upgrades: [Upgrade.TERRANINFANTRYWEAPONSLEVEL2] })),
+        ).toBe(true);
         expect(build.mock.calls[0][0]).toBe(UnitType.ARMORY);
     });
 
     it('bank-holds only with prioritize when it cannot afford the research', async () => {
         const { world, queued } = await setup(stim, 50);
-        expect(await execute(world, upgradeController({ upgrades: [Upgrade.STIMPACK] }))).toBe(false);
-        expect(await execute(world, upgradeController({ upgrades: [Upgrade.STIMPACK], prioritize: true }))).toBe(true);
+        expect(await executeBehavior(world, upgradeController({ upgrades: [Upgrade.STIMPACK] }))).toBe(false);
+        expect(
+            await executeBehavior(world, upgradeController({ upgrades: [Upgrade.STIMPACK], prioritize: true })),
+        ).toBe(true);
         expect(queued).not.toHaveBeenCalled();
     });
 });

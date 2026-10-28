@@ -1,10 +1,12 @@
 import { EFFECT_HEAL, MORPH_SIEGEMODE, MORPH_UNSIEGE, SMART, UNLOADALLAT } from '../../constants/ability.ts';
 import * as UnitType from '../../constants/unit-type.ts';
-import { Units, isFlying } from '../../resources/units-collection.ts';
+import { Units } from '../../resources/units-collection.ts';
+import { CHANGELINGS } from '../../utils/combat/changelings.ts';
 import { distance, distanceSquared } from '../../utils/geometry/point.ts';
+import { isFlying } from '../../utils/geometry/units.ts';
 import { keepUnitSafe, pathUnitToTarget } from './individual.ts';
 import { plan } from '../plan.ts';
-import type { Behavior, InfluenceLayer, Point2D, Unit, UnitRole } from '../../types.ts';
+import type { Behavior, InfluenceGrid, InfluenceLayer, Point2D, Unit, UnitRole } from '../../types.ts';
 
 const PICKUP_RANGE: Record<number, number> = {
     [UnitType.MEDIVAC]: 5,
@@ -14,14 +16,6 @@ const PICKUP_RANGE: Record<number, number> = {
 
 const STATIC_DEFENCE = [UnitType.BUNKER, UnitType.PLANETARYFORTRESS, UnitType.SPINECRAWLER, UnitType.PHOTONCANNON];
 const TANKS = [UnitType.SIEGETANK, UnitType.SIEGETANKSIEGED];
-const CHANGELINGS = [
-    UnitType.CHANGELING,
-    UnitType.CHANGELINGMARINE,
-    UnitType.CHANGELINGMARINESHIELD,
-    UnitType.CHANGELINGZEALOT,
-    UnitType.CHANGELINGZERGLING,
-    UnitType.CHANGELINGZERGLINGWINGS,
-];
 
 export function medivacHeal({
     unit,
@@ -31,7 +25,7 @@ export function medivacHeal({
 }: {
     unit: Unit;
     allies: Unit[];
-    layer?: InfluenceLayer;
+    layer?: InfluenceLayer | InfluenceGrid;
     keepSafe?: boolean;
 }): Behavior {
     return {
@@ -59,7 +53,7 @@ export function pickUpCargo({
 }: {
     unit: Unit;
     targets: Unit[];
-    layer?: InfluenceLayer;
+    layer?: InfluenceLayer | InfluenceGrid;
     switchCargoToRole?: UnitRole;
 }): Behavior {
     return {
@@ -108,7 +102,7 @@ export function pickUpAndDropCargo({
     unit: Unit;
     targets: Unit[];
     target: Point2D;
-    layer?: InfluenceLayer;
+    layer?: InfluenceLayer | InfluenceGrid;
     switchCargoToRole?: UnitRole;
     shouldDropUnits?: boolean;
     keepDropshipSafe?: boolean;
@@ -150,7 +144,7 @@ export function siegeTankDecision({
         execute(ctx) {
             if (!TANKS.includes(unit.unitType!)) return false;
             const enemies = closeEnemy.filter(
-                (enemy) => !isFlying(enemy) && !enemy.isBurrowed && !CHANGELINGS.includes(enemy.unitType!),
+                (enemy) => !isFlying(enemy) && !enemy.isBurrowed && !CHANGELINGS.has(enemy.unitType!),
             );
             const nearTarget = (limit: number) => distanceSquared(unit.pos, target) < limit * limit;
             const farFromTarget = distanceSquared(unit.pos, target) > 200;

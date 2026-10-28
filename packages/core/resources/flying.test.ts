@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { Ability, UnitType } from '../constants/index.ts';
-import { createTestWorld, stepTo } from '../test/create-test-world.ts';
+import { createTestWorld, observationAt, stepTo } from '../test/create-test-world.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
 import { rawUnit } from '../test/factories.ts';
 import type { Point2D } from '../types.ts';
@@ -20,21 +20,20 @@ function observation(
     edits: Record<string, Edit>,
     extra: SC2APIProtocol.Unit[] = [],
 ) {
-    const next = structuredClone(world.client.fixture.observations[896]);
-    next.observation!.gameLoop = gameLoop;
-    const { rawData } = next.observation!;
-    rawData!.units = rawData!.units!.map((raw) => {
-        const edit = edits[raw.tag!];
-        if (!edit) return raw;
-        return {
-            ...raw,
-            ...(edit.flying && { unitType: FLYING[raw.unitType!], isFlying: true }),
-            ...(edit.pos && { pos: { ...edit.pos, z: raw.pos!.z } }),
-            orders: edit.orders ?? [],
-        };
+    return observationAt(world, gameLoop, {
+        edit: (units) =>
+            units.map((raw) => {
+                const edit = edits[raw.tag!];
+                if (!edit) return raw;
+                return {
+                    ...raw,
+                    ...(edit.flying && { unitType: FLYING[raw.unitType!], isFlying: true }),
+                    ...(edit.pos && { pos: { ...edit.pos, z: raw.pos!.z } }),
+                    orders: edit.orders ?? [],
+                };
+            }),
+        add: extra,
     });
-    rawData!.units!.push(...extra);
-    return next;
 }
 
 async function step(

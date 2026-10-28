@@ -17,7 +17,7 @@ import { Alliance } from '../constants/enums.ts';
 import { WorkerRace } from '../constants/race-map.ts';
 import { NodeSC2Error } from '../engine/errors.ts';
 import { Units } from './units-collection.ts';
-import type { Point2D, Unit, UnitResource, World } from '../types.ts';
+import type { Point2D, ResourceDefinition, Unit, UnitResource, World } from '../types.ts';
 
 const createdTypeByAbilityCache = new WeakMap<object, Map<number, number>>();
 
@@ -34,6 +34,19 @@ export function createdTypeByAbility(world: World): Map<number, number> {
         createdTypeByAbilityCache.set(unitData, createdTypes);
     }
     return createdTypes;
+}
+
+export function forgetUnit(units: UnitResource, alliance: number, tag: string): void {
+    units._units[alliance].delete(tag);
+}
+
+export function storeUnit(units: UnitResource, alliance: number, tag: string, unit: Unit): void {
+    units._units[alliance].set(tag, unit);
+}
+
+export function setAvailableAbilities(unit: Unit, abilityIds: number[], loop: number | undefined): void {
+    unit._availableAbilities = abilityIds;
+    unit._availableAbilitiesLoop = loop;
 }
 
 function createUnits(world: World): UnitResource {
@@ -262,4 +275,8 @@ function createUnits(world: World): UnitResource {
     };
 }
 
-export default createUnits;
+export const unitsResource: ResourceDefinition<'units'> = {
+    name: 'units',
+    create: (world) => createUnits(world),
+    reset: (units) => Object.values(units._units).forEach((store) => store.clear()),
+};

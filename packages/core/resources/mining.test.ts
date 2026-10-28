@@ -5,11 +5,11 @@ import { Alliance, DisplayType } from '../constants/enums.ts';
 import { BUILDING, GATHERING } from '../constants/unit-role.ts';
 import { COMMANDCENTER, REFINERY, ZERGLING } from '../constants/unit-type.ts';
 import createAgent from '../agent/create-agent.ts';
-import { createTestWorld, stepTo } from '../test/create-test-world.ts';
+import { createTestWorld, observationAt, stepTo } from '../test/create-test-world.ts';
 import { rawUnit } from '../test/factories.ts';
 import { mineralTargets, townhallTarget } from '../utils/mining/targets.ts';
 import { miningResource } from './mining.ts';
-import type { TestWorld } from '../test/create-test-world.ts';
+import type { ObservationEdit, TestWorld } from '../test/create-test-world.ts';
 import type { BaseThreat, CommandResult, Point2D, Unit } from '../types.ts';
 
 const CLOSE_PATCHES = ['4302045185', '4318560257', '4305715201', '4324851713'];
@@ -18,15 +18,7 @@ const PATCHES = [...CLOSE_PATCHES, ...FAR_PATCHES];
 const MINING = 'role:GATHERING';
 const LOOPS_PER_STEP = 12;
 
-type Edit = (units: SC2APIProtocol.Unit[]) => SC2APIProtocol.Unit[];
-
-function observation(world: TestWorld, gameLoop: number, edit: Edit = (units) => units) {
-    const responseObservation = structuredClone(world.client.fixture.observations[0]);
-    const raw = responseObservation.observation!;
-    raw.gameLoop = gameLoop;
-    raw.rawData!.units = edit(raw.rawData!.units!);
-    return responseObservation;
-}
+type Edit = NonNullable<ObservationEdit['edit']>;
 
 async function miningWorld(agent = createAgent()) {
     const world = await createTestWorld('blueshift', { loop: 0, agent });
@@ -36,7 +28,7 @@ async function miningWorld(agent = createAgent()) {
     let loop = 0;
     const step = async (edit?: Edit) => {
         loop += LOOPS_PER_STEP;
-        await stepTo(world, observation(world, loop, edit));
+        await stepTo(world, observationAt(world, loop, { base: 0, edit }));
         return events
             .read(reader)
             .filter(({ name }) => name === 'commandResults')
@@ -91,7 +83,7 @@ describe('mining', () => {
         const reader = events.createReader();
         const before = roles.getTags(GATHERING).size;
 
-        await stepTo(world, observation(world, 4));
+        await stepTo(world, observationAt(world, 4, { base: 0 }));
 
         expect(events.read(reader).filter(({ name }) => name === 'commandResults')).toHaveLength(0);
         expect([roles.getTags(GATHERING).size, roles.getTags(BUILDING).size]).toEqual([before, 0]);
@@ -376,7 +368,7 @@ describe('mining', () => {
         await step((all) => [...all, ...extra]);
         const { mining, units, map, influence, frame } = world.resources.get();
         const [spare] = extra.map(({ tag }) => units.getByTag(tag)!).filter((worker) => !mining.getAssignment(worker));
-        const natural = map.getNatural().townhallPosition;
+        const natural = map.getNatural()!.townhallPosition;
         const fields = units.getMineralFields().filter((mineral) => mining.getWorkersOn(mineral).length === 0);
         const costly = fields.closestTo(natural);
         influence.addCost('ground', mining.getMineralTarget(costly)!, 1, 50);
@@ -396,10 +388,10 @@ describe('mining', () => {
         const world = await createTestWorld('blueshift', { loop: 0 });
         const { mining, map } = world.resources.get();
         mining.configure({ enabled: true });
-        const natural = map.getNatural();
+        const natural = map.getNatural()!;
         const naturalPatches = natural.cluster.mineralFields.map(({ tag }) => tag);
         const atNatural = { ...natural.townhallPosition, z: 12 };
-        await stepTo(world, observation(world, 4480));
+        await stepTo(world, observationAt(world, 4480, { base: 0 }));
         const added = [rawUnit({ unitType: COMMANDCENTER, pos: atNatural })];
         const assignedAt = async (loop: number, threat: boolean) => {
             const worker = rawUnit({ pos: atNatural });
@@ -407,12 +399,14 @@ describe('mining', () => {
             mainThreat(world, threat);
             await stepTo(
                 world,
-                observation(world, loop, (all) => [
-                    ...all.map((unit) =>
-                        naturalPatches.includes(unit.tag!) ? { ...unit, displayType: DisplayType.VISIBLE } : unit,
-                    ),
-                    ...added,
-                ]),
+                observationAt(world, loop, {
+                    base: 0,
+                    add: added,
+                    edit: (all) =>
+                        all.map((unit) =>
+                            naturalPatches.includes(unit.tag!) ? { ...unit, displayType: DisplayType.VISIBLE } : unit,
+                        ),
+                }),
             );
             return naturalPatches.includes(mining.getAssignment(worker.tag)!.resourceTag) ? 'natural' : 'main';
         };

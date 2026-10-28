@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { UnitType } from '../constants/index.ts';
-import { createTestWorld, stepTo } from '../test/create-test-world.ts';
+import { createTestWorld, observationAt, stepTo } from '../test/create-test-world.ts';
 
 const UNIT_VALUE_LIFE = 2;
 const WHITE = { r: 255, g: 255, b: 255 };
@@ -84,8 +84,7 @@ describe('Debugger', () => {
     it('flushes boxes drawn before a step during that step without any debug flag, then sends only newer ones', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
         const debug = world.resources.get().debug!;
-        const nextLoop = structuredClone(world.client.fixture.observations[896]);
-        nextLoop.observation!.gameLoop = 900;
+        const nextLoop = observationAt(world, 900);
         const boxesSince = (sentBefore: number) =>
             world.client.sent.debug
                 .slice(sentBefore)

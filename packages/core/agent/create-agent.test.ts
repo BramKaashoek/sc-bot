@@ -4,8 +4,7 @@ import { Alliance, Attribute, Race } from '../constants/enums.ts';
 import createSystem from '../systems/create-system.ts';
 import { createTestWorld, loadFixture, stepTo } from '../test/create-test-world.ts';
 import createAgent from './create-agent.ts';
-import { observation, rawUnit, toyFixture, unitTypeData } from '../test/factories.ts';
-import type { TestWorld } from '../test/create-test-world.ts';
+import { observation, rawUnit, toyFixture, toyWorld, unitTypeData } from '../test/factories.ts';
 
 const terranStructure = [Attribute.ARMORED, Attribute.MECHANICAL, Attribute.STRUCTURE];
 const zergStructure = [Attribute.ARMORED, Attribute.BIOLOGICAL, Attribute.STRUCTURE];
@@ -122,38 +121,21 @@ const abilities: SC2APIProtocol.AbilityData[] = [
     { abilityId: Ability.RESEARCH_STIMPACK, linkName: 'BarracksTechLabResearch' },
 ];
 
-async function worldWith(
-    playerCommon: SC2APIProtocol.PlayerCommon,
-    units: SC2APIProtocol.Unit[] = [],
-    race = Race.TERRAN,
-): Promise<TestWorld> {
-    const fixture = toyFixture({ race });
-    unitTypes.forEach((typeData) => {
-        fixture.data.units![typeData.unitId!] = typeData;
-    });
-    abilities.forEach((abilityData) => {
-        fixture.data.abilities![abilityData.abilityId!] = abilityData;
-    });
-    fixture.data.upgrades![Upgrade.STIMPACK] = {
-        upgradeId: Upgrade.STIMPACK,
-        mineralCost: 100,
-        vespeneCost: 100,
-        abilityId: Ability.RESEARCH_STIMPACK,
-    };
-    fixture.observations[0] = observation({
-        playerCommon,
-        units: [...fixture.observations[0].observation!.rawData!.units!, ...units],
-    });
-    return createTestWorld(fixture);
-}
+const gameData = {
+    unitTypes,
+    abilities,
+    upgrades: [
+        { upgradeId: Upgrade.STIMPACK, mineralCost: 100, vespeneCost: 100, abilityId: Ability.RESEARCH_STIMPACK },
+    ],
+};
 
 describe('createAgent', () => {
     it('exposes supply accessors, correcting the rounded-down half supply of an odd zergling count for zerg only', async () => {
         const playerCommon = { foodCap: 20, foodUsed: 13, foodArmy: 1, foodWorkers: 12 };
         const zerglings = () => [0, 1, 2].map(() => rawUnit({ unitType: UnitType.ZERGLING }));
-        const even = (await worldWith(playerCommon, [], Race.ZERG)).agent;
-        const odd = (await worldWith(playerCommon, zerglings(), Race.ZERG)).agent;
-        const terran = (await worldWith(playerCommon, zerglings())).agent;
+        const even = (await toyWorld({ ...gameData, playerCommon, race: Race.ZERG })).agent;
+        const odd = (await toyWorld({ ...gameData, playerCommon, units: zerglings(), race: Race.ZERG })).agent;
+        const terran = (await toyWorld({ ...gameData, playerCommon, units: zerglings() })).agent;
 
         expect(odd.foodUsed).toBe(13);
         expect([even.supplyCap, even.supplyUsed, even.supplyLeft, even.supplyArmy, even.supplyWorkers]).toEqual([
@@ -166,7 +148,7 @@ describe('createAgent', () => {
     });
 
     it('calculates python-sc2 costs: morphs net of their source, hard-coded overrides, zerg drone correction, free morphs, upgrades', async () => {
-        const { agent } = await worldWith({});
+        const { agent } = await toyWorld(gameData);
         const unitCosts = Object.fromEntries(
             [
                 UnitType.ORBITALCOMMAND,
@@ -191,16 +173,23 @@ describe('createAgent', () => {
             [UnitType.SUPPLYDEPOTLOWERED]: { minerals: 0, vespene: 0 },
         });
         expect(agent.calculateUpgradeCost(Upgrade.STIMPACK)).toEqual({ minerals: 100, vespene: 100 });
+        expect(() => agent.calculateUpgradeCost(999999 as never)).toThrow('No upgrade data for upgrade 999999');
     });
 
     it('calculates supply cost net of the morph source and gates feeding and affordability on free supply', async () => {
-        const { agent: poor } = await worldWith({ minerals: 30, vespene: 25, foodCap: 15, foodUsed: 14 });
+        const { agent: poor } = await toyWorld({
+            ...gameData,
+            playerCommon: { minerals: 30, vespene: 25, foodCap: 15, foodUsed: 14 },
+        });
         expect([poor.canAfford(UnitType.BANELING), poor.canAfford(UnitType.BANELING, null, { supply: true })]).toEqual([
             true,
             true,
         ]);
 
-        const { agent } = await worldWith({ minerals: 200, vespene: 100, foodCap: 15, foodUsed: 14 });
+        const { agent } = await toyWorld({
+            ...gameData,
+            playerCommon: { minerals: 200, vespene: 100, foodCap: 15, foodUsed: 14 },
+        });
         const unitTypeIds = [
             UnitType.ZERGLING,
             UnitType.BANELING,

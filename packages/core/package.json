@@ -1,7 +1,7 @@
 {
     "name": "@sc-bot/core",
     "version": "0.9.0-beta.1",
-    "description": "A lightweight node.js framework to facilitate writing agents (or 'bots') for Starcraft II in JavaScript.",
+    "description": "A TypeScript framework for writing StarCraft II bots on Bun.",
     "main": "index.ts",
     "scripts": {
         "check-types": "tsc --noEmit",
@@ -12,9 +12,10 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+ssh://git@github.com/node-sc2/core.git"
+        "url": "git+ssh://git@github.com/BramKaashoek/sc-bot.git",
+        "directory": "packages/core"
     },
-    "author": "Jared Kantrowitz <me@jkantr.com>",
+    "author": "Bram Kaashoek",
     "license": "MIT",
     "devDependencies": {
         "@types/array.prototype.flat": "^1.2.5",
@@ -36,7 +37,6 @@
         "array.prototype.flat": "^1.2.3",
         "bluebird": "^3.5.3",
         "bresenham": "0.0.4",
-        "chalk": "^3.0.0",
         "convert-hrtime": "^2.0.0",
         "create-error": "^0.3.1",
         "debug": "^4.1.0",

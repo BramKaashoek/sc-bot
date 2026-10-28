@@ -1,12 +1,12 @@
 import ResourceManager from './create-resource-manager.ts';
 import { DEFAULT_CONFIG } from './config.ts';
-import ActionManager from '../resources/actions.ts';
-import Debugger from '../resources/debug.ts';
+import { actionsResource } from '../resources/actions.ts';
+import { debugResource } from '../resources/debug.ts';
 import DataStorage from './data-storage.ts';
-import EventChannel from '../resources/event-channel.ts';
-import Frame from '../resources/frame.ts';
-import MapManager from '../resources/map.ts';
-import UnitManager from '../resources/units.ts';
+import { eventsResource } from '../resources/event-channel.ts';
+import { frameResource } from '../resources/frame.ts';
+import { mapResource } from '../resources/map.ts';
+import { unitsResource } from '../resources/units.ts';
 import { memoryResource } from '../resources/memory.ts';
 import { spatialResource } from '../resources/spatial.ts';
 import { influenceResource } from '../resources/influence.ts';
@@ -27,21 +27,12 @@ type CoreResourceDefinition = { [K in keyof ResourceContainer]-?: ResourceDefini
 
 function coreResources(client?: NodeSC2Proto.ProtoClient): CoreResourceDefinition[] {
     return [
-        { name: 'frame', create: () => Frame(), reset: (frame) => frame.resetStepTimes() },
-        { name: 'map', create: (world) => MapManager(world) },
-        { name: 'debug', create: (world) => Debugger(world) },
-        {
-            name: 'units',
-            create: (world) => UnitManager(world),
-            reset: (units) => Object.values(units._units).forEach((store) => store.clear()),
-        },
-        { name: 'events', create: (world) => EventChannel(world) },
-        // recreating would build a new proto client
-        {
-            name: 'actions',
-            create: (world) => ActionManager(world, client),
-            reset: (actions) => actions.clearQueuedActions(),
-        },
+        frameResource,
+        mapResource,
+        debugResource,
+        unitsResource,
+        eventsResource,
+        actionsResource(client),
         memoryResource,
         spatialResource,
         influenceResource,

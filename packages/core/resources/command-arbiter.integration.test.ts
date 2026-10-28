@@ -340,7 +340,7 @@ describe('command executor dispatch', () => {
                     actions.queueAction(moveTo([WORKER, OTHER_WORKER, THIRD_WORKER], FIRST), {
                         onNotSent: (tags) => notSent.push(tags),
                     });
-                    await actions.move(units.getByTag(WORKER)!, SECOND, true);
+                    await actions.move(units.getByTag(WORKER)!, SECOND, { queue: true });
                 },
             },
             {
@@ -373,7 +373,9 @@ describe('command executor dispatch', () => {
                 name: 'Economy',
                 async act({ resources }) {
                     const { actions, units } = resources.get();
-                    await actions.build(UnitType.REFINERY, units.getByTag(GEYSER)!, units.getByTag(WORKER)!);
+                    await actions.build(UnitType.REFINERY, units.getByTag(GEYSER)!, {
+                        worker: units.getByTag(WORKER)!,
+                    });
                     await actions.patrol(units.getByTag(OTHER_WORKER)!, [FIRST, SECOND]);
                 },
             },
@@ -438,7 +440,7 @@ describe('command executor dispatch', () => {
     it('reports a rejected build, clearing the builder command label, and a rejected send with its error', async () => {
         const build: Act = ({ resources }) => {
             const { actions, units } = resources.get();
-            return actions.build(UnitType.REFINERY, units.getByTag(GEYSER)!, units.getByTag(WORKER)!);
+            return actions.build(UnitType.REFINERY, units.getByTag(GEYSER)!, { worker: units.getByTag(WORKER)! });
         };
         const rejected = await setupScenario([{ name: 'Economy', act: build }]);
         rejected.world.client.action = async (request) => ({

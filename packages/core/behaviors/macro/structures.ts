@@ -163,20 +163,15 @@ export function expansionController({
         name: 'expansionController',
         execute({ world }) {
             const { agent } = world;
-            const { buildings, map, pathing, placement } = world.resources.get();
+            const { buildings } = world.resources.get();
             const townhallType = TownhallRace[agent.race as number]?.[0];
             const pending = world.agent.alreadyPending(townhallType);
             if (readyCount(world, TownhallWithFlyingRace[agent.race as number]) + pending >= toCount) return false;
             if (pending >= maxPending) return false;
             if (canAffordCheck && !prioritize && !agent.canAfford(townhallType)) return false;
 
-            const expansion = map
-                .getAvailableExpansions()
-                .find(
-                    ({ townhallPosition: at }) =>
-                        (!checkLocationIsSafe || pathing.isPositionSafe(at)) && placement.canPlace(townhallType, at),
-                );
-            return !!expansion && !!buildings.build(townhallType, { at: expansion.townhallPosition });
+            const at = buildings.getNextExpansion({ checkSafe: checkLocationIsSafe });
+            return !!at && !!buildings.build(townhallType, { at });
         },
     };
 }

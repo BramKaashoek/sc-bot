@@ -16,8 +16,21 @@ import {
     multiply,
     nClosestPoint,
     normalize,
+    pointKey,
     subtract,
+    toPoint,
 } from './point.ts';
+import type { Unit } from '../../types.ts';
+
+describe('toPoint and pointKey', () => {
+    it('toPoint reads a unit position and passes a point through; pointKey joins the axes', () => {
+        const pos = { x: 1.5, y: 2 };
+
+        expect(toPoint({ pos } as Unit)).toBe(pos);
+        expect(toPoint(pos)).toBe(pos);
+        expect(pointKey(pos)).toBe('1.5,2');
+    });
+});
 
 describe('point arithmetic', () => {
     it('applies a scalar to both axes and a point per axis', () => {
@@ -89,7 +102,11 @@ describe('closest points', () => {
 describe('point flooring', () => {
     it('floors toward negative infinity', () => {
         expect(createPoint2D({ x: 1.9, y: -0.1 })).toEqual({ x: 1, y: -1 });
-        expect(createPoint({ x: 1.9, y: -0.1, z: 2.5 })).toEqual({ x: 1, y: -1, z: 2 });
+        expect(createPoint({ x: 1.9, y: -0.1, z: 2.5 })).toEqual({
+            x: 1,
+            y: -1,
+            z: 2,
+        });
     });
 });
 

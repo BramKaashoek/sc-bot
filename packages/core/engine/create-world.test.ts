@@ -1,8 +1,23 @@
 import { describe, expect, it, spyOn } from 'bun:test';
+import createDebug from 'debug';
 import { Alliance } from '../constants/enums.ts';
-import { NodeSC2Error } from './errors.ts';
+import { GameEndedError, NodeSC2Error } from './errors.ts';
 import createAgent from '../agent/create-agent.ts';
-import { createTestWorld, loadFixture, stepTo } from '../test/create-test-world.ts';
+import { createTestWorld, loadFixture, stepTo, stepWith } from '../test/create-test-world.ts';
+import { resetGameState } from './create-world.ts';
+import { GATHERING } from '../constants/unit-role.ts';
+import * as UnitType from '../constants/unit-type.ts';
+import { buildingsResource, stateByBuildings } from '../resources/buildings.ts';
+import { flyingResource, stateByFlying } from '../resources/flying.ts';
+import { influenceResource, stateByInfluence } from '../resources/influence.ts';
+import { intelResource, stateByIntel } from '../resources/intel.ts';
+import { mapAnalysisResource, stateByMapAnalysis } from '../resources/map-analysis.ts';
+import { settingsByMemory } from '../resources/memory.ts';
+import { miningResource, stateByMining } from '../resources/mining.ts';
+import { openingsResource, stateByOpenings } from '../resources/openings.ts';
+import { placementResource, stateByPlacement } from '../resources/placement.ts';
+import { rolesResource, stateByRoles } from '../resources/roles.ts';
+import { stateBySquads } from '../resources/squads.ts';
 import { observation, toyFixture } from '../test/factories.ts';
 import type { ResourceDefinition, World } from '@sc-bot/core/types';
 
@@ -11,6 +26,7 @@ declare module '@sc-bot/core/types' {
         testCounter?: { count: number };
         testTally?: { items: string[] };
         testStepLog?: object;
+        testFatalStep?: object;
         testConfigurable?: { received: unknown[]; configure(settings: { level: number }): void };
     }
 }
@@ -71,6 +87,85 @@ describe('resetGameState', () => {
         expect(counter.count).toBe(0);
         expect(tally.items).toEqual([]);
     });
+
+    it('re-seats every WeakMap resource with the state of a newly created one, keeping only its configured settings, and its methods read the new state', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const {
+            roles,
+            openings,
+            mining,
+            mapAnalysis,
+            placement,
+            flying,
+            squads,
+            memory,
+            map,
+            units,
+            intel,
+            influence,
+            buildings,
+        } = world.resources.get();
+        roles.configure({ exclusive: [GATHERING] });
+        openings.configure({ minGames: 5 });
+        mining.configure({ enabled: true, workersPerGas: 2 });
+        mapAnalysis.configure({ defenseOffset: 7 });
+        placement.configure({ reservationTimeout: 30 });
+        flying.configure({ priority: 3 });
+        memory.configure({ expireGround: 5 });
+        intel.configure({ groundNearBase: 7 });
+        influence.configure({ costMultiplier: 3 });
+        buildings.configure({ timeout: 60 });
+        await stepWith(world, 904);
+        await stepWith(world, 912);
+        const worker = units.getWorkers().find((candidate) => mining.getAssignment(candidate))!;
+        const townhall = units.getBases()[0];
+        openings.record('stale');
+        influence.getGrid('ground');
+        buildings.build(UnitType.SUPPLYDEPOT, { at: { x: 50, y: 50 }, worker });
+        flying.move(townhall, { x: 50, y: 50 });
+        mapAnalysis.getDefensivePosition(map.getMain()!);
+        const staleSquads = squads.getSquads(GATHERING);
+        const staleAssignment = mining.getAssignment(worker);
+        const withSettings = [
+            { resource: roles, definition: rolesResource, states: stateByRoles },
+            { resource: openings, definition: openingsResource, states: stateByOpenings },
+            { resource: mining, definition: miningResource, states: stateByMining },
+            { resource: mapAnalysis, definition: mapAnalysisResource, states: stateByMapAnalysis },
+            { resource: placement, definition: placementResource, states: stateByPlacement },
+            { resource: flying, definition: flyingResource, states: stateByFlying },
+            { resource: intel, definition: intelResource, states: stateByIntel },
+            { resource: influence, definition: influenceResource, states: stateByInfluence },
+            { resource: buildings, definition: buildingsResource, states: stateByBuildings },
+        ] as { resource: object; definition: ResourceDefinition<any>; states: WeakMap<object, { settings: object }> }[];
+        const configured = withSettings.map(({ resource, states }) => states.get(resource)!.settings);
+        const fresh = withSettings.map(({ definition, states }, index) => ({
+            ...states.get(definition.create(world))!,
+            settings: configured[index],
+        }));
+        const memorySettings = settingsByMemory.get(memory);
+
+        withSettings.forEach(({ resource, states }, index) => expect(states.get(resource)).not.toEqual(fresh[index]));
+        expect(staleSquads.length).toBeGreaterThan(0);
+        expect(staleAssignment).toBeDefined();
+
+        resetGameState(world);
+
+        expect(withSettings.map(({ resource, states }) => states.get(resource))).toEqual(fresh);
+        withSettings.forEach(({ resource, states }, index) =>
+            expect(states.get(resource)!.settings).toBe(configured[index]),
+        );
+        expect(stateBySquads.get(squads)).toEqual(new Map());
+        memory.configure({ expireAir: 9 });
+        expect(settingsByMemory.get(memory)).toBe(memorySettings);
+        expect(memorySettings).toEqual({ expireGround: 5, expireAir: 9 });
+        expect(roles.roleOf(worker)).toBeUndefined();
+        expect(mining.getAssignment(worker)).toBeUndefined();
+        expect(() => mapAnalysis.getRegions()).toThrow('Start grids are not set yet');
+        expect(openings.getChosen()).toBeUndefined();
+        expect(flying.getPlans()).toEqual([]);
+        expect(placement.getPlacements()).toEqual([]);
+        expect(squads.getSquads(GATHERING)).toEqual([]);
+    });
 });
 
 describe('resources registry', () => {
@@ -117,6 +212,49 @@ describe('resources registry', () => {
         await stepTo(world, observation({ gameLoop: 16, units }));
 
         expect(calls).toEqual(['tally@8', 'log@8', 'agent@8', 'tally@16', 'log@16', 'agent@16']);
+    });
+
+    it('shows step hook errors at sc2:debug:resources and warns on unexpected ones only', async () => {
+        const world = await createTestWorld(toyFixture());
+        let failure: Error = new NodeSC2Error('refused');
+        world.resources.register({
+            name: 'testFatalStep',
+            create: () => ({}),
+            onStep: () => {
+                throw failure;
+            },
+        });
+        const lines: string[] = [];
+        const { log } = createDebug;
+        createDebug.log = (line: string) => lines.push(line);
+        createDebug.enable('sc2:debug:resources');
+        const warn = spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            await stepTo(world, observation({ gameLoop: 8 }));
+            expect([lines.some((line) => line.includes('refused')), warn.mock.calls.length]).toEqual([true, 0]);
+
+            failure = new TypeError('bad');
+            await stepTo(world, observation({ gameLoop: 16 }));
+            expect([lines.some((line) => line.includes('bad')), warn.mock.calls.length]).toEqual([true, 1]);
+        } finally {
+            createDebug.disable();
+            createDebug.log = log;
+            warn.mockRestore();
+        }
+    });
+
+    it('rejects dispatch with a fatal error thrown by a step hook', async () => {
+        const world = await createTestWorld(toyFixture());
+        const failure = new GameEndedError('over');
+        world.resources.register({
+            name: 'testFatalStep',
+            create: () => ({}),
+            onStep: () => {
+                throw failure;
+            },
+        });
+
+        await expect(stepTo(world, observation({ gameLoop: 8 }))).rejects.toBe(failure);
     });
 
     it('passes config.resources sections to configure on register and after every reset, warning once for a resource without configure', async () => {

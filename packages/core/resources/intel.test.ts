@@ -1,5 +1,7 @@
-import { beforeAll, describe, expect, it } from 'bun:test';
+import { beforeAll, describe, expect, it, spyOn } from 'bun:test';
 import createAgent from '../agent/create-agent.ts';
+import * as Buff from '../constants/buff.ts';
+import * as Effect from '../constants/effect.ts';
 import { Alliance } from '../constants/enums.ts';
 import * as UnitType from '../constants/unit-type.ts';
 import { createTestWorld, stepTo } from '../test/create-test-world.ts';
@@ -32,12 +34,17 @@ function observation(
     world: TestWorld,
     seconds: number,
     units: SC2APIProtocol.Unit[],
-    { own = [], fog = [] }: { own?: SC2APIProtocol.Unit[]; fog?: Point2D[] } = {},
+    {
+        own = [],
+        fog = [],
+        effects = [],
+    }: { own?: SC2APIProtocol.Unit[]; fog?: Point2D[]; effects?: SC2APIProtocol.Effect[] } = {},
 ): SC2APIProtocol.ResponseObservation {
     const responseObservation = structuredClone(world.client.fixture.observations[896]);
     const raw = responseObservation.observation!;
     raw.gameLoop = Math.round(seconds * LOOPS_PER_SECOND);
     raw.rawData!.units = [...raw.rawData!.units!.filter((unit) => unit.alliance !== Alliance.ENEMY), ...units, ...own];
+    raw.rawData!.effects = effects;
     const { data, size } = raw.rawData!.mapState!.visibility!;
     fog.forEach(({ x, y }) => {
         for (let dy = -3; dy <= 3; dy++)
@@ -157,6 +164,22 @@ describe('intel', () => {
         expect(intel.getBaseThreats()).toEqual([]);
     });
 
+    it('steps without throwing when the map has no expansions', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { intel, map } = world.resources.get();
+        map._expansions = [];
+        map._expansionsFromEnemy = [];
+        const warn = spyOn(console, 'warn');
+
+        await stepTo(world, observation(world, 100, enemies(UnitType.ZERGLING, NEAR_ENEMY, 8)));
+
+        expect(warn).not.toHaveBeenCalled();
+        warn.mockRestore();
+        expect(intel.has('lingRush')).toBe(true);
+        expect(intel.has('proxy')).toBe(false);
+        expect(intel.getProxies()).toHaveLength(0);
+    });
+
     it('picks the base with the most supply of a kind as the main threat', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
         const { intel } = world.resources.get();
@@ -223,5 +246,102 @@ describe('intel', () => {
 
         expect(intel.has('reaper')).toBe(false);
         expect(intel.getBaseThreats()).toEqual([]);
+    });
+});
+
+describe('intel detection', () => {
+    const scan = (alliance: number, p: Point2D) =>
+        ({ effectId: Effect.SCANNERSWEEP, pos: [p], alliance }) as SC2APIProtocol.Effect;
+    const ownUnit = (unitType: number, p: Point2D, overrides: SC2APIProtocol.Unit = {}) =>
+        rawUnit({ alliance: Alliance.SELF, owner: 1, unitType, pos: { x: p.x, y: p.y, z: 10 }, ...overrides });
+
+    it('lists live enemy detectors and enemy scans at the ares ranges, not ghosts, own scans or other units', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { intel } = world.resources.get();
+        const [observer] = enemies(UnitType.OBSERVER, { x: 60, y: 60 });
+        const [overseer] = enemies(UnitType.OVERSEER, { x: 80, y: 60 });
+        const [ghost] = enemies(UnitType.MISSILETURRET, { x: 100, y: 100 });
+        const live = [observer, overseer, ...enemies(UnitType.MARINE, { x: 70, y: 70 })];
+
+        const [inObserver, outside, inScan, inGhost] = [
+            ownUnit(UnitType.MARINE, { x: 70, y: 60 }),
+            ownUnit(UnitType.MARINE, { x: 60, y: 80 }),
+            ownUnit(UnitType.MARINE, { x: 30, y: 100 }),
+            ownUnit(UnitType.MARINE, { x: 100, y: 105 }),
+        ];
+
+        await stepTo(world, observation(world, 100, [...live, ghost], { own: [inGhost] }));
+        await stepTo(
+            world,
+            observation(world, 101, live, {
+                own: [inObserver, outside, inScan, inGhost],
+                fog: [{ x: 100, y: 100 }],
+                effects: [scan(Alliance.ENEMY, { x: 30, y: 90 }), scan(Alliance.SELF, { x: 31, y: 91 })],
+            }),
+        );
+
+        expect(intel.getEnemyDetectors().map(({ pos, range }) => [pos.x, pos.y, range])).toEqual([
+            [30, 90, 14],
+            [60, 60, 12.5],
+            [80, 60, 13],
+        ]);
+        const found = intel.getOwnUnitsInDetectorRange();
+        expect([...found].sort()).toEqual([inObserver.tag, inScan.tag].sort());
+        expect(intel.getOwnUnitsInDetectorRange()).toBe(found);
+    });
+
+    it('recomputes detectors, detection and own units in range on the next loop', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { intel } = world.resources.get();
+        const marine = ownUnit(UnitType.MARINE, { x: 62, y: 60 });
+        const [near] = enemies(UnitType.OBSERVER, { x: 60, y: 60 });
+        const [far] = enemies(UnitType.OBSERVER, { x: 100, y: 100 });
+        const query = () => [
+            intel.getEnemyDetectors().map(({ pos }) => [pos.x, pos.y]),
+            intel.isDetected({ x: 62, y: 60 }),
+            [...intel.getOwnUnitsInDetectorRange()],
+        ];
+
+        await stepTo(world, observation(world, 100, [near], { own: [marine] }));
+        const first = query();
+        await stepTo(world, observation(world, 101, [far], { own: [marine] }));
+
+        expect([first, query()]).toEqual([
+            [[[60, 60]], true, [marine.tag]],
+            [[[100, 100]], false, []],
+        ]);
+    });
+
+    it('is detected by revelation at any range, and by a strict range for points', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { intel, units } = world.resources.get();
+        const [observer] = enemies(UnitType.OBSERVER, { x: 60, y: 60 });
+        const revealed = ownUnit(UnitType.MARINE, { x: 5, y: 5 }, { buffIds: [Buff.ORACLEREVELATION] });
+
+        await stepTo(world, observation(world, 100, [observer], { own: [revealed] }));
+
+        expect([
+            intel.isDetected({ x: 72.4, y: 60 }),
+            intel.isDetected({ x: 72.5, y: 60 }),
+            intel.isDetected(units.getByTag(revealed.tag!)!),
+        ]).toEqual([true, false, true]);
+    });
+
+    it('checks own detectors and own scans with byEnemy false', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { intel } = world.resources.get();
+        const raven = ownUnit(UnitType.RAVEN, { x: 60, y: 60 });
+
+        await stepTo(
+            world,
+            observation(world, 100, [], { own: [raven], effects: [scan(Alliance.SELF, { x: 30, y: 90 })] }),
+        );
+
+        expect([
+            intel.isDetected({ x: 65, y: 60 }, { byEnemy: false }),
+            intel.isDetected({ x: 30, y: 100 }, { byEnemy: false }),
+            intel.isDetected({ x: 90, y: 90 }, { byEnemy: false }),
+            intel.isDetected({ x: 65, y: 60 }),
+        ]).toEqual([true, true, false, false]);
     });
 });

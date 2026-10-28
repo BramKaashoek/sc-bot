@@ -1,11 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, expect, it } from 'bun:test';
 import createAgent from '../agent/create-agent.ts';
 import { PlayerType, Race } from '../constants/enums.ts';
-import { killNewSc2, newLiveEngine, sc2Pids, veryEasyZerg } from '../test/live.ts';
+import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
+import { describeLive, killNewSc2, newLiveEngine, sc2Pids, veryEasyZerg } from '../test/live.ts';
 import type { World } from '../types.ts';
 
 const MEASURE_LOOP = 6720;
-const GAME_SECONDS = MEASURE_LOOP / 22.4 + 5;
+const GAME_SECONDS = MEASURE_LOOP / GAME_LOOPS_PER_SECOND + 5;
 const MAP = 'Melee/Simple64';
 
 let engine: ReturnType<typeof newLiveEngine> | undefined;
@@ -46,7 +47,7 @@ const mineralsAtMeasureLoop = async (gameStep: number, enabled: boolean) => {
     return minerals;
 };
 
-describe.skipIf(!process.env.SC2PATH)('live speed mining', () => {
+describeLive('live speed mining', () => {
     const minerals: Record<string, number | undefined> = {};
 
     it('records minerals at loop 6720 for 12 SCVs on one base (step 4 not asserted)', async () => {

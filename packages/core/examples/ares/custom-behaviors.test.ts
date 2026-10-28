@@ -3,7 +3,7 @@ import { createAgent } from '@sc-bot/core';
 import { ATTACK, MORPH_SIEGEMODE, MORPH_UNSIEGE } from '@sc-bot/core/constants/ability';
 import { Alliance } from '@sc-bot/core/constants/enums';
 import { MARAUDER, MARINE, SIEGETANK, SIEGETANKSIEGED, ZERGLING } from '@sc-bot/core/constants/unit-type';
-import { createTestWorld, stepTo } from '../../test/create-test-world.ts';
+import { createTestWorld, stepWith } from '../../test/create-test-world.ts';
 import { rawUnit } from '../../test/factories.ts';
 import { createBot, customSiegeTankDecision } from './custom-behaviors.ts';
 import type { Agent } from '@sc-bot/core';
@@ -23,17 +23,14 @@ const enemiesAt = (unitType: number, ...distances: number[]) =>
     );
 const marinesAt = (...distances: number[]) => enemiesAt(MARINE, ...distances);
 
-async function stepWith(agent: Agent, units: SC2APIProtocol.Unit[]) {
+async function runWith(agent: Agent, units: SC2APIProtocol.Unit[]) {
     const world = await createTestWorld('blueshift', { loop: 896, agent });
-    const responseObservation = structuredClone(world.client.fixture.observations[896]);
-    responseObservation.observation!.gameLoop = 900;
-    responseObservation.observation!.rawData!.units!.push(...units);
     const before = world.client.sent.actions.length;
-    await stepTo(world, responseObservation);
+    await stepWith(world, 900, units);
     return { world, before };
 }
 
-const sentSince = ({ client }: Awaited<ReturnType<typeof stepWith>>['world'], before: number) =>
+const sentSince = ({ client }: Awaited<ReturnType<typeof runWith>>['world'], before: number) =>
     client.sent.actions
         .slice(before)
         .flatMap(({ actions }) => actions ?? [])
@@ -45,7 +42,7 @@ const sentSince = ({ client }: Awaited<ReturnType<typeof stepWith>>['world'], be
         }));
 
 async function decide(units: SC2APIProtocol.Unit[]) {
-    const { world } = await stepWith(createAgent(), units);
+    const { world } = await runWith(createAgent(), units);
     const { units: store, behaviors, actions } = world.resources.get();
     const before = world.client.sent.actions.length;
     const result = await behaviors.run(customSiegeTankDecision({ unit: store.getByTag(TANK)! }));
@@ -77,7 +74,7 @@ describe('custom-behaviors example', () => {
 
     it('runs the decision before a-moving each marine and tank toward the enemy start', async () => {
         const sentFor = async (units: SC2APIProtocol.Unit[]) => {
-            const { world, before } = await stepWith(createBot(), units);
+            const { world, before } = await runWith(createBot(), units);
             const enemyStart = world.resources.get().map.getLocations().enemy[0];
             return { enemyStart, sent: sentSince(world, before).filter(({ tags }) => tags.includes(TANK)) };
         };

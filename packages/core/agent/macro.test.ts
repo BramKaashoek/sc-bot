@@ -3,7 +3,7 @@ import createAgent from './create-agent.ts';
 import { Ability, UnitType, Upgrade } from '../constants/index.ts';
 import { Alliance, Attribute, Race } from '../constants/enums.ts';
 import { createTestWorld, loadFixture, stepTo } from '../test/create-test-world.ts';
-import { observation, rawUnit, toyFixture, unitTypeData } from '../test/factories.ts';
+import { observation, rawUnit, toyWorld } from '../test/factories.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
 import type { CommandResult, Point2D, Unit } from '../types.ts';
 
@@ -134,18 +134,18 @@ describe('agent macro helpers', () => {
     });
 
     it('counts a worker as en route to build only until its structure exists, and an abandoned structure or add-on as pending once', async () => {
-        const fixture = toyFixture();
         const buildDepot = (target: { x: number; y: number }) => [
             { abilityId: Ability.BUILD_SUPPLYDEPOT, targetWorldSpacePos: target, progress: 0 },
         ];
-        fixture.data.units![UnitType.BARRACKSREACTOR] = unitTypeData(UnitType.BARRACKSREACTOR, {
-            abilityId: Ability.BUILD_REACTOR_BARRACKS,
-            race: Race.TERRAN,
-            attributes: [Attribute.STRUCTURE],
-        });
-        fixture.observations[0] = observation({
+        const { agent } = await toyWorld({
+            unitTypes: {
+                [UnitType.BARRACKSREACTOR]: {
+                    abilityId: Ability.BUILD_REACTOR_BARRACKS,
+                    race: Race.TERRAN,
+                    attributes: [Attribute.STRUCTURE],
+                },
+            },
             units: [
-                ...fixture.observations[0].observation!.rawData!.units!,
                 rawUnit({ pos: { x: 12, y: 8, z: 10 }, orders: buildDepot({ x: 14, y: 6 }) }),
                 rawUnit({ pos: { x: 12, y: 24, z: 10 }, orders: buildDepot({ x: 12, y: 26 }) }),
                 rawUnit({
@@ -160,7 +160,6 @@ describe('agent macro helpers', () => {
                 rawUnit({ unitType: UnitType.BARRACKSREACTOR, buildProgress: 0.5 }),
             ],
         });
-        const { agent } = await createTestWorld(fixture);
 
         expect({
             workerEnRouteToBuild: agent.workerEnRouteToBuild(UnitType.SUPPLYDEPOT),
@@ -169,30 +168,21 @@ describe('agent macro helpers', () => {
         }).toEqual({ workerEnRouteToBuild: 1, alreadyPending: [3, 1], structureTypeBuildProgress: 0.5 });
     });
 
-    it('picks the closest reachable untaken expansion by pathing distance from the start location and expands there', async () => {
-        const pathingOverrides = new Map<string, number>();
+    it('picks the first available expansion the building tracker accepts, with no pathing query, and expands there', async () => {
+        const queries: SC2APIProtocol.RequestQuery[] = [];
         const world = await createTestWorld('blueshift', {
             loop: 224,
             onQuery: (query) => {
-                const answer = straightLinePathing(query);
-                answer?.pathing?.forEach((pathing, index) => {
-                    const { endPos } = query.pathing![index];
-                    pathing.distance = pathingOverrides.get(`${endPos!.x},${endPos!.y}`) ?? pathing.distance;
-                });
-                return answer;
+                queries.push(query);
+                return straightLinePathing(query);
             },
         });
         const { agent } = world;
+        const { buildings } = world.resources.get();
 
-        pathingOverrides.set('14.5,43.5', 0);
-        pathingOverrides.set('44.5,28.5', 500);
-        expect(await agent.getNextExpansion()).toEqual({ x: 69.5, y: 14.5 });
-        pathingOverrides.clear();
-        expect(await agent.getNextExpansion()).toEqual({ x: 14.5, y: 43.5 });
-        pathingOverrides.set('15.5,15.5', 1);
-        pathingOverrides.set('14.5,43.5', 2);
-        expect(await agent.getNextExpansion()).toEqual({ x: 14.5, y: 43.5 });
-        pathingOverrides.clear();
+        const first = buildings.getNextExpansion()!;
+        const center = (spot: Point2D) => ({ x: spot.x + 0.5, y: spot.y + 0.5 });
+        expect(await agent.getNextExpansion()).toEqual(center(first));
         expect(
             agent
                 .ownedExpansions()
@@ -202,12 +192,12 @@ describe('agent macro helpers', () => {
         await agent.expandNow();
         await agent.expandNow();
         await agent.expandNow();
-        expect(
-            world.resources
-                .get()
-                .buildings.getTracked()
-                .map(({ unitType, target, status }) => ({ unitType, target, status })),
-        ).toEqual([{ unitType: UnitType.COMMANDCENTER, target: { x: 14.5, y: 43.5 }, status: 'moving' }]);
+        expect(buildings.getTracked().map(({ unitType, target, status }) => ({ unitType, target, status }))).toEqual([
+            { unitType: UnitType.COMMANDCENTER, target: center(first), status: 'moving' },
+        ]);
+        expect(await agent.getNextExpansion()).toEqual(center(buildings.getNextExpansion()!));
+        expect(await agent.getNextExpansion()).not.toEqual(center(first));
+        expect(queries.filter((query) => query.pathing?.length)).toEqual([]);
     });
 
     it('does not expand below the townhall cost', async () => {
@@ -232,7 +222,7 @@ describe('agent macro helpers', () => {
             world.client.fixture.observations[896],
             async () => [
                 await agent.train(UnitType.MARINE, 2),
-                await actions.do(Ability.TRAIN_SCV, '4342677505').then(() => agent.train(UnitType.SCV)),
+                await actions.do('4342677505', Ability.TRAIN_SCV).then(() => agent.train(UnitType.SCV)),
                 await agent.research(Upgrade.STIMPACK),
                 await agent.research(Upgrade.SHIELDWALL),
                 await agent.research(Upgrade.TERRANINFANTRYARMORSLEVEL1),
@@ -433,16 +423,12 @@ describe('agent macro helpers', () => {
     });
 
     it('counts a hydralisk morphing to a lurker as a pending lurker', async () => {
-        const fixture = toyFixture();
-        fixture.data.units![UnitType.HYDRALISK] = unitTypeData(UnitType.HYDRALISK, {
-            abilityId: Ability.TRAIN_HYDRALISK,
-        });
-        fixture.observations[0] = observation({
+        const { agent } = await toyWorld({
+            unitTypes: { [UnitType.HYDRALISK]: { abilityId: Ability.TRAIN_HYDRALISK } },
             units: [
                 rawUnit({ unitType: UnitType.HYDRALISK, orders: [{ abilityId: Ability.MORPH_LURKER, progress: 0.5 }] }),
             ],
         });
-        const { agent } = await createTestWorld(fixture);
 
         expect(agent.alreadyPending(UnitType.LURKERMP)).toBe(1);
     });

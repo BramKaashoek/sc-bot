@@ -16,9 +16,10 @@ import createUnitSystem from '../systems/unit.ts';
 import createMapSystem from '../systems/map.ts';
 import createChatDebugSystem from '../systems/chat-debug.ts';
 import { resolveConfig } from './config.ts';
+import { NOOP } from '../utils/collections.ts';
 import { runAsCommander } from '../resources/command-context.ts';
 import { GameResult, PlayerType, Race, Status, StatusId } from '../constants/enums.ts';
-import { NodeSC2Error, GameEndedError, ConnectionClosedError } from './errors.ts';
+import { NodeSC2Error, GameEndedError, triageError } from './errors.ts';
 import type {
     Agent,
     CreateGameOptions,
@@ -58,8 +59,6 @@ type EngineInstance = Engine & {
 const debugEngine = createDebug('sc2:debug:engine');
 const debugSilly = createDebug('sc2:silly:engine');
 const CreateGameErrorId: Record<number, string> = root.lookupEnum('ResponseCreateGame.Error').valuesById;
-
-const NOOP = () => {};
 
 // SC2 resolves a replay's relative map path under `maps/`, which misses installs that ship `Maps/`
 function readReplayMap(localMapPath?: string) {
@@ -123,7 +122,6 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
         ...options,
     };
 
-    // the ladder manager is launching this agent and it should override anything else
     if (isManaged) {
         opts.port = argv.GamePort!;
         opts.host = argv.LadderServer!;
@@ -155,14 +153,6 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
         if (unsavedReplayPath) await saveReplay();
         engine._gameLeft = true;
         return leaveGame.apply(this, args);
-    };
-
-    // decoding fills `error` with its first enum value even on success, so only the status tells a failed create apart
-    const assertGameCreated = (map: string, response?: SC2APIProtocol.ResponseCreateGame) => {
-        if (!response || _client.status === Status.INIT_GAME) return;
-        throw new Error(
-            `Could not create a game on "${map}" (${CreateGameErrorId[response.error!]}): ${response.errorDetails}`,
-        );
     };
 
     const timeLimitResults = (): SC2APIProtocol.PlayerResult[] =>
@@ -207,12 +197,14 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
             return pingRes;
         },
         async runGame(map = '', players = [], options = {}) {
-            const player = players.find((p) => !!p.agent)!;
-            player.agent!.settings.race = player.race;
+            const player = players.find((p) => !!p.agent);
+            if (!player?.agent) throw new NodeSC2Error('runGame needs a player with an agent');
+            const agent = player.agent;
+            agent.settings.race = player.race;
 
             const { realtime = false, randomSeed, disableFog, gameTimeLimit, saveReplayAs } = options;
-            assertGameCreated(map, await this.createGame(map, players, realtime, { randomSeed, disableFog }));
-            return this._playGame(player.agent!, { realtime, gameTimeLimit, saveReplayAs });
+            await this.createGame(map, players, realtime, { randomSeed, disableFog });
+            return this._playGame(agent, { realtime, gameTimeLimit, saveReplayAs });
         },
         async runBotVsBot(map, players, options = {}) {
             const { realtime = false, randomSeed, disableFog, gameTimeLimit, saveReplayAs } = options;
@@ -259,10 +251,7 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
                 const hostMapPath = whitespaceFreeMapPath(mapPath);
 
                 await Promise.all([_client._ws ? undefined : this.connect(), guestLaunch.then(() => guest.connect())]);
-                assertGameCreated(
-                    map,
-                    await this.createGame(hostMapPath, players, realtime, { randomSeed, disableFog }),
-                );
+                await this.createGame(hostMapPath, players, realtime, { randomSeed, disableFog });
                 const agents = [players[0].agent!, players[1].agent!];
                 const games = await Promise.all([
                     this._playGame(agents[0], { joinOptions, realtime, gameTimeLimit, saveReplayAs }),
@@ -302,7 +291,7 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
                     options: agent.interface,
                 });
                 if (_client.status !== Status.IN_REPLAY)
-                    throw new Error(`Could not start replay (error ${error}): ${errorDetails}`);
+                    throw new NodeSC2Error(`Could not start replay (error ${error}): ${errorDetails}`);
 
                 agent.playerId = observedPlayerId;
                 return await this.firstRun();
@@ -369,13 +358,20 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
 
             debugEngine('CREATE GAME REQUEST: ', game);
 
-            return _client.createGame(game);
+            const response = await _client.createGame(game);
+            // decoding fills `error` with its first enum value even on success, so only the status tells a failed create apart
+            if (_client.status !== Status.INIT_GAME) {
+                throw new NodeSC2Error(
+                    `Could not create a game on "${map}" (${CreateGameErrorId[response.error!]}): ${response.errorDetails}`,
+                );
+            }
+            return response;
         },
         async joinGame(agent, options = {}) {
             world.agent = agent;
 
             if (!agent.interface.raw) {
-                throw new Error('`raw` is currently the only interface supported by this engine.');
+                throw new NodeSC2Error('`raw` is currently the only interface supported by this engine.');
             }
 
             switch (_client.status) {
@@ -430,7 +426,7 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
                 }
 
                 default: {
-                    throw new Error(
+                    throw new NodeSC2Error(
                         `cannot join a game this engine didn't create unless in "launched" status, current status is ${StatusId[_client.status]}`,
                     );
                 }
@@ -506,10 +502,6 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
                 this._loopDelay = hrtimeH(process.hrtime(this._lastRequest)).milliseconds;
 
                 // @TODO: maybe allow this to be configurable? not off... per se, but some threshhold.
-                if (this._loopDelay / world.config.gameStep > 44.6) {
-                    // console.warn(`WARNING! loop delay is ${this._loopDelay / world.config.gameStep}ms, greater than realtime`);
-                }
-
                 this._totalLoopDelay! += this._loopDelay / world.config.gameStep;
             }
 
@@ -552,7 +544,7 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
         },
         async dispatch() {
             const engineSystems = this.systems;
-            await Bluebird.mapSeries(engineSystems, (system) => system(world)); // concurrency: 1
+            await Bluebird.mapSeries(engineSystems, (system) => system(world));
             world.resources.step(world);
 
             // @FIXME: this duplicates logic from the system wrapper
@@ -570,13 +562,12 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
                           const startedAt = performance.now();
                           const handler = agentHandlers[`on${pascalCase(event.name)}`];
                           return runAsCommander(agentCommander, () => handler.call(agent, world, event.data, event))
-                              .catch((err: Error) => {
-                                  if (err instanceof NodeSC2Error) {
-                                      debugSilly(`Agent handler error: on${pascalCase(event.name)}: `, err);
-                                  } else {
-                                      console.warn(`Agent handler error: on${pascalCase(event.name)}: `, err);
-                                  }
-                              })
+                              .catch((err: Error) =>
+                                  triageError(err, `Agent handler error: on${pascalCase(event.name)}: `, {
+                                      expected: (label, e) => debugSilly(label, e),
+                                      unexpected: (label, e) => console.warn(label, e),
+                                  }),
+                              )
                               .then(() => {
                                   if (event.name === 'step') frame.recordStepTime(performance.now() - startedAt);
                               });
@@ -597,8 +588,8 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
             );
 
             await actions.flushQueuedActions().catch((err: Error) => {
-                if (err instanceof GameEndedError || err instanceof ConnectionClosedError) throw err;
-                debugEngine(`Queued actions failed: ${err.message}`);
+                const log = (label: string, e: Error) => debugEngine(`${label}: ${e.message}`);
+                triageError(err, 'Queued actions failed', { expected: log, unexpected: log });
             });
 
             // debug system runs last because it updates the in-client debug display

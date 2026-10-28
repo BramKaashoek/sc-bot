@@ -1,5 +1,7 @@
 import { Ability, UnitType } from '../constants/index.ts';
 import { Alliance, Attribute, CloakState, DisplayType, PlayerType, Race } from '../constants/enums.ts';
+import { createTestWorld } from './create-test-world.ts';
+import type { TestWorld, TestWorldOptions } from './create-test-world.ts';
 import type { Fixture } from './fake-client.ts';
 
 const TOY_MAP_SIZE = { x: 32, y: 32 };
@@ -135,7 +137,31 @@ export function unitTypeData(unitId: number, overrides: SC2APIProtocol.UnitTypeD
     };
 }
 
-export function toyFixture({ enemyStart = true, ownTownhall = true, race = Race.TERRAN } = {}): Fixture {
+export type ToyOptions = {
+    enemyStart?: boolean;
+    ownTownhall?: boolean;
+    race?: SC2APIProtocol.Race;
+    units?: SC2APIProtocol.Unit[];
+    unitTypes?: SC2APIProtocol.UnitTypeData[] | Record<number, Partial<SC2APIProtocol.UnitTypeData>>;
+    abilities?: SC2APIProtocol.AbilityData[];
+    upgrades?: SC2APIProtocol.UpgradeData[];
+    upgradeIds?: number[];
+    playerCommon?: SC2APIProtocol.PlayerCommon;
+    hasCreep?: (x: number, y: number) => boolean;
+};
+
+export function toyFixture({
+    enemyStart = true,
+    ownTownhall = true,
+    race = Race.TERRAN,
+    units: extraUnits = [],
+    unitTypes = {},
+    abilities = [],
+    upgrades = [],
+    upgradeIds = [],
+    playerCommon,
+    hasCreep,
+}: ToyOptions = {}): Fixture {
     const mapSize = TOY_MAP_SIZE;
     const isInterior = (x: number, y: number) => x > 0 && y > 0 && x < mapSize.x - 1 && y < mapSize.y - 1;
 
@@ -209,6 +235,30 @@ export function toyFixture({ enemyStart = true, ownTownhall = true, race = Race.
         attributes: [Attribute.ARMORED, Attribute.STRUCTURE],
     });
 
+    (Array.isArray(unitTypes)
+        ? unitTypes.map((typeData) => [typeData.unitId!, typeData] as const)
+        : Object.entries(unitTypes).map(([id, partial]) => [Number(id), partial] as const)
+    ).forEach(([id, partial]) => {
+        // merging over the toy definition keeps its cost and ability for the types the toy already has
+        units[id] = unitTypeData(id, { ...units[id], ...partial });
+    });
+    const dataAbilities: SC2APIProtocol.AbilityData[] = [];
+    abilities.forEach((abilityData) => {
+        dataAbilities[abilityData.abilityId!] = abilityData;
+    });
+    const dataUpgrades: SC2APIProtocol.UpgradeData[] = [];
+    upgrades.forEach((upgradeData) => {
+        dataUpgrades[upgradeData.upgradeId!] = upgradeData;
+    });
+
+    const responseObservation = observation({
+        playerCommon,
+        units: [...baseUnits(8.5, 2, 24.5, true), ...baseUnits(23.5, 30, 8.5, false), ...extraUnits],
+    });
+    const { rawData } = responseObservation.observation!;
+    rawData!.player!.upgradeIds = upgradeIds;
+    if (hasCreep) rawData!.mapState!.creep = packBits(mapSize, hasCreep);
+
     return {
         gameInfo: {
             mapName: 'Toy',
@@ -225,12 +275,10 @@ export function toyFixture({ enemyStart = true, ownTownhall = true, race = Race.
                 startLocations: enemyStart ? [{ x: 23.5, y: 16.5 }] : [],
             },
         },
-        data: { units, abilities: [], upgrades: [], buffs: [], effects: [] },
-        observations: {
-            0: observation({
-                gameLoop: 0,
-                units: [...baseUnits(8.5, 2, 24.5, true), ...baseUnits(23.5, 30, 8.5, false)],
-            }),
-        },
+        data: { units, abilities: dataAbilities, upgrades: dataUpgrades, buffs: [], effects: [] },
+        observations: { 0: responseObservation },
     };
 }
+
+export const toyWorld = (options: ToyOptions & { world?: TestWorldOptions } = {}): Promise<TestWorld> =>
+    createTestWorld(toyFixture(options), options.world);

@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, expect, it } from 'bun:test';
 import createAgent from '../agent/create-agent.ts';
 import { Ability } from '../constants/index.ts';
 import { PlayerType, Race } from '../constants/enums.ts';
-import { clientOf, killNewSc2, newLiveEngine, sc2Pids, veryEasyZerg } from '../test/live.ts';
+import { describeLive, clientOf, killNewSc2, newLiveEngine, sc2Pids, veryEasyZerg } from '../test/live.ts';
 import type { World } from '../types.ts';
 
 const MAPS: Record<string, string> = {
@@ -47,7 +47,7 @@ const spotsOf = (world: World): Spot[] =>
             ];
         });
 
-describe.skipIf(!process.env.SC2PATH)('live placement solver', () => {
+describeLive('live placement solver', () => {
     it.each(Object.keys(MAPS))(
         'every solved Terran spot on %s is accepted by query.placements (3x3 with its addon spot), at most 2% rejected',
         async (mapName) => {

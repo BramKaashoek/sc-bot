@@ -39,7 +39,7 @@ export const composition = {
 };
 
 const macro = ({ resources }: World) => {
-    const base = resources.get().map.getLocations().self;
+    const base = resources.get().map.getLocations().self!;
     return plan(
         autoSupply({ base }),
         buildWorkers({ toCount: 66 }),

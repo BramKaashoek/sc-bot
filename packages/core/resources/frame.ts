@@ -1,4 +1,4 @@
-import type { FrameResource } from '../types.ts';
+import type { FrameResource, ResourceDefinition } from '../types.ts';
 
 import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
 
@@ -39,7 +39,7 @@ function createFrame(): FrameResource {
             return this._observation!.rawData!.mapState!;
         },
         getPrevious() {
-            return this._previous!;
+            return this._previous ?? undefined;
         },
         time() {
             return this.getGameLoop() / GAME_LOOPS_PER_SECOND;
@@ -78,4 +78,8 @@ function createFrame(): FrameResource {
     };
 }
 
-export default createFrame;
+export const frameResource: ResourceDefinition<'frame'> = {
+    name: 'frame',
+    create: () => createFrame(),
+    reset: (frame) => frame.resetStepTimes(),
+};

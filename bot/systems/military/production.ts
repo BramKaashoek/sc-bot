@@ -119,6 +119,6 @@ export const buildAddons = async (agent: Agent, resources: ResourceManager, data
             continue
         }
 
-        await actions.do(ability, currentNoAddon[0].tag)
+        await actions.do(currentNoAddon[0].tag, ability)
     }
 }

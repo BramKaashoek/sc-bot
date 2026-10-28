@@ -1,7 +1,9 @@
 import { Alliance } from '../constants/enums.ts';
 import { createBucketIndex } from '../utils/spatial/bucket-index.ts';
 import type { BucketIndex } from '../utils/spatial/bucket-index.ts';
-import { Units, isFlying, toPoint } from './units-collection.ts';
+import { Units } from './units-collection.ts';
+import { toPoint } from '../utils/geometry/point.ts';
+import { isFlying } from '../utils/geometry/units.ts';
 import type { Point2D, ResourceDefinition, SpatialKind, Unit } from '../types.ts';
 
 const KINDS: SpatialKind[] = ['enemy', 'enemyGround', 'enemyAir', 'own', 'ownGround', 'ownAir'];

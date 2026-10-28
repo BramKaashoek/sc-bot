@@ -1,11 +1,12 @@
 import { PixelMap } from '../pixel-map.ts';
-import { ConnectionClosedError, GameEndedError } from '../../engine/errors.ts';
+import { perWorld } from '../../engine/per-world.ts';
+import { triageError } from '../../engine/errors.ts';
 import type { Point2D, Unit, World } from '../../types.ts';
 
 type Blocker = Pick<Unit, 'pos' | 'radius'>;
 
 function blockerBox(world: World, { pos, radius = 0 }: Blocker): Point2D[] {
-    const { x: width = 0, y: height = 0 } = world.resources.get().map._mapSize;
+    const { x: width = 0, y: height = 0 } = world.resources.get().map.getSize();
     const cells: Point2D[] = [];
     for (let x = Math.max(0, Math.floor(pos.x - radius)); x < Math.min(width, pos.x + radius); x++) {
         for (let y = Math.max(0, Math.floor(pos.y - radius)); y < Math.min(height, pos.y + radius); y++) {
@@ -15,18 +16,22 @@ function blockerBox(world: World, { pos, radius = 0 }: Blocker): Point2D[] {
     return cells;
 }
 
-const liveGrids = new WeakMap<
-    World,
-    { game: SC2APIProtocol.ResponseGameInfo; gameLoop: number; grid: Promise<PixelMap | undefined> }
->();
+const liveGrids = perWorld(
+    (): {
+        latest?: { game: SC2APIProtocol.ResponseGameInfo; gameLoop: number; grid: Promise<PixelMap | undefined> };
+    } => ({}),
+);
 
 async function requestLivePathing(world: World): Promise<PixelMap | undefined> {
     try {
         const { pathingGrid } = (await world.resources.get().actions._client.gameInfo()).startRaw!;
         return new PixelMap(pathingGrid as ConstructorParameters<typeof PixelMap>[0]);
     } catch (e) {
-        if (e instanceof GameEndedError || e instanceof ConnectionClosedError) throw e;
-        console.warn('Could not read the live pathing grid, so rocks keep their footprints', e);
+        const warn = (label: string, err: Error) => console.warn(label, err);
+        triageError(e, 'Could not read the live pathing grid, so rocks keep their footprints', {
+            expected: warn,
+            unexpected: warn,
+        });
         return undefined;
     }
 }
@@ -36,13 +41,16 @@ function livePathing(world: World): Promise<PixelMap | undefined> {
     const { frame } = world.resources.get();
     const game = frame.getGameInfo();
     const gameLoop = frame.getGameLoop();
-    const cached = liveGrids.get(world);
+    const live = liveGrids.get(world);
+    const cached = live.latest;
     if (cached?.game === game && cached.gameLoop === gameLoop) return cached.grid;
 
     const grid = requestLivePathing(world);
-    liveGrids.set(world, { game, gameLoop, grid });
+    live.latest = { game, gameLoop, grid };
     return grid;
 }
+
+const resetLivePathing = (world: World) => liveGrids.clear(world);
 
 function claimableCells(world: World, blocker: Blocker, live: PixelMap): Point2D[] {
     return blockerBox(world, blocker).filter((cell) => live.isEmpty(cell));
@@ -57,4 +65,4 @@ function releasableCells(world: World, blocker: Blocker, rockCells: Point2D[], l
     };
 }
 
-export { claimableCells, livePathing, releasableCells };
+export { claimableCells, livePathing, releasableCells, resetLivePathing };

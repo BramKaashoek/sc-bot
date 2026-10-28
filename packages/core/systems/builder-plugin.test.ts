@@ -2,7 +2,7 @@ import { describe, expect, it, spyOn } from 'bun:test';
 import { Ability, UnitType, Upgrade } from '../constants/index.ts';
 import { ENEMY_NAT_VISION, ENEMY_SPAWN, NAT } from '../constants/build-target.ts';
 import { CARRYMINERALFIELDMINERALS } from '../constants/buff.ts';
-import { BuildOrder, BuildResult, Race } from '../constants/enums.ts';
+import { Alliance, BuildOrder, BuildResult, Race } from '../constants/enums.ts';
 import { BASE_DEFENDER, BUILD_RUNNER_SCOUT, GATHERING, PERSISTENT_BUILDER } from '../constants/unit-role.ts';
 import createAgent from '../agent/create-agent.ts';
 import { createTestWorld, stepTo } from '../test/create-test-world.ts';
@@ -402,10 +402,12 @@ describe('builderPlugin', () => {
             world.client.sent.queries.filter((query) => query.placements?.length || query.pathing?.length).length;
         const trackedTypes = () => buildings.getTracked().map(({ unitType }) => unitType);
         let gameLoop = 896;
-        const run = (task: BuildTaskI | BuildOrderStep) => {
+        const run = (task: BuildTaskI | BuildOrderStep, added: SC2APIProtocol.Unit[] = []) => {
             world.agent.use(createSystem({ name: `Build${gameLoop}`, type: 'build', buildOrder: [task] }));
             gameLoop += 4;
-            return stepAt(world, gameLoop);
+            return stepCommands(world, gameLoop, {}, added).then((commands) =>
+                commands.map(({ abilityId }) => abilityId),
+            );
         };
         const earmarks = () =>
             world.data.get('earmarks').map(({ name }: { name: string }) => name.replace(/^build\d+:/, ''));
@@ -449,10 +451,10 @@ describe('builderPlugin', () => {
                 .slice(4)
                 .map(({ unitType, target }) => [unitType, target]),
         ]).toEqual([
-            [[UnitType.BARRACKS, map.getEnemyNatural().townhallPosition]],
+            [[UnitType.BARRACKS, map.getEnemyNatural()!.townhallPosition]],
             [
                 [UnitType.BARRACKS, proxy],
-                [UnitType.COMMANDCENTER, map.getNatural().townhallPosition],
+                [UnitType.COMMANDCENTER, map.getNatural()!.townhallPosition],
             ],
         ]);
 
@@ -466,7 +468,19 @@ describe('builderPlugin', () => {
         ]).toEqual([true, [['saving', 'task0'], []], true, 6]);
 
         const settled = [(await runEarmarked(build(UnitType.REFINERY))).earmarks];
-        settled.push((await runEarmarked(build(UnitType.COMMANDCENTER))).earmarks);
+        const [first, second] = map.getAvailableExpansions().map((candidate) => candidate.townhallPosition);
+        const guard = rawUnit({
+            tag: '9301',
+            unitType: UnitType.ZERGLING,
+            alliance: Alliance.ENEMY,
+            pos: { x: first.x + 3, y: first.y, z: 10 },
+        });
+        const pendingTownhalls = buildings.pending(UnitType.COMMANDCENTER);
+        await run(build(UnitType.COMMANDCENTER), [guard]);
+        expect([buildings.pending(UnitType.COMMANDCENTER) - pendingTownhalls, buildings.getTracked().at(-1)]).toEqual([
+            1,
+            expect.objectContaining({ unitType: UnitType.COMMANDCENTER, target: second }),
+        ]);
 
         const placed = { x: 40.5, y: 40.5 };
         world.resources.set({ placer: { place: () => [placed] } });
@@ -475,7 +489,7 @@ describe('builderPlugin', () => {
         expect(buildings.getTracked().at(-1)).toMatchObject({ unitType: UnitType.ENGINEERINGBAY, target: placed });
         spyOn(buildings, 'build').mockReturnValueOnce(undefined);
         settled.push((await runEarmarked(build(UnitType.ENGINEERINGBAY))).earmarks);
-        expect(settled).toEqual(Array(3).fill([['saving', 'task0'], []]));
+        expect(settled).toEqual(Array(2).fill([['saving', 'task0'], []]));
 
         world.resources.set({ placer: undefined });
         world.agent.race = Race.PROTOSS;
@@ -483,7 +497,7 @@ describe('builderPlugin', () => {
         expect(request.mock.calls).toEqual([
             [UnitType.SUPPLYDEPOT, { flags: ['supplyDepot'] }],
             [UnitType.BARRACKS, { base: cc.pos, closestTo: cc.pos, flags: ['production'] }],
-            [UnitType.BARRACKS, { base: map.getNatural().townhallPosition }],
+            [UnitType.BARRACKS, { base: map.getNatural()!.townhallPosition }],
             [UnitType.SUPPLYDEPOT, { flags: ['supplyDepot'] }],
             [UnitType.GATEWAY, { powered: true }],
         ]);
@@ -493,7 +507,6 @@ describe('builderPlugin', () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
         const { buildings } = world.resources.get();
         const { system, results, statuses } = buildSystem(['17 marine', '17 supply', '17 supply'], {
-            earmarks: null,
             fillWorkers: false,
         });
         world.agent.use(system);
@@ -508,7 +521,6 @@ describe('builderPlugin', () => {
         await stepCommands(world, 916, {}, depot, { foodUsed: 17 });
         buildings.getTracked().forEach((build) => buildings.cancel(build));
         await stepCommands(world, 916 + 250, {}, [], { foodUsed: 16 });
-
         expect([commands.map((step) => step.map(({ abilityId }) => abilityId)), results, statuses]).toEqual([
             [[], [Ability.TRAIN_MARINE]],
             [
@@ -528,6 +540,16 @@ describe('builderPlugin', () => {
                 BuildOrder.NOT_STARTED,
             ],
         ]);
+
+        const beforeDelay = world.data.get('earmarks');
+        await stepCommands(world, 916 + 1250, {}, [], { foodUsed: 17, minerals: 0 });
+
+        expect([
+            beforeDelay,
+            world.data
+                .get('earmarks')
+                .map(({ name, ...cost }: { name: string }) => [name.replace(/^build\d+:/, ''), cost]),
+        ]).toEqual([[], [['task2', { minerals: 100, vespene: 0 }]]]);
     });
 
     it('trains a unit with a target at the producer closest to it', async () => {
@@ -558,7 +580,7 @@ describe('builderPlugin', () => {
                 queueCommand: returning || i > 0,
             })),
         ];
-        const main = map.getMain().townhallPosition;
+        const main = map.getMain()!.townhallPosition;
         const off = buildSystem(['12 worker_scout']);
         world.agent.use(off.system);
 

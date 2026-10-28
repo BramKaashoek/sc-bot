@@ -1,5 +1,6 @@
 import createDebug from 'debug';
 import { add, distance, multiply, normalize, subtract } from '../utils/geometry/point.ts';
+import { NOOP } from '../utils/collections.ts';
 import getRandom from '../utils/get-random.ts';
 import { BuildOrder, BuildOrderId, BuildResult, Race } from '../constants/enums.ts';
 import type { BuildOrderStatus } from '../constants/enums.ts';
@@ -10,6 +11,7 @@ import { Upgrade, UnitType, UnitTypeId, AbilityId, UpgradeId, Color } from '../c
 import { ENEMY_NAT_VISION, ENEMY_SPAWN, NAT } from '../constants/build-target.ts';
 import { BUILD_RUNNER_SCOUT, GATHERING, PERSISTENT_BUILDER } from '../constants/unit-role.ts';
 import { autoSupply } from '../behaviors/macro/structures.ts';
+import { generalAbility } from '../engine/data-storage.ts';
 import { NodeSC2Error } from '../engine/errors.ts';
 import { affordable } from '../agent/macro.ts';
 import { createdTypeByAbility } from '../resources/units.ts';
@@ -39,8 +41,6 @@ const debugBuildSilly = createDebug('sc2:silly:build');
 
 const { BUILD_REACTOR, BUILD_TECHLAB, HARVEST_RETURN, MOVE, MORPH_ORBITALCOMMAND, MORPH_PLANETARYFORTRESS } = ability;
 const { PYLON, SUPPLYDEPOT, OVERLORD } = UnitType;
-
-const NOOP = () => {};
 
 let pluginCount = 0;
 
@@ -94,9 +94,7 @@ function builderPlugin(system: EventReader<System>): void {
 
     // SC2 reports specific ids (BUILD_REACTOR_BARRACKS) where tasks use the generic one (BUILD_REACTOR)
     const canCast = (world: World, unit: Unit, id: number) =>
-        unit
-            .availableAbilities()
-            .some((available) => available === id || world.data.getAbilityData(available)?.remapsToAbilityId === id);
+        unit.availableAbilities().some((available) => available === id || generalAbility(world.data, available) === id);
 
     // by type, since SC2 reports the ability unavailable while the caster is busy or short on resources;
     // availability only admits an `on` type the ability data misses
@@ -236,7 +234,6 @@ function builderPlugin(system: EventReader<System>): void {
         return existing + (structureTypes.includes(id) ? buildings.pending(id) : agent.alreadyPending(id));
     };
 
-    // ares build_order_parser.py _remove_completed_steps
     const removeCompleted = (world: World, tasks: BuildTaskRuntime[]) => {
         const { agent } = world;
         const worker = WorkerRace[agent.race!];
@@ -469,7 +466,8 @@ function builderPlugin(system: EventReader<System>): void {
 
     const pickWorker = (world: World, role: typeof BUILD_RUNNER_SCOUT | typeof PERSISTENT_BUILDER) => {
         const { map, mining, roles, units } = world.resources.get();
-        const main = map.getMain().townhallPosition;
+        // own main exists once the game has started
+        const main = map.getMain()!.townhallPosition;
         if (mining.isEnabled()) return mining.selectWorker(main, { role });
         const free = units.getMineralWorkers().filter((worker) => roles.roleOf(worker) === GATHERING);
         const [worker] = free.closestNUnits(main, 1);
@@ -484,7 +482,6 @@ function builderPlugin(system: EventReader<System>): void {
         const worker = persistentWorker(world);
         persistent.tag = undefined;
         const { mining, roles } = world.resources.get();
-        // a BUILDING worker goes back via the tracker
         if (!worker || roles.roleOf(worker) !== PERSISTENT_BUILDER) return;
         if (mining.isEnabled()) mining.release(worker);
         else roles.assign(worker, GATHERING);
@@ -497,7 +494,6 @@ function builderPlugin(system: EventReader<System>): void {
         if (worker && roles.roleOf(worker) === GATHERING) roles.assign(worker, PERSISTENT_BUILDER);
     };
 
-    // a builder busy on a tracked build holds the BUILDING role
     const builderFor = (world: World) => {
         const worker = persistentWorker(world);
         return worker && world.resources.get().roles.roleOf(worker) === PERSISTENT_BUILDER ? worker : undefined;
@@ -679,7 +675,7 @@ function builderPlugin(system: EventReader<System>): void {
                 }
 
                 try {
-                    await actions.build(task.id, null, target);
+                    await actions.build(task.id, null, { worker: target });
                     return BuildResult.COMMAND_SENT;
                 } catch (e) {
                     return BuildResult.ERROR;
@@ -713,7 +709,7 @@ function builderPlugin(system: EventReader<System>): void {
         if (!affordsTask(world, task)) return BuildResult.CANNOT_SATISFY;
         const settle = () => agent.canAfford(task.id, earmarkOf(task));
 
-        const { actions, map, placer } = resources.get();
+        const { actions, buildings, placer } = resources.get();
 
         const targeted = task.opts?.at === undefined ? undefined : structurePlacement(world, task.id, task.opts.at);
         if (targeted) {
@@ -739,12 +735,14 @@ function builderPlugin(system: EventReader<System>): void {
                 ? BuildResult.COMMAND_SENT
                 : BuildResult.CANNOT_SATISFY;
         } else if (townhallTypes.includes(task.id)) {
-            settle();
-            const expansionLocation = map.getAvailableExpansions()[0].townhallPosition;
+            const expansionLocation = buildings.getNextExpansion({ checkSafe: false });
+            if (!expansionLocation) return BuildResult.CANNOT_SATISFY;
 
             const foundPosition = await actions.canPlace(task.id, [expansionLocation]);
-            // @TODO: if we can't place - try to clear out obstacles (like a burrowed zergling)
             if (!foundPosition) return BuildResult.CANNOT_SATISFY;
+            const tracked = trackBuild(world, task, { at: foundPosition });
+            if (tracked) return tracked;
+            settle();
 
             try {
                 await actions.build(task.id, foundPosition);
@@ -877,7 +875,7 @@ function builderPlugin(system: EventReader<System>): void {
         }
 
         try {
-            await actions.do(task.id, [unitsCanDo[0].tag!], { target });
+            await actions.do([unitsCanDo[0].tag!], task.id, { target });
             if (cost) data.settleEarmark(earmarkName(task));
             return BuildResult.SUCCESS;
         } catch (e) {

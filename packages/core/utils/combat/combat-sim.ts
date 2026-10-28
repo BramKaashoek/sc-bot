@@ -14,7 +14,8 @@ import {
     VICTORY_OVERWHELMING,
 } from '../../constants/engagement-result.ts';
 import { SIEGETANKSIEGED } from '../../constants/unit-type.ts';
-import { isFlying } from '../../resources/units-collection.ts';
+import { distance } from '../geometry/point.ts';
+import { isFlying } from '../geometry/units.ts';
 import type { Unit } from '../../types.ts';
 
 export type FightOptions = {
@@ -110,9 +111,7 @@ function createMatrix(attackers: Side, targets: Side, workersDoNoDamage: boolean
 }
 
 const gapBetween = (attacker: Unit, target: Unit) =>
-    Math.hypot(attacker.pos.x - target.pos.x, attacker.pos.y - target.pos.y) -
-    (attacker.radius ?? 0) -
-    (target.radius ?? 0);
+    distance(attacker.pos, target.pos) - (attacker.radius ?? 0) - (target.radius ?? 0);
 
 const tooClose = (attackers: Side, i: number, targets: Side, j: number) =>
     attackers.minRange[i] > 0 && gapBetween(attackers.units[i], targets.units[j]) < attackers.minRange[i];

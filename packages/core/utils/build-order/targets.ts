@@ -51,7 +51,8 @@ const ownBase = (world: World, target: BuildTarget): Expansion | undefined => {
 
 export function resolveTarget(world: World, target: BuildTarget): Point2D {
     const { map, mapAnalysis } = world.resources.get();
-    const start = map.getLocations().self;
+    // own main exists once the game has started
+    const start = map.getLocations().self!;
 
     const own = ownBase(world, target);
     if (own) return own.townhallPosition;

@@ -184,7 +184,7 @@ export function resolvePlacements(world: World, table: PlacementTable): UserPlac
     const forMap = Object.entries(table).find(([name]) => gameMapName.startsWith(name))?.[1];
     if (!forMap) return [];
 
-    const spawn: SpawnKey = map.getLocations().self.y > map.getLocations().enemy[0].y ? 'UpperSpawn' : 'LowerSpawn';
+    const spawn: SpawnKey = map.getLocations().self!.y > map.getLocations().enemy[0].y ? 'UpperSpawn' : 'LowerSpawn';
     const forSpawn = forMap[spawn] ?? {};
     const raceKey = RACE_KEYS[world.agent.opponent?.race ?? Race.NORACE];
     const raceSpecific = (raceKey && forSpawn[raceKey]) || {};

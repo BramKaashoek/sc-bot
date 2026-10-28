@@ -23,7 +23,7 @@ async function openWorld(): Promise<TestWorld> {
 function openPathing(world: TestWorld, width = 140, height = 136) {
     const { map } = world.resources.get();
     map.setSize({ x: width, y: height });
-    map._grids.pathing = Array.from({ length: height }, (_, y) =>
+    map.getGrids().pathing = Array.from({ length: height }, (_, y) =>
         Array.from({ length: width }, (_, x) => (x === BLOCKED.x && y === BLOCKED.y ? 1 : 0)),
     );
 }
@@ -181,6 +181,39 @@ describe('InfluenceResource', () => {
 
         await observe(world, 900, []);
         expect([builds(() => influence.getGrid('ground')), costs(world, 71, 68)]).toEqual([1, [1, 1, 1, 1]]);
+    });
+
+    it('hands out a clean base copy that can be costed and drawn without touching the layers', async () => {
+        const world = await openWorld();
+        const { influence, debug } = world.resources.get();
+        await observe(world, 900, [
+            enemy(UnitType.STALKER, 40.5, 40.5),
+            enemy(UnitType.VIKINGFIGHTER, 40.5, 40.5, { isFlying: true }),
+        ]);
+
+        const clean = influence.getCleanGrid('ground');
+        const cleanAir = influence.getCleanGrid('airAvoidance');
+        expect([
+            clean.layer,
+            clean.get({ x: 41, y: 40 }),
+            clean.get(BLOCKED),
+            cleanAir.get({ x: 41, y: 40 }),
+            cleanAir.get({ x: 0, y: 0 }),
+        ]).toEqual(['ground', 1, Infinity, 1, Infinity]);
+        expect(influence.getGrid('ground').get({ x: 41, y: 40 })).toBeGreaterThan(1);
+
+        influence.addCost(clean, { x: 70.5, y: 68.5 }, 1, 2.5);
+        influence.addCost(clean, { x: 20.5, y: 120.5 }, 2, -7);
+        expect([
+            clean.get({ x: 71, y: 68 }),
+            clean.get({ x: 20, y: 120 }),
+            influence.getGrid('ground').get({ x: 71, y: 68 }),
+        ]).toEqual([3.5, 1, 1]);
+
+        const setDrawCells = spyOn(debug!, 'setDrawCells');
+        influence.drawDebug(clean, { threshold: 1 });
+        const [id, cells] = setDrawCells.mock.calls[0];
+        expect([id, cells.length, cells[0].text]).toEqual(['influence-ground', 5, '4']);
     });
 
     it('keeps configured settings across a game reset and reallocates for a new map size', async () => {

@@ -1,18 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { spawnSync } from 'node:child_process';
+import { afterEach, beforeEach, expect, it } from 'bun:test';
 import { mkdtempSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import createEngine from './create-engine.ts';
 import createAgent from '../agent/create-agent.ts';
 import { Ability } from '../constants/index.ts';
-import { AIBuild, Alliance, Difficulty, GameResult, PlayerType, Race } from '../constants/enums.ts';
+import { AIBuild, Alliance, GameResult, PlayerType, Race } from '../constants/enums.ts';
 import * as UnitType from '../constants/unit-type.ts';
 import { loadFixture } from '../test/create-test-world.ts';
 import { pathingKey, placementKey } from '../test/fake-client.ts';
+import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
+import { clientOf, describeLive, killNewSc2, sc2Pids, veryEasyZerg } from '../test/live.ts';
 import type { Point2D, World } from '../types.ts';
-
-type Client = NodeSC2Proto.ProtoClient & { step: (request: { count: number }) => Promise<unknown> };
 
 const MAP = 'Melee/Simple64';
 const FIXTURE_MAPS: Record<string, string> = {
@@ -20,7 +19,6 @@ const FIXTURE_MAPS: Record<string, string> = {
     blueshift: 'Ladder2018Season4/BlueshiftLE',
     acropolis: 'Ladder2019Season3/AcropolisLE',
 };
-const TICKS_PER_SECOND = 22.4;
 const FIXTURE_SEED = 4242;
 const SNAPSHOT_LOOP = 200;
 const SURRENDER_LOOP = 40;
@@ -32,16 +30,6 @@ let nextPort = 5300;
 let engines: ReturnType<typeof createEngine>[] = [];
 let sc2PidsBefore = new Set<number>();
 
-// SC2 renames its main thread, so -x SC2_x64 never matches a running instance
-const sc2Pids = () =>
-    new Set(
-        spawnSync('pgrep', ['-f', '[V]ersions/Base[0-9]*/SC2_x64'])
-            .stdout.toString()
-            .split('\n')
-            .filter((line) => line.trim())
-            .map(Number),
-    );
-
 const newEngine = () => {
     nextPort += 2;
     const engine = createEngine({ port: nextPort });
@@ -49,14 +37,7 @@ const newEngine = () => {
     return engine;
 };
 
-const computer = (options: Record<string, unknown> = {}) => ({
-    type: PlayerType.COMPUTER,
-    race: Race.ZERG,
-    difficulty: Difficulty.VERYEASY,
-    ...options,
-});
-
-const clientOf = (world: World) => world.resources.get().actions._client as unknown as Client;
+const computer = (options: Record<string, unknown> = {}) => ({ ...veryEasyZerg(), ...options });
 
 beforeEach(() => {
     sc2PidsBefore = sc2Pids();
@@ -69,16 +50,10 @@ afterEach(() => {
         } catch {}
     });
     engines = [];
-    [...sc2Pids()]
-        .filter((pid) => !sc2PidsBefore.has(pid))
-        .forEach((pid) => {
-            try {
-                process.kill(pid, 'SIGKILL');
-            } catch {}
-        });
+    killNewSc2(sc2PidsBefore);
 });
 
-describe.skipIf(!process.env.SC2PATH)('live engine: python-sc2 run_game / run_replay parity', () => {
+describeLive('live engine: python-sc2 run_game / run_replay parity', () => {
     it('runGame replays identically under the same random seed', async () => {
         const snapshotSeeded = async () => {
             let snapshot: string[] | undefined;
@@ -213,7 +188,7 @@ describe.skipIf(!process.env.SC2PATH)('live engine: python-sc2 run_game / run_re
         expect([asTerran.started, asZerg.started]).toEqual([1, 1]);
         expect(asTerran.stepLoops).toEqual([...asTerran.stepLoops].sort((first, second) => first - second));
         expect(asTerran.stepLoops[asTerran.stepLoops.length - 1]).toBeGreaterThanOrEqual(
-            Math.floor(15 * TICKS_PER_SECOND) - 8,
+            Math.floor(15 * GAME_LOOPS_PER_SECOND) - 8,
         );
         expect([asTerran.createdWorker, asZerg.createdWorker]).toEqual([[UnitType.SCV], [UnitType.DRONE]]);
     }, 180_000);
@@ -246,7 +221,7 @@ describe.skipIf(!process.env.SC2PATH)('live engine: python-sc2 run_game / run_re
 
                     const { map } = world.resources.get();
                     const ramp = map.getMainBaseRamp()!;
-                    const ownMain = map.getMain().townhallPosition;
+                    const ownMain = map.getMain()!.townhallPosition;
                     const placementsOf = async (abilityId: number, targets: Point2D[]) =>
                         (
                             await client.query({ placements: targets.map((targetPos) => ({ abilityId, targetPos })) })

@@ -1,9 +1,9 @@
 /// <reference path="./vendor.d.ts" />
 
 import { PlayerType } from './constants/enums.ts';
-import createAgent from './agent/index.ts';
-import createEngine from './engine/index.ts';
-import createSystem from './systems/index.ts';
+import createAgent from './agent/create-agent.ts';
+import createEngine from './engine/create-engine.ts';
+import createSystem from './systems/create-system.ts';
 import { taskFunctions } from './systems/builder-plugin.ts';
 import type { Agent } from './types.ts';
 
@@ -28,6 +28,8 @@ export { PixelMap } from './utils/pixel-map.ts';
 export { canWinFight, simulateFight } from './utils/combat/combat-sim.ts';
 export { avgPoints, closestPoint, distance, distanceSquared, towards } from './utils/geometry/point.ts';
 export { parseBuildOrder } from './utils/build-order/parse.ts';
+export { parseAresBuilds, parseAresPlacements } from './utils/config/ares-yaml.ts';
+export { createPlacer } from './utils/placement/placer.ts';
 export {
     DEFAULT_EFFECT_COSTS,
     EFFECT_INFLUENCE,

@@ -1,5 +1,5 @@
 import { describe, expect, it, spyOn } from 'bun:test';
-import { createTestWorld, stepTo } from '../test/create-test-world.ts';
+import { createTestWorld, observationAt, stepTo } from '../test/create-test-world.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
 import type { Unit } from '../types.ts';
 import { intelResource } from './intel.ts';
@@ -14,11 +14,8 @@ const ZERGLINGS_SPOT = { x: 14.7, y: 24.8 };
 const sortedTags = (group: Unit[]) => group.map((unit) => unit.tag).sort();
 
 function hideFogged(world: TestWorld, gameLoop: number, tag: string): SC2APIProtocol.ResponseObservation {
-    const responseObservation = structuredClone(world.client.fixture.observations[896]);
-    const { rawData } = responseObservation.observation!;
-    responseObservation.observation!.gameLoop = gameLoop;
-    rawData!.units = rawData!.units!.filter((raw) => raw.tag !== tag);
-    const { data, size } = rawData!.mapState!.visibility!;
+    const responseObservation = observationAt(world, gameLoop, { hide: [tag] });
+    const { data, size } = responseObservation.observation!.rawData!.mapState!.visibility!;
     for (let dy = -2; dy <= 2; dy++)
         for (let dx = -2; dx <= 2; dx++)
             data![(Math.floor(ZERGLINGS_SPOT.y) + dy) * size!.x! + Math.floor(ZERGLINGS_SPOT.x) + dx] = 1;

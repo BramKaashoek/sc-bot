@@ -1,19 +1,21 @@
 import createSystem from './create-system.ts';
 import createUnit from '../engine/create-unit.ts';
+import { perWorld } from '../engine/per-world.ts';
 import { Alliance } from '../constants/enums.ts';
+import { setAvailableAbilities, storeUnit } from '../resources/units.ts';
 import type { Unit, UnitSystem, World } from '../types.ts';
 
 // python's on_unit_created fires once per tag per game, even if the unit later leaves the observation (e.g. loaded)
-const seenUnitTagsByWorld = new WeakMap<World, Set<string>>();
+const seenUnitTags = perWorld(() => new Set<string>());
 // forgotten ghosts leave the units store, so a re-seen enemy would otherwise look new
-const seenEnemyTagsByWorld = new WeakMap<World, Set<string>>();
+const seenEnemyTags = perWorld(() => new Set<string>());
 
 const unitSystem: UnitSystem = {
     name: 'UnitSystem',
     type: 'engine',
     async onGameStart(world: World) {
-        seenUnitTagsByWorld.set(world, new Set());
-        seenEnemyTagsByWorld.set(world, new Set());
+        seenUnitTags.clear(world);
+        seenEnemyTags.clear(world);
         return this.onStep(world);
     },
     // @TODO: Figure out if units should be compared to the internal data cache, OR to the 'last frame' recieved
@@ -61,10 +63,8 @@ const unitSystem: UnitSystem = {
         };
 
         const seenTags = new Set<string>();
-        const seenUnitTags = seenUnitTagsByWorld.get(world) ?? new Set<string>();
-        seenUnitTagsByWorld.set(world, seenUnitTags);
-        const seenEnemyTags = seenEnemyTagsByWorld.get(world) ?? new Set<string>();
-        seenEnemyTagsByWorld.set(world, seenEnemyTags);
+        const unitTags = seenUnitTags.get(world);
+        const enemyTags = seenEnemyTags.get(world);
 
         const writePythonStyleEvents = (
             incData: SC2APIProtocol.Unit,
@@ -74,8 +74,8 @@ const unitSystem: UnitSystem = {
             if (incData.alliance !== Alliance.SELF) return;
 
             if (!unit.isStructure()) {
-                if (!seenUnitTags.has(incData.tag!)) {
-                    seenUnitTags.add(incData.tag!);
+                if (!unitTags.has(incData.tag!)) {
+                    unitTags.add(incData.tag!);
                     events.write({ name: 'unitSpawned', data: unit, type: 'all' });
                 }
                 return;
@@ -241,8 +241,8 @@ const unitSystem: UnitSystem = {
                         });
                     }
                 } else if (unitData.alliance === Alliance.ENEMY) {
-                    if (!seenEnemyTags.has(unitData.tag!)) {
-                        seenEnemyTags.add(unitData.tag!);
+                    if (!enemyTags.has(unitData.tag!)) {
+                        enemyTags.add(unitData.tag!);
                         events.write({
                             name: 'enemyFirstSeen',
                             data: newUnit,
@@ -257,7 +257,7 @@ const unitSystem: UnitSystem = {
                     });
                 }
 
-                units._units[unitData.alliance!].set(unitData.tag!, newUnit);
+                storeUnit(units, unitData.alliance!, unitData.tag!, newUnit);
                 writePythonStyleEvents(unitData, newUnit);
             }
         });
@@ -275,7 +275,8 @@ const unitSystem: UnitSystem = {
         const gameLoop = frame.getGameLoop();
         if (world.agent.settings?.skipAvailableAbilitiesQuery) {
             units._units[Alliance.SELF].forEach((unit) => {
-                if (unit._availableAbilitiesLoop !== gameLoop) unit._availableAbilities = [];
+                if (unit._availableAbilitiesLoop !== gameLoop)
+                    setAvailableAbilities(unit, [], unit._availableAbilitiesLoop);
             });
             return;
         }
@@ -289,10 +290,12 @@ const unitSystem: UnitSystem = {
             })
             .then((res) => {
                 res.abilities!.forEach((abilObj) => {
-                    const unit = units._units[Alliance.SELF].get(abilObj.unitTag!)!;
-                    unit._availableAbilities = abilObj.abilities!.map((a) => a.abilityId!);
-                    unit._availableAbilitiesLoop = gameLoop;
-                    units._units[Alliance.SELF].set(abilObj.unitTag!, unit);
+                    const unit = units.getByTag(abilObj.unitTag!)!;
+                    setAvailableAbilities(
+                        unit,
+                        abilObj.abilities!.map((a) => a.abilityId!),
+                        gameLoop,
+                    );
                 });
             });
     },

@@ -1,9 +1,19 @@
 import createDebug from 'debug';
 import Color from '../constants/color.ts';
+import { asArray, toTags } from '../utils/collections.ts';
 import getRandom from '../utils/get-random.ts';
 import { cellsInFootprint } from '../utils/geometry/plane.ts';
 import { add, createPoint2D } from '../utils/geometry/point.ts';
-import type { Color as ColorValue, Debugger, DebugUnitRequest, Point2D, Unit, UnitRequest, World } from '../types.ts';
+import type {
+    Color as ColorValue,
+    Debugger,
+    DebugUnitRequest,
+    Point2D,
+    ResourceDefinition,
+    Unit,
+    UnitRequest,
+    World,
+} from '../types.ts';
 
 const debugWidget = createDebug('sc2:DebugWidget');
 
@@ -36,9 +46,7 @@ function createDebugger(world: World): DebuggerImpl {
     let tempBoxCount = 0;
     let boxLoop: number | undefined;
 
-    const client = () => world.resources.get().actions._client!;
-    const tagsOf = (units: Unit | Unit[]): string[] =>
-        (Array.isArray(units) ? units : [units]).map((unit) => unit.tag!);
+    const client = () => world.resources.get().actions._client;
     const sendGameState = (gameState: number) => client().debug({ debug: [{ gameState }] });
 
     return {
@@ -64,7 +72,7 @@ function createDebugger(world: World): DebuggerImpl {
             );
 
             tempCommands = {};
-            return _client!.debug({ debug: debugCommands.concat(debugTempCommands) });
+            return _client.debug({ debug: debugCommands.concat(debugTempCommands) });
         },
         removeCommand(id) {
             this.touched = true;
@@ -348,11 +356,11 @@ function createDebugger(world: World): DebuggerImpl {
         },
         async killUnit(units: Unit | Unit[]) {
             // the debug typings declare uint64 tags as numbers, but they travel as strings like Unit.tag
-            return client().debug({ debug: [{ killUnit: { tag: tagsOf(units) as unknown as number[] } }] });
+            return client().debug({ debug: [{ killUnit: { tag: toTags(units) as unknown as number[] } }] });
         },
         async setUnitValue(units: Unit | Unit[], unitValue: SC2APIProtocol.DebugSetUnitValue_UnitValue, value: number) {
             return client().debug({
-                debug: tagsOf(units).map((unitTag) => ({
+                debug: toTags(units).map((unitTag) => ({
                     unitValue: { unitValue, value, unitTag: unitTag as unknown as number },
                 })),
             });
@@ -390,7 +398,7 @@ function createDebugger(world: World): DebuggerImpl {
         quickSave: () => client().quickSave(),
         quickLoad: () => client().quickLoad(),
         async createUnit(ureqs: DebugUnitRequest | UnitRequest) {
-            const unitReqs = Array.isArray(ureqs) ? ureqs : [ureqs];
+            const unitReqs = asArray(ureqs);
 
             const {
                 actions: { _client: client },
@@ -405,7 +413,8 @@ function createDebugger(world: World): DebuggerImpl {
                         owner: ureq.playerId || world.agent.playerId,
                         pos:
                             ureq.pos ||
-                            getRandom(map.getMain().areas!.areaFill.filter((cell) => map.isPlaceable(cell))),
+                            // own main exists once the game has started
+                            getRandom(map.getMain()!.areas!.areaFill.filter((cell) => map.isPlaceable(cell))),
                     },
                 })),
             });
@@ -413,4 +422,7 @@ function createDebugger(world: World): DebuggerImpl {
     };
 }
 
-export default createDebugger;
+export const debugResource: ResourceDefinition<'debug'> = {
+    name: 'debug',
+    create: (world) => createDebugger(world),
+};

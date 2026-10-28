@@ -1,17 +1,16 @@
 import { ATTACK, MOVE } from '../../constants/ability.ts';
-import { isFlying } from '../../resources/units-collection.ts';
-import { distanceSquared } from '../../utils/geometry/point.ts';
+import { distanceSquared, toPoint } from '../../utils/geometry/point.ts';
+import { isFlying } from '../../utils/geometry/units.ts';
 import {
     center,
     duplicateOrSimilarOrder,
     groupWeaponsOnCooldown,
     inAttackRange,
     layerFor,
-    positionOf,
     type Target,
 } from './helpers.ts';
 import { keepUnitSafe, shootTargetInRange } from './individual.ts';
-import type { Behavior, InfluenceLayer, Point2D, Unit, World } from '../../types.ts';
+import type { Behavior, InfluenceGrid, InfluenceLayer, Point2D, Unit, World } from '../../types.ts';
 
 const DIRECTIONS: Point2D[] = [
     { x: 1, y: 0 },
@@ -30,8 +29,14 @@ const byDistanceTo = (group: Unit[], point: Point2D, farthest: boolean) =>
         return closer === farthest ? best : unit;
     });
 
-function retreatPoint(world: World, group: Unit[], groupPosition: Point2D, target: Point2D, layer: InfluenceLayer) {
-    const grid = world.resources.get().influence.getGrid(layer);
+function retreatPoint(
+    world: World,
+    group: Unit[],
+    groupPosition: Point2D,
+    target: Point2D,
+    layer: InfluenceLayer | InfluenceGrid,
+) {
+    const grid = typeof layer === 'string' ? world.resources.get().influence.getGrid(layer) : layer;
     const length = group.length * 1.5;
     let best = groupPosition;
     let bestDistance = 0;
@@ -55,7 +60,7 @@ export function aMoveGroup({ group, target }: { group: Unit[]; target: Target })
         name: 'aMoveGroup',
         execute(ctx) {
             if (group.length === 0) return false;
-            const farthest = byDistanceTo(group, positionOf(target), true);
+            const farthest = byDistanceTo(group, toPoint(target), true);
             if (duplicateOrSimilarOrder(ctx.world, farthest, target, ATTACK)) return false;
             return ctx.order(group, ATTACK, target);
         },
@@ -70,7 +75,7 @@ export function keepGroupSafe({
 }: {
     group: Unit[];
     closeEnemy: Unit[];
-    layer?: InfluenceLayer;
+    layer?: InfluenceLayer | InfluenceGrid;
     attackInRangeEnemy?: boolean;
 }): Behavior {
     return {
@@ -104,7 +109,7 @@ export function pathGroupToTarget({
     start: Point2D;
     group: Unit[];
     target: Point2D;
-    layer?: InfluenceLayer;
+    layer?: InfluenceLayer | InfluenceGrid;
     distanceCheckSquared?: number;
     successAtDistance?: number;
     sensitivity?: number;
@@ -143,7 +148,7 @@ export function stutterGroupBack({
     group: Unit[];
     groupPosition: Point2D;
     target: Target;
-    layer?: InfluenceLayer;
+    layer?: InfluenceLayer | InfluenceGrid;
 }): Behavior {
     return {
         name: 'stutterGroupBack',
@@ -151,7 +156,7 @@ export function stutterGroupBack({
             if (group.length === 0) return false;
             const { pathing } = ctx.world.resources.get();
             const grid = layerFor(group[0], layer);
-            const targetPosition = positionOf(target);
+            const targetPosition = toPoint(target);
             const sample = byDistanceTo(group, targetPosition, true);
 
             if (!groupWeaponsOnCooldown(group, false)) {
@@ -190,7 +195,7 @@ export function stutterGroupForward({
         name: 'stutterGroupForward',
         execute(ctx) {
             if (group.length === 0 || enemies.length === 0) return false;
-            const sample = byDistanceTo(group, positionOf(target), false);
+            const sample = byDistanceTo(group, toPoint(target), false);
             const enemyCenter = center(enemies);
             const allInRange = group.every((unit) => inAttackRange(unit, enemies).length > 0);
             const ability = !allInRange && groupWeaponsOnCooldown(group, true) ? MOVE : ATTACK;

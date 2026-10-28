@@ -120,3 +120,4 @@ cd $A && docker compose up
 - Results go to `results.json`, replays to `replays/` and logs to `logs/` (your bot's stdout/stderr are under `logs/bot_controller1/`).
 - To test without a friend, copy the bundled `bots/basic_bot` into the opponent's folder.
 - In the arena the bot is started with `--LadderServer`/`--GamePort`/`--StartPort`. It then skips launching SC2 and creating a game and only joins, so the same binary works in both setups.
+- `bun run build` in `bot/` builds the single binary for ladder submission (`bun build --compile index.ts --outfile dist/sc-bot`).

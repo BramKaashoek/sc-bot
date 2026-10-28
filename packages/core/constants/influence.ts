@@ -20,7 +20,19 @@ export type EffectInfluence = { layers: readonly InfluenceLayer[]; perPosition?:
 
 const ALL_LAYERS = ['ground', 'air', 'groundAvoidance', 'airAvoidance'] as const;
 
-export const INFLUENCE_DEFAULTS = { rangeBuffer: 4, effectsRangeBuffer: 1, costMultiplier: 1 };
+export const INFLUENCE_DEFAULTS = {
+    rangeBuffer: 4,
+    effectsRangeBuffer: 1,
+    costMultiplier: 1,
+    airVsGroundDefault: 10,
+    tacticalGround: false,
+    kd8Charge: { cost: 10, range: 4.5 },
+    parasiticBomb: { cost: 17.15, range: 4 },
+    delayedEffects: {
+        bile: { reactAfter: 16, duration: 50 },
+        nuke: { reactAfter: 250, duration: 320 },
+    },
+};
 
 export const WEIGHT_COSTS: Record<number, WeightCost> = {
     [UnitType.ADEPT]: { airCost: 0, groundCost: 9, airRange: 0, groundRange: 5 },

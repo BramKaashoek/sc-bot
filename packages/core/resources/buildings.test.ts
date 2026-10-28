@@ -1,6 +1,7 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 import { Ability, UnitType } from '../constants/index.ts';
 import { Alliance, Race } from '../constants/enums.ts';
+import { SCANNERSWEEP } from '../constants/effect.ts';
 import { BASE_DEFENDER, BUILDING, GATHERING, PERSISTENT_BUILDER } from '../constants/unit-role.ts';
 import { createTestWorld, stepTo } from '../test/create-test-world.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
@@ -15,11 +16,22 @@ const REFINERY = '4351590401';
 
 type Edit = Partial<SC2APIProtocol.Unit> | null;
 
-type Step = { edits?: Record<string, Edit>; extra?: SC2APIProtocol.Unit[]; dead?: string[] };
+type Step = {
+    edits?: Record<string, Edit>;
+    extra?: SC2APIProtocol.Unit[];
+    dead?: string[];
+    errors?: SC2APIProtocol.ActionError[];
+    effects?: SC2APIProtocol.Effect[];
+};
 
-async function step(world: TestWorld, gameLoop: number, { edits = {}, extra = [], dead = [] }: Step = {}) {
+async function step(
+    world: TestWorld,
+    gameLoop: number,
+    { edits = {}, extra = [], dead = [], errors = [], effects = [] }: Step = {},
+) {
     const next = structuredClone(world.client.fixture.observations[896]);
     next.observation!.gameLoop = gameLoop;
+    next.actionErrors = errors;
     const { rawData } = next.observation!;
     rawData!.units = rawData!.units!.flatMap((raw) => {
         const edit = edits[raw.tag!];
@@ -27,6 +39,7 @@ async function step(world: TestWorld, gameLoop: number, { edits = {}, extra = []
         return [edit ? { ...raw, ...edit } : raw];
     });
     rawData!.units.push(...extra);
+    rawData!.effects = effects;
     if (dead.length > 0) rawData!.event = { deadUnits: dead };
 
     const before = world.client.sent.actions.length;
@@ -340,9 +353,11 @@ describe('building tracker', () => {
         expect([buildings.pending(), world.agent.alreadyPending(UnitType.BARRACKS)]).toEqual([1, 1]);
     });
 
-    it('retargets a blocked townhall to a free expansion, else fails blocked; counts a tracked refinery once; times out gas builds', async () => {
+    it('retargets an unplaceable townhall to the next safe expansion, else fails blocked; counts a tracked refinery once; times out gas builds', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
-        const { buildings, units, map } = world.resources.get();
+        const { buildings, units, map, pathing, placement } = world.resources.get();
+        const [first, second, third] = map.getAvailableExpansions().map((expansion) => expansion.townhallPosition);
+        spyOn(pathing, 'isPositionSafe').mockImplementation((point) => point !== first);
         const occupied = units.getByTag(BARRACKS)!.pos;
         const townhall = buildings.build(UnitType.COMMANDCENTER, { at: occupied })!;
         const gas = buildings.buildGas()!;
@@ -353,9 +368,14 @@ describe('building tracker', () => {
             dead: [REFINERY],
         });
         expect([gas.status, buildings.buildGas({ max: 2 })]).toEqual(['constructing', expect.anything()]);
-        expect(map.getAvailableExpansions().map((expansion) => expansion.townhallPosition)).toContainEqual(
-            townhall.target,
+        expect(townhall.target).toEqual(second);
+
+        const canPlace = spyOn(placement, 'canPlace').mockImplementation(
+            (_type, pos) => ![first, second].includes(pos),
         );
+        await step(world, 902);
+        expect(townhall.target).toEqual(third);
+        canPlace.mockRestore();
 
         spyOn(map, 'getAvailableExpansions').mockReturnValue([]);
         const blocked = buildings.build(UnitType.COMMANDCENTER, { at: occupied })!;
@@ -364,6 +384,163 @@ describe('building tracker', () => {
 
         await step(world, 896 + 121 * 22.4);
         expect([gas.status, gas.failure]).toEqual(['failed', 'timeout']);
+    });
+
+    it('picks the first expansion that is unblocked and safe, skipping enemies (not auto-turrets), own townhalls, destructibles and watchtowers within 5.5; checkSafe false skips only safety; a passing enemy neither blocks for good nor moves a build', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { buildings, map, pathing } = world.resources.get();
+        const expansions = map.getAvailableExpansions();
+        const [first, second, third, fourth, fifth, sixth] = expansions.map((expansion) => expansion.townhallPosition);
+        expect(buildings.getNextExpansion()).toEqual(first);
+
+        spyOn(pathing, 'isPositionSafe').mockImplementation((point) => point !== first);
+        expect([buildings.getNextExpansion(), buildings.getNextExpansion({ checkSafe: false })]).toEqual([
+            second,
+            first,
+        ]);
+
+        const build = buildings.build(UnitType.COMMANDCENTER, { at: second })!;
+        const near = (pos: Point2D) => ({ ...at({ x: pos.x + 3, y: pos.y }) });
+        const neutral = (tag: string, unitType: number, pos: Point2D) =>
+            rawUnit({ tag, unitType, alliance: Alliance.NEUTRAL, owner: 16, ...near(pos) });
+        const zergling = rawUnit({
+            tag: '9002',
+            unitType: UnitType.ZERGLING,
+            alliance: Alliance.ENEMY,
+            ...near(second),
+        });
+        const others = [
+            rawUnit({ tag: '9001', unitType: UnitType.AUTOTURRET, alliance: Alliance.ENEMY, ...near(sixth) }),
+            rawUnit({ tag: '9003', unitType: UnitType.COMMANDCENTER, alliance: Alliance.SELF, ...near(third) }),
+            neutral('9004', UnitType.DESTRUCTIBLEROCK6X6, fourth),
+            neutral('9005', UnitType.XELNAGATOWER, fifth),
+        ];
+        spyOn(map, 'getAvailableExpansions').mockReturnValue(expansions);
+        await step(world, 900, { extra: [zergling, ...others] });
+        expect([
+            [first, second, third, fourth, fifth].map((pos) => buildings.isExpansionBlocked(pos)),
+            buildings.getNextExpansion(),
+            buildings.getNextExpansion({ checkSafe: false }),
+            build.target,
+        ]).toEqual([[false, true, true, true, true], sixth, first, second]);
+
+        await step(world, 904, { extra: others, dead: ['9002'] });
+        expect([buildings.isExpansionBlocked(second), buildings.getNextExpansion(), build.target]).toEqual([
+            false,
+            sixth,
+            second,
+        ]);
+        buildings.cancel(build);
+        expect(buildings.getNextExpansion()).toEqual(second);
+    });
+
+    it('skips spots another active tracked townhall build targets, including when retargeting', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { buildings, map, placement } = world.resources.get();
+        const [first, second, third] = map.getAvailableExpansions().map((expansion) => expansion.townhallPosition);
+
+        const offset = buildings.build(UnitType.COMMANDCENTER, { at: { x: first.x + 2, y: first.y + 1 } })!;
+        expect(buildings.getNextExpansion()).toEqual(second);
+        buildings.cancel(offset);
+        expect(buildings.getNextExpansion()).toEqual(first);
+
+        const cancelled = buildings.build(UnitType.COMMANDCENTER, { at: buildings.getNextExpansion() })!;
+        expect([cancelled.target, buildings.getNextExpansion()]).toEqual([first, second]);
+        buildings.cancel(cancelled);
+        expect(buildings.getNextExpansion()).toEqual(first);
+        const moving = buildings.build(UnitType.COMMANDCENTER, { at: buildings.getNextExpansion() })!;
+
+        const other = buildings.build(UnitType.COMMANDCENTER, { at: buildings.getNextExpansion() })!;
+        expect([other.target, buildings.getNextExpansion()]).toEqual([second, third]);
+
+        spyOn(placement, 'canPlace').mockImplementation((_type, pos) => pos.x !== first.x || pos.y !== first.y);
+        await step(world, 900);
+        expect([moving.target, other.target]).toEqual([third, second]);
+    });
+
+    it('blocks a townhall target when its worker gets CantBuildLocationInvalid and retargets, failing blocked with no spot left; a detector with no enemy near clears it, and a new game resets', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { buildings, map } = world.resources.get();
+        const [first, second, third] = map.getAvailableExpansions().map((expansion) => expansion.townhallPosition);
+        const build = buildings.build(UnitType.COMMANDCENTER, { at: first })!;
+        const rejected = [{ unitTag: build.workerTag, result: 44 as SC2APIProtocol.ActionResult }];
+
+        const ignored = [
+            { unitTag: BARRACKS_BUILDER, result: 44 as SC2APIProtocol.ActionResult },
+            { unitTag: build.workerTag, result: 3 as SC2APIProtocol.ActionResult },
+        ];
+        expect(build.workerTag).not.toBe(BARRACKS_BUILDER);
+        await step(world, 898, { errors: ignored });
+        expect([build.target, buildings.isExpansionBlocked(first)]).toEqual([first, false]);
+
+        await step(world, 900, { errors: rejected });
+        expect([build.target, buildings.isExpansionBlocked(first), buildings.getNextExpansion()]).toEqual([
+            second,
+            true,
+            third,
+        ]);
+
+        const marine = rawUnit({
+            tag: '9103',
+            unitType: UnitType.MARINE,
+            alliance: Alliance.SELF,
+            ...at({ x: first.x + 5, y: first.y }),
+        });
+        await step(world, 902, { extra: [marine] });
+        expect(buildings.isExpansionBlocked(first)).toBe(true);
+
+        const scout = rawUnit({
+            tag: '9101',
+            unitType: UnitType.ZERGLING,
+            alliance: Alliance.ENEMY,
+            ...at({ x: first.x + 8, y: first.y }),
+        });
+        const raven = rawUnit({
+            tag: '9102',
+            unitType: UnitType.RAVEN,
+            alliance: Alliance.SELF,
+            ...at({ x: first.x + 5, y: first.y }),
+        });
+        const late = buildings.build(UnitType.COMMANDCENTER, { at: first })!;
+        await step(world, 904, { extra: [scout, raven] });
+        expect([buildings.isExpansionBlocked(first), late.target]).toEqual([true, third]);
+        await step(world, 908, { extra: [raven], dead: ['9101'] });
+        expect(buildings.isExpansionBlocked(first)).toBe(false);
+
+        await step(world, 912, { extra: [raven], errors: rejected });
+        expect(buildings.isExpansionBlocked(second)).toBe(true);
+        spyOn(map, 'getAvailableExpansions').mockReturnValue([]);
+        await step(world, 916, { errors: rejected });
+        expect([build.status, build.failure]).toEqual(['failed', 'blocked']);
+
+        const again = buildings.build(UnitType.COMMANDCENTER, { at: first })!;
+        await step(world, 920, { errors: [{ ...rejected[0], unitTag: again.workerTag }] });
+        expect(buildings.isExpansionBlocked(first)).toBe(true);
+
+        const sweep = { effectId: SCANNERSWEEP, alliance: Alliance.SELF, pos: [{ x: first.x + 3, y: first.y }] };
+        const enemySweep = { ...sweep, alliance: Alliance.ENEMY, pos: [{ x: first.x - 3, y: first.y }] };
+        await step(world, 922, { effects: [enemySweep] });
+        expect(buildings.isExpansionBlocked(first)).toBe(true);
+        await step(world, 924, { effects: [sweep] });
+        expect([first, second].map((pos) => buildings.isExpansionBlocked(pos))).toEqual([false, true]);
+
+        world.resources.reset(world);
+        expect(buildings.isExpansionBlocked(second)).toBe(false);
+    });
+
+    it('blocks a townhall target when SC2 rejects its BUILD command with CantBuildLocationInvalid, then retargets', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { buildings, map } = world.resources.get();
+        const [first, second] = map.getAvailableExpansions().map((expansion) => expansion.townhallPosition);
+        const build = buildings.build(UnitType.COMMANDCENTER, { at: first })!;
+        const worker = build.workerTag!;
+        const ACTION_ERROR = 44 as SC2APIProtocol.ActionResult;
+        world.client.action = async (request) => ({ result: (request.actions ?? []).map(() => ACTION_ERROR) });
+
+        await step(world, 900, { edits: { [worker]: { ...at(first), orders: [] } } });
+        expect(buildings.isExpansionBlocked(first)).toBe(true);
+        await step(world, 904);
+        expect([build.target, buildings.isExpansionBlocked(first)]).toEqual([second, true]);
     });
 
     it('retargets gas away from an enemy gas building on the target geyser', async () => {

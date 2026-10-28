@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 import { ATTACK, ATTACK_ATTACK, MOVE } from '../../constants/ability.ts';
+import { placeUnit } from '../../test/behavior-helpers.ts';
 import { createTestWorld } from '../../test/create-test-world.ts';
 import { attackReady, duplicateOrSimilarOrder } from './helpers.ts';
-import type { Unit } from '../../types.ts';
 
 const MARINE = '4354211841';
 const SCV = '4345823233';
@@ -15,18 +15,14 @@ async function fixture() {
     return { world, get };
 }
 
-const place = (unit: Unit, x: number, y: number) => {
-    unit.pos = { x, y, z: unit.pos.z };
-};
-
 describe('combat helpers', () => {
     it('attackReady: ready, or cooling but at least the weapon-ready distance from range; never for an unhittable target', async () => {
         const { get } = await fixture();
         const [marine, ling, scv, overlord] = [get(MARINE), get(LINGS[0]), get(SCV), get(OVERLORD)];
-        place(marine, 14.4, 10.8);
+        placeUnit(marine, 14.4, 10.8);
         const readyAt = (cooldown: number, lingY: number) => {
             marine.weaponCooldown = cooldown;
-            place(ling, 14.4, lingY);
+            placeUnit(ling, 14.4, lingY);
             return attackReady(marine, ling);
         };
 

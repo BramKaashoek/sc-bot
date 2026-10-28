@@ -1,24 +1,22 @@
 import { describe, expect, it } from 'bun:test';
 import { ATTACKING, DEFENDING } from '../constants/unit-role.ts';
 import { MARAUDER, MARINE } from '../constants/unit-type.ts';
-import { createTestWorld, stepTo } from '../test/create-test-world.ts';
+import { createTestWorld, stepWith } from '../test/create-test-world.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
-import { rawUnit } from '../test/factories.ts';
+import { rawUnit, toyFixture } from '../test/factories.ts';
 
 type Placed = [tag: string, x: number, y: number, unitType?: number];
 
-async function stepWith(world: TestWorld, gameLoop: number, placed: Placed[]) {
-    const responseObservation = structuredClone(world.client.fixture.observations[896]);
-    responseObservation.observation!.gameLoop = gameLoop;
-    responseObservation.observation!.rawData!.units!.push(
-        ...placed.map(([tag, x, y, unitType = MARINE]) => rawUnit({ tag, unitType, pos: { x, y, z: 10 } })),
+const stepPlaced = (world: TestWorld, gameLoop: number, placed: Placed[]) =>
+    stepWith(
+        world,
+        gameLoop,
+        placed.map(([tag, x, y, unitType = MARINE]) => rawUnit({ tag, unitType, pos: { x, y, z: 10 } })),
     );
-    await stepTo(world, responseObservation);
-}
 
 async function squadWorld(placed: Placed[]) {
     const world = await createTestWorld('blueshift', { loop: 896 });
-    await stepWith(world, 900, placed);
+    await stepPlaced(world, 900, placed);
     const { roles, squads } = world.resources.get();
     roles.assign(
         placed.map(([tag]) => tag),
@@ -47,7 +45,7 @@ describe('squads', () => {
         expect(squads.getSquads(ATTACKING)).toBe(first);
         expect(squads.getMainSquadPosition(ATTACKING)).toEqual({ x: 91 / 3, y: 91 / 3 });
 
-        await stepWith(world, 904, [
+        await stepPlaced(world, 904, [
             ['a1', 30, 30],
             ['a2', 31, 30],
             ['a3', 45, 45],
@@ -83,7 +81,7 @@ describe('squads', () => {
             ['y1', 80, 36],
         ];
         const squadsAt = async (gameLoop: number) => {
-            await stepWith(world, gameLoop, converged);
+            await stepPlaced(world, gameLoop, converged);
             return summary(squads.getSquads(ATTACKING)).map(({ id, tags }) => [id, tags]);
         };
 
@@ -117,8 +115,18 @@ describe('squads', () => {
         expect(squads.getMainSquadPosition(ATTACKING, { types: MARINE })).toEqual({ x: 30, y: 30 });
 
         roles.clear('m1');
-        await stepWith(world, 904, [['r1', 60, 60, MARAUDER]]);
+        await stepPlaced(world, 904, [['r1', 60, 60, MARAUDER]]);
         expect(squads.getMainSquadPosition(ATTACKING, { types: MARINE })).toEqual({ x: 30, y: 30 });
-        expect(squads.getMainSquadPosition(DEFENDING)).toEqual(world.resources.get().map.getMain().townhallPosition);
+        expect(squads.getMainSquadPosition(DEFENDING)).toEqual(world.resources.get().map.getMain()!.townhallPosition);
+    });
+
+    it('throws a clear error when there is no main squad, main expansion or own base', async () => {
+        const world = await createTestWorld(toyFixture({ ownTownhall: false }));
+        const { map, squads } = world.resources.get();
+        map._expansions = [];
+
+        expect(() => squads.getMainSquadPosition(ATTACKING)).toThrow(
+            'getMainSquadPosition: no main squad, main expansion or own base',
+        );
     });
 });
