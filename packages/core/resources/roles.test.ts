@@ -56,7 +56,7 @@ describe('roles', () => {
 
         roles.clear(SCVS[0]);
         roles.assign(MARINE_TAG, ATTACKING);
-        await stepTo(world, withDead(observationAt(world, 904, { hide: [MARINE_TAG] }), [SCVS[1]]));
+        await stepTo(world, withDead(observationAt(world, 904, { hide: [MARINE_TAG, SCVS[1]] }), [SCVS[1]]));
         expect(roles.roleOf(SCVS[0])).toBeUndefined();
         expect(roles.roleOf(SCVS[1])).toBeUndefined();
         expect(roles.roleOf(MARINE_TAG)).toBe(ATTACKING);

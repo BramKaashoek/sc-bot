@@ -93,11 +93,11 @@ The supply a unit adds, net for morphs.
 
 Enough supply left (always `true` for a cost of 0).
 
-#### `agent.canAfford(unitType: number, earmarkName?: string | null, opts?: { count = 1, supply = false }) => boolean`
+#### `agent.canAfford(unitType: number, opts?: { earmark?: string | null, count = 1, supply = false }) => boolean`
 
-Net-cost minerals and gas for `count` of `unitType`, respecting earmarks (see [resources.md](./resources.md#earmarks)). With `supply: true` it also needs `count` times `calculateSupplyCost` supply left. With an `earmarkName` it settles that earmark when the answer is `true`.
+Net-cost minerals and gas for `count` of `unitType`, respecting earmarks (see [resources.md](./resources.md#earmarks)). With `supply: true` it also needs `count` times `calculateSupplyCost` supply left. With an `earmark` name it settles that earmark when the answer is `true`. It is a point-in-time check that reserves nothing: `actions.build` and `actions.train` re-check and throw if something spent the money in between (an `await` between check and call, or several checks before the first spend), so re-check after any `await` and check inside the loop when issuing several orders.
 
-#### `agent.canAffordUpgrade(upgradeId: number, earmarkName?: string | null) => boolean`
+#### `agent.canAffordUpgrade(upgradeId: number, opts?: { earmark?: string | null }) => boolean`
 
 Like `canAfford`, for upgrades.
 
@@ -124,8 +124,7 @@ Handlers must return a promise (declare them `async`); the engine waits for all 
 | `onUnitCreated` | An own unit with a new tag appears (structures included; fires for the starting units too) | `Unit` |
 | `onUnitFinished` | An own unit's build progress reached 1 | `Unit` |
 | `onUnitIdle` | A unit's order queue became empty, or a new own unit has no orders | `Unit` |
-| `onUnitDamaged` | An own unit lost health or shield | `Unit` |
-| `onUnitTookDamage` | Same moment as `onUnitDamaged` | `UnitDamage`: `{ unit, amount }`, health plus shield lost since last frame |
+| `onUnitTookDamage` | An own unit lost health or shield | `UnitDamage`: `{ unit, amount }`, health plus shield lost since last frame |
 | `onUnitDestroyed` | A tracked unit died (own, enemy or neutral) | `Unit` |
 | `onUnitIsTransforming` | A unit's type changed | `Unit` |
 | `onUnitTypeChanged` | An own unit's type changed (morphs, sieging, lowering depots) | `UnitTypeChange`: `{ unit, previousType }` |
@@ -134,9 +133,7 @@ Handlers must return a promise (declare them `async`); the engine waits for all 
 | `onEnemyFirstSeen` | An enemy tag is seen for the first time. A tag that [memory](./units.md#memory) forgot and that is seen again doesn't fire it again. | `Unit` |
 | `onEnemyUnitEnteredVision` | An enemy is visible now but wasn't last frame (first sightings included) | `Unit` |
 | `onEnemyUnitLeftVision` | An enemy was visible last frame but isn't now. It stays in `units` as a ghost until [memory](./units.md#memory) forgets it (30 s by default). | `Unit` |
-| `onBuildingConstructionStarted` | A new own structure appears unfinished | `Unit` |
-| `onBuildingConstructionComplete` | An own structure finishes, or a new one appears already finished | `Unit` |
-| `onStructureConstructionStarted` | An own unit is an unfinished structure and wasn't a structure last frame: a new unfinished structure, or a unit that turned into one while keeping its tag. On SC2 4.10 a drone's building gets a new tag (the drone leaves the observation and is reported destroyed when the building finishes), so for drones this fires together with `onBuildingConstructionStarted`, with the building as `data`. | `Unit` |
+| `onStructureConstructionStarted` | An own unit is an unfinished structure and wasn't a structure last frame: a new unfinished structure, or a unit that turned into one while keeping its tag. On SC2 4.10 a drone's building gets a new tag (the drone leaves the observation and is reported destroyed when the building finishes), so for drones this fires with the building as `data`. | `Unit` |
 | `onStructureConstructionComplete` | An own structure finishes, or a structure is first seen already finished (the starting townhall, debug-spawned buildings) | `Unit` |
 | `onUnitSpawned` | An own non-structure unit is seen for the first time; once per tag per game, even if it later disappears from the observation (loaded into a transport, say) | `Unit` |
 | `onNewEffect` / `onExpiredEffect` | An effect (a storm, say) appeared / ended | The effect merged with its effect data (`onNewEffect` also has `effectGrid`) |
@@ -144,7 +141,7 @@ Handlers must return a promise (declare them `async`); the engine waits for all 
 | `onEnemyRaceDetected` | A random opponent's race was identified, from the first enemy unit alive. Once per game; never fires when the race was known at game start. Agent systems see it in the step it is detected, the agent's own handler in the next one. | `SC2APIProtocol.Race` |
 | `onEnemyStrategyDetected` | [intel](./combat.md#intel) detects a strategy flag for the first time this game, in the same step | `EnemyStrategyDetected`: `{ flag, gameLoop }` |
 
-`onStructureConstructionStarted`, `onStructureConstructionComplete` and `onUnitSpawned` correspond to python-sc2's `on_building_construction_started`, `on_building_construction_complete` and `on_unit_created`. The other events keep node-sc2's behaviour. Several occurrences fire more than one event: a new structure fires `onUnitCreated`, `onBuildingConstruction*` and `onStructureConstruction*`; damage fires `onUnitDamaged` and `onUnitTookDamage`.
+`onStructureConstructionStarted`, `onStructureConstructionComplete` and `onUnitSpawned` correspond to python-sc2's `on_building_construction_started`, `on_building_construction_complete` and `on_unit_created`. The other events keep node-sc2's behaviour. `onUnitCreated` fires for every new own unit, structures included; `onUnitSpawned` only for non-structures. A new structure fires `onUnitCreated` and `onStructureConstruction*`.
 
 ```ts
 import { createAgent } from '@sc-bot/core';

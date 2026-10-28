@@ -1,5 +1,6 @@
 import { cellCentre } from '../utils/grid/cell.ts';
 import { createAStar } from '../utils/pathing/astar.ts';
+import { smoothPath } from '../utils/pathing/smooth.ts';
 import type { InfluenceGrid, InfluenceLayer, Point2D, ResourceDefinition } from '../types.ts';
 
 const RETARGET_RADIUS = 3;
@@ -74,7 +75,13 @@ export const pathingResource: ResourceDefinition<'pathing'> = {
             return astar;
         };
 
-        const pathIndices = (grid: InfluenceGrid, start: Point2D, goal: Point2D, maxExpanded?: number) => {
+        const pathIndices = (
+            grid: InfluenceGrid,
+            start: Point2D,
+            goal: Point2D,
+            maxExpanded?: number,
+            smoothing = false,
+        ) => {
             if (grid.width === 0 || grid.height === 0) return null;
             const startIndex = clampedIndex(grid, start);
             let goalIndex = clampedIndex(grid, goal);
@@ -82,13 +89,18 @@ export const pathingResource: ResourceDefinition<'pathing'> = {
                 goalIndex = closestFinite(grid, goalIndex, RETARGET_RADIUS);
                 if (goalIndex === -1) return null;
             }
-            return astarFor(grid).findPath(grid.data, startIndex, goalIndex, maxExpanded);
+            const path = astarFor(grid).findPath(grid.data, startIndex, goalIndex, maxExpanded);
+            if (!smoothing || !path) return path;
+            const withStart = new Int32Array(path.length + 1);
+            withStart[0] = startIndex;
+            withStart.set(path, 1);
+            return smoothPath(withStart, grid.data, grid.width).subarray(1);
         };
 
         return {
-            findPath(start, goal, { layer, maxExpanded, sensitivity = 1 } = {}) {
+            findPath(start, goal, { layer, maxExpanded, sensitivity = 1, smoothing } = {}) {
                 const grid = resolve(layer);
-                const path = pathIndices(grid, start, goal, maxExpanded);
+                const path = pathIndices(grid, start, goal, maxExpanded, smoothing);
                 if (!path) return [];
                 const step = Math.max(1, Math.floor(sensitivity));
                 const points: Point2D[] = [];
@@ -132,6 +144,7 @@ export const pathingResource: ResourceDefinition<'pathing'> = {
                     layer,
                     maxExpanded,
                     sensitivity = 5,
+                    smoothing,
                     senseDanger = true,
                     dangerDistance = 20,
                     dangerThreshold = 5,
@@ -139,7 +152,7 @@ export const pathingResource: ResourceDefinition<'pathing'> = {
             ) {
                 const grid = resolve(layer);
                 if (senseDanger && !hasDangerNear(grid, start, dangerDistance, dangerThreshold)) return goal;
-                const path = pathIndices(grid, start, goal, maxExpanded);
+                const path = pathIndices(grid, start, goal, maxExpanded, smoothing);
                 if (!path || path.length === 0) return goal;
                 return cellCentre(path[Math.min(Math.max(1, sensitivity), path.length) - 1], grid.width);
             },

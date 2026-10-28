@@ -60,13 +60,20 @@ Where ares-sc2 does something this library deliberately doesn't, or the reverse.
 - **`buildGas` geyser pick.** It takes the free geyser closest to one of your townhalls ([buildings](macro.md#buildings)).
 - **Mining.** Assignments and safe fields are recomputed every step (ares: every fourth), and with `speedMining` mineral workers get `MOVE` plus a queued `SMART`, not `HARVEST_GATHER`/`HARVEST_RETURN` ([mining](macro.md#mining)).
 
+### Creep
+
+- **Kept from ares.** The first tile `nextTumorOnPath` finds is returned unchecked with `findAlternative: false`; it stops at the first path point that passes (no later point is tried when the crowded fallback finds nothing); `minSeparation` doubles as the radius of the alternative search; results are integer tile corners, not cell centres.
+- **All townhall types.** The 3.5 enemy and 2.5 own townhall clearances apply to every townhall type (ares: hatchery only).
+- **Both tumor orders.** A queen's pending target counts as occupied for `BUILD_CREEPTUMOR` as well as `BUILD_CREEPTUMOR_QUEEN`.
+- **Spread gate.** `shouldSpreadTumors` fires when `coverage / 2` loops have passed since it last fired (ares: a modulo of the game loop); every caller in a firing loop gets `true`.
+
 ### Build orders and openings
 
 - **JSON, not YAML.** The config file is JSON (`sc-bot.config.json`) with a fixed set of keys, where ares reads YAML. Openings live in that file under `resources.openings` (or in the blueprint), and placements are plain objects with no YAML loader.
 - **Strict order, no look-ahead.** A step runs only when every step before it is done; ares may run a later step when minerals are above 470.
 - **Fill workers by default.** With supply tuples the builder trains workers until a step's supply is reached, as it always has; ares' supply gate (no insertion, a step waits for its supply) is `buildOptions.fillWorkers: false`, and an opening with `constantWorkerProductionTill` sets it.
 - **Proxies use query placement.** An enemy-side or `MAP_CENTER` target is placed with `actions.findPlacement`, not the solver ([Build targets](build-orders.md#build-targets)).
-- **No gas-steal step.** `GAS` always builds on your own geysers, even with a target, and nothing reacts to the enemy taking your gas. `ENEMY_NAT_HG_SPOT` isn't supported ([String steps](build-orders.md#string-steps)), the overlord-spot follow-up after an overlord scout isn't ported, and the Protoss build doesn't start at `supply - 1`.
+- **No gas-steal step.** `GAS` always builds on your own geysers, even with a target, and nothing reacts to the enemy taking your gas. The overlord-spot follow-up after an overlord scout isn't ported, and the Protoss build doesn't start at `supply - 1`.
 - **Scout waypoints.** Waypoints the inset pushes outside the region are dropped, where ares keeps them ([Build targets](build-orders.md#build-targets)).
 - **`NAT_WALL` with enemies at the main ramp.** It keeps its wall flag, where ares drops it ([Build targets](build-orders.md#build-targets)).
 - **Unknown upgrades.** A step naming an upgrade that isn't in the game data fails at game start; see [String steps](build-orders.md#string-steps).
@@ -97,7 +104,7 @@ Bug fixes that changed a signature or a failure mode:
 - Point targets with `x === 0` are no longer silently dropped by `actions.do`, `smart`, `move` and `build`.
 - `units.clone()` keeps each unit's labels.
 - The agent's own `onGameStart` and `onStep` now also receive `(data, event)` after `world`, and `onGameStart` keeps an `agent.opponent.id` set before the game (it used to wipe the ladder's `--OpponentId`). Under a ladder manager the engine sets the id from `--OpponentId` at setup only when it is passed, so a preset id survives otherwise.
-- Units whose death SC2 reports are labelled `dead` as before, and dead enemies are now also removed from the unit store, since enemies are otherwise kept as memory.
+- Units whose death SC2 reports are labelled `dead` as before, and dead own and enemy units are now also removed from the unit store (enemies are otherwise kept as memory).
 
 Type changes that can stop existing code from compiling:
 

@@ -3,6 +3,7 @@ import { Race } from '../../constants/enums.ts';
 import { GHOST } from '../../constants/unit-type.ts';
 import { isFlying } from '../../utils/geometry/units.ts';
 import { distance, distanceSquared, towards } from '../../utils/geometry/point.ts';
+import { totalSupply } from '../../utils/units/supply.ts';
 import { useAOEAbility } from './aoe.ts';
 import { layerFor } from './helpers.ts';
 import type { Behavior, InfluenceGrid, InfluenceLayer, Point2D, Unit, World } from '../../types.ts';
@@ -16,7 +17,6 @@ const SNIPE_MIN_VALUE = 100;
 
 const distancePerStep = (unit: Unit, world: World) =>
     (unit.realSpeed() / GAME_STEPS_PER_SECOND) * world.config.gameStep;
-const supplyOf = (units: Unit[]) => units.reduce((sum, unit) => sum + (unit.data().foodRequired ?? 0), 0);
 
 function nextPosition(
     from: Point2D,
@@ -195,7 +195,7 @@ export function ravenAutoTurret({ unit, allCloseEnemy }: { unit: Unit; allCloseE
 
             const enemies = allCloseEnemy.filter((enemy) => !enemy.isStructure());
             if (enemies.length <= 1) return false;
-            if (supplyOf(enemies) <= 3) return unit.isUsingAbility(EFFECT_AUTOTURRET);
+            if (totalSupply(enemies) <= 3) return unit.isUsingAbility(EFFECT_AUTOTURRET);
 
             const closest = enemies.reduce((best, enemy) =>
                 distanceSquared(enemy.pos, unit.pos) < distanceSquared(best.pos, unit.pos) ? enemy : best,

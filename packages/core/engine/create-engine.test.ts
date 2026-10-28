@@ -280,8 +280,15 @@ describe('engine game loop', () => {
         ).rejects.toBeInstanceOf(NodeSC2Error);
 
         const { client } = createLobbyClient();
-        const created = await createEngine({ client, launch: false }).createGame(MAP, computers);
+        const requests: SC2APIProtocol.RequestCreateGame[] = [];
+        const { createGame } = client;
+        client.createGame = async (request) => {
+            requests.push(request);
+            return createGame(request);
+        };
+        const created = await createEngine({ client, launch: false }).createGame(MAP, computers, { realtime: true });
         expect(created).toBeDefined();
+        expect(requests).toMatchObject([{ realtime: true }]);
 
         const refused = createLobbyClient().client;
         refused.createGame = async () => ({ error: 4, errorDetails: 'Battle.net map not found' });

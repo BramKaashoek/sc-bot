@@ -3,7 +3,6 @@ import { Ability, Buff, UnitType } from '../constants/index.ts';
 import { Alliance, Attribute, DisplayType, Race, WeaponTargetType } from '../constants/enums.ts';
 import { createTestWorld } from '../test/create-test-world.ts';
 import { rawUnit, toyFixture, toyWorld, unitTypeData } from '../test/factories.ts';
-import { NodeSC2Error } from '../engine/errors.ts';
 import { Units } from './units-collection.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
 import type { Unit } from '../types.ts';
@@ -27,9 +26,9 @@ describe('Units', () => {
         const originUnit = world.resources.get().units.getByTag(origin.tag!)!;
         const point = { x: 10, y: 10 };
 
-        expect(group.closestTo(point).tag).toBe(near.tag);
-        expect(group.closestTo(originUnit).tag).toBe(near.tag);
-        expect(group.furthestTo(point).tag).toBe(farthest.tag);
+        expect(group.closestTo(point)?.tag).toBe(near.tag);
+        expect(group.closestTo(originUnit)?.tag).toBe(near.tag);
+        expect(group.furthestTo(point)?.tag).toBe(farthest.tag);
         expect(group.closestDistanceTo(point)).toBe(1);
         expect(group.closestDistanceTo(originUnit)).toBe(1);
         expect(group.furthestDistanceTo(point)).toBe(12);
@@ -37,7 +36,8 @@ describe('Units', () => {
         expect(tagsOf(group.furtherThan(10, originUnit))).toEqual([farthest.tag]);
         expect(tagsOf(group.inDistanceBetween(point, 1, 10))).toEqual([mid.tag]);
         expect(tagsOf(group.closestNUnits(point, 2))).toEqual([near.tag, mid.tag]);
-        expect(tagsOf(group.furthestNUnits(point, 2))).toEqual([far.tag, farthest.tag]);
+        expect(tagsOf(group.furthestNUnits(point, 2))).toEqual([farthest.tag, far.tag]);
+        expect(group.furthestNUnits(point, 3)[0].tag).toBe(group.furthestTo(point)!.tag);
         expect(tagsOf(group.furthestNUnits(point, 0))).toEqual([]);
         expect(tagsOf(group.sortedByDistanceTo(point))).toEqual([near.tag, mid.tag, far.tag, farthest.tag]);
         expect(tagsOf(group.sortedByDistanceTo(originUnit, true))).toEqual([farthest.tag, far.tag, mid.tag, near.tag]);
@@ -49,7 +49,7 @@ describe('Units', () => {
         expect(tagsOf(group.nFurthestToDistance(point, 6, 2))).toEqual([near.tag, farthest.tag]);
         expect(group.nFurthestToDistance(point, 6, 0)).toHaveLength(0);
         expect(group.nFurthestToDistance(point, 6, -1)).toHaveLength(0);
-        expect(group.inClosestDistanceToGroup(Units.from([originUnit])).tag).toBe(near.tag);
+        expect(group.inClosestDistanceToGroup(Units.from([originUnit]))?.tag).toBe(near.tag);
     });
 
     it('selects units inside the attack range of a unit, including radii and bonus distance', async () => {
@@ -145,8 +145,6 @@ describe('Units', () => {
         ]);
         expect(group.findByTag(orbital.tag!)?.tag).toBe(orbital.tag);
         expect(group.findByTag('missing')).toBeUndefined();
-        expect(group.byTag(fortress.tag!).tag).toBe(fortress.tag);
-        expect(() => group.byTag('missing')).toThrow();
         expect(group.tags).toEqual(new Set((raws as Unit[]).map((unit) => unit.tag)));
         expect(tagsOf(collect(world, [commandCenter, orbital]).union(collect(world, [orbital, worker])))).toEqual([
             commandCenter.tag,
@@ -200,6 +198,10 @@ describe('Units', () => {
         expect(tagsOf(group.returning)).toEqual([returner.tag]);
         expect(tagsOf(group.collecting)).toEqual([gatherer.tag, returner.tag]);
         expect(tagsOf(collect(world, [mule]).gathering)).toEqual([mule.tag]);
+        const everyone = collect(world, [gatherer, returner, returnsLater, mule, depot, snapshot]);
+        expect(tagsOf(everyone.gathering)).toEqual(tagsOf(everyone.filter((unit) => unit.isGathering())));
+        expect(tagsOf(everyone.returning)).toEqual(tagsOf(everyone.filter((unit) => unit.isReturning())));
+        expect(tagsOf(everyone.collecting)).toEqual(tagsOf(everyone.filter((unit) => unit.isCollecting())));
         expect(tagsOf(group.ready)).toEqual([gatherer.tag, returner.tag, returnsLater.tag, snapshot.tag]);
         expect(tagsOf(group.notReady)).toEqual([depot.tag]);
         expect(tagsOf(group.visible)).toEqual([gatherer.tag, returner.tag, returnsLater.tag, depot.tag]);
@@ -251,19 +253,29 @@ describe('Units', () => {
         expect(tagsOf(group)).toEqual(tagsOf(raws as Unit[]));
         expect(filtered).toBeInstanceOf(Units);
         expect(sliced).toBeInstanceOf(Units);
-        expect(group.map((unit) => unit).first.tag).toBe(raws[0].tag);
+        expect(group.map((unit) => unit).first?.tag).toBe(raws[0].tag);
         expect(group.flatMap((unit) => [unit]).amount).toBe(3);
         expect(Object.getPrototypeOf(group.map((unit) => unit.tag))).toBe(Array.prototype);
         expect(Object.getPrototypeOf(group.flatMap((unit) => [unit.tag, unit]))).toBe(Array.prototype);
-        expect(group.slice().reverse().first.tag).toBe(raws[2].tag);
+        expect(group.slice().reverse().first?.tag).toBe(raws[2].tag);
         expect(group.copy().splice(1).amount).toBe(2);
         const spliced = group.copy();
         spliced.splice(0, undefined);
         expect(spliced.amount).toBe(3);
-        expect(filtered.closestTo({ x: 6, y: 6 }).tag).toBe(raws[1].tag);
-        expect(sliced.furthestTo({ x: 0, y: 0 }).tag).toBe(raws[2].tag);
-        expect(() => group.filter((unit) => unit.pos.x > 100).first).toThrow(NodeSC2Error);
-        expect(() => group.filter((unit) => unit.pos.x > 100).first).toThrow('Units object is empty');
+        expect(filtered.closestTo({ x: 6, y: 6 })?.tag).toBe(raws[1].tag);
+        expect(sliced.furthestTo({ x: 0, y: 0 })?.tag).toBe(raws[2].tag);
+        const none = group.filter((unit) => unit.pos.x > 100);
+        const origin = { x: 0, y: 0 };
+        expect(none.first).toBeUndefined();
+        expect(none.random).toBeUndefined();
+        expect(none.center).toBeUndefined();
+        expect(none.closestTo(origin)).toBeUndefined();
+        expect(none.furthestTo(origin)).toBeUndefined();
+        expect(none.inClosestDistanceToGroup(group)).toBeUndefined();
+        expect(group.inClosestDistanceToGroup(none)).toBeUndefined();
+        expect(none.closestDistanceTo(origin)).toBe(Infinity);
+        expect(none.furthestDistanceTo(origin)).toBe(-Infinity);
+        expect(group.inDistanceOfGroup(none, 5).amount).toBe(0);
         expect(group.randomGroupOf(0).amount).toBe(0);
         expect(group.randomGroupOf(5)).toEqual(group);
         expect(group.randomGroupOf(5)).not.toBe(group);

@@ -91,6 +91,20 @@ describe('group combat behaviors', () => {
         );
         expect(around.pos).not.toEqual(direct.pos);
         expect(walled.get(around.pos!)).toBe(1);
+
+        const [, [smooth]] = await runGroup(
+            world,
+            pathGroupToTarget({
+                start: position,
+                group,
+                target,
+                layer: walled,
+                sensitivity: 3,
+                smoothing: true,
+                preventDuplicate: false,
+            }),
+        );
+        expect(smooth.pos).not.toEqual(around.pos);
     });
 
     it('keepGroupSafe moves only the endangered units and false when all are safe', async () => {

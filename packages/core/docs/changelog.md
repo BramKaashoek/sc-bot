@@ -16,6 +16,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `commandResults` event and `onCommandResults(world, results: CommandResult[])` handler: the step after each flush, per proposal and outcome, `won`, `dropped` (`outranked` with the winner in `by`, or `repeat`) or `rejected` (SC2's `result`, or the request's `error`).
 - `queueAction(commands, { onNotSent })`: called during the flush for tags that weren't sent.
 - `CommandResult` and `CommandContext` types.
+- `actions.unloadByTag(container, passengerTag)`: raw and not arbitrated, sent immediately like `sendAction`.
 
 **Changed**
 - `actions.attack`, `attackMove`, `move`, `smart`, `patrol`, `gather`, `mine`, `build`, `buildGasMine`, `train`, `upgrade`, `warpIn`, `do`, `stop`, `holdPosition`, `repair`, `returnResource` and the `Unit` shortcuts (`useAbility`, `inject`, `blink`, `burrow`, `toggle`) resolve with `void` once the command is proposed, instead of with `ResponseAction` after SC2 accepted it. They no longer reject when SC2 refuses the command; that is reported through `onCommandResults` and logged on `sc2:debug:actionManager`. Precondition errors (`BuildError`, `TrainError`, `GatherError`, `ActionManagerError`) still reject.
@@ -49,6 +50,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `spatial` resource: `unitsInRange`, `anyInRange` and `closest` over enemies (ghosts included) and own units, by kind (`enemy`, `enemyGround`, `enemyAir`, `own`, `ownGround`, `ownAir`).
 - `influence` resource: ground, air, ground avoidance and air avoidance cost grids from enemy units and effects; `getGrid`, `addCost`, `configure`, `drawDebug`.
 - `pathing` resource: `findPath`, `nextPoint`, `closestSafeSpot` and `isPositionSafe` over the influence grids.
+- `creep` resource: creep tiles, edges and coverage, `findEdgePosition`, `nextTumorOnPath`, `randomPosition`, `tumorLowestCostPosition`, `shouldSpreadTumors`, `overlordSpotterPositions`, `blocksExpansion`; deviations from ares are listed in [compatibility](compatibility.md#creep).
+- `smoothing` (default `false`) on `findPath`, `nextPoint`, `pathUnitToTarget`, `moveToSafeTarget` and `pathGroupToTarget`: the SC2MapAnalysis path smoothing. `findLowPriorityPath` never smooths.
 - `units.getArmyValue(alliance, { includePending, includeGhosts })`.
 - `ResourceDefinition.onStep`: a per-step hook for registered resources, run after the engine systems and before agent code.
 
@@ -113,6 +116,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `placement` resource: Terran and Protoss building spots solved once per game (add-on room for 3x3 spots, mineral lines avoided, main ramp wall, natural bunker; Protoss wall, pylon and optimal-pylon spots), `request` with flags, reservations and powered requests, `reserve`, `release`, `canPlace`, `getPlacements`, `add`, `configure`, `drawDebug`. Per-map spots through the optional `placer.placements(world)` hook.
 - `buildings` resource, the building tracker: `build`, `buildGas`, `cancel`, `pending`, `getTracked`, `configure`. It picks the spot and worker, retries dropped commands, re-places a failing building, replaces a dead builder, times builds out, resumes unfinished Terran structures (after the first `build` or `buildGas` call of a game that returns a build) and cancels structures that drop below `max(50, 9% of max health)` (`cancelLowHp`: `'tracked'` by default, `'all'`, `'off'`).
 - `mining` resource, off until `mining.configure({ enabled: true })`: worker assignment for `GATHERING` workers, speed mining, danger avoidance, self-defence and long-distance mining. `selectWorker`, `release`, `getAssignment`, `getWorkersOn`, `getMineralTarget`, `isEnabled`, `configure`.
+- `speedMining` behavior, `mining.selectWorker`'s `minShield` (Protoss only) and `spatial.anyInRangeBatch`.
 - `flying` resource: `move`, `swap`, `addonSwap`, `cancel`, `getPlans`, `configure`; per-step lift, fly and land plans.
 - Types: `BuildingSize`, `PlacementFlag`, `PlacementState`, `Placement`, `PlacementRequest`, `UserPlacement`, `PlacementSettings`, `PlacementResource`, `TrackedBuild`, `TrackedBuildStatus`, `BuildOptions`, `BuildingSettings`, `BuildingTracker`, `MiningSettings`, `MiningAssignment`, `MiningResource`, `FlightPlan`, `FlyingStructures`, `Placer.placements`.
 
@@ -169,7 +173,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Task functions `taskFunctions.scout(kind, waypoints?)` and `taskFunctions.addonSwap(host, addon)`, and `opts.at` on `build` and `train` tasks (`train` uses the producer closest to the target).
 - Worker and overlord scouts: the worker takes the role `BUILD_RUNNER_SCOUT` (through `mining.selectWorker` when mining is on) and keeps it.
 - `buildOptions.fillWorkers` on a build system (default `true`): `false` is ares' supply-gate mode, with no worker insertion and each step waiting for its supply.
-- Openings: a build system takes `openings` (named definitions or `'config'`) and `opening` (a name or a function), with `switchOpening(name, { removeCompleted })` and `getOpening()`. Options per opening: `constantWorkerProductionTill`, `autoSupplyAtSupply` and `persistentWorker` (a `PERSISTENT_BUILDER` worker for the opening's builds).
+- Openings: a build system takes `openings` (named definitions or `'config'`) and `opening` (a name or a function), with `switchOpening(name, { removeCompleted })` and `getOpening()`. Options per opening: `constantWorkerProductionTill`, `autoSupplyAtSupply`, `persistentWorker` (a `PERSISTENT_BUILDER` worker for the opening's builds) and `shouldHandleGasSteal` (a `GAS_STEAL_PREVENTER` guard on each free main geyser while enemy workers are in the main; `false` turns it off).
 - `openings` resource: definitions and settings (`builds`, `choices`, `method` `'cycle'` or `'winrate'`, `minGames`, `dataDir`), `choose`, `getChosen`, `getHistory`, `getDefinitions`, `configure`. Settings come from the config file's `resources.openings`. With `dataDir` set, each game is appended to `<dataDir>/<opponent id or 'unknown'>-<race>.json` in ares' format, so an ares `data/` folder is reused. `openings.record` is for the runner and must not be called from a bot.
 - `onGameEnd(resource, world, results)` on resource definitions and `world.resources.endGame(world, results)`: hooks run synchronously in registration order before the engine's own `onGameEnd`, and a throwing hook doesn't stop the next.
 - Types: `BuildTarget`, `BuildOrderStep`, `BuildTaskOptions`, `OpeningDefinition`, `OpeningSettings`, `OpeningRecord`, `OpeningsResource`.
@@ -179,6 +183,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `SystemObject.buildOptions` has the optional `fillWorkers`, and a new game resets it with `paused` and `earmarks`.
 - `ResourceDefinition` has an optional `onGameEnd`, and `ResourceManager` has `endGame`.
 - A game that crashes or loses its connection doesn't call resource game-end hooks (no opening history is written for it), the same as `createEngine`'s `onGameEnd`.
+- `ENEMY_NAT_HG_SPOT` is supported: each resolution takes the nearest overlord spot from `mapAnalysis.takeOverlordSpot` (`getOverlordSpots` lists the rest), so a spot is consumed.
 
 **Upgrading**
 - Nothing breaks; every addition is opt-in and tuple build orders run as before.
@@ -286,6 +291,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - A protocol error response and a request on a closed websocket reject with `NodeSC2Error` (a plain `Error` before).
 - Command options: `queue` is an option, `actions.attack(units, target, { queue })`, on `attack`, `attackMove`, `move`, `smart`, `patrol`, `gather`, `mine`, `stop`, `holdPosition`, `repair` and `returnResource` (it was a trailing boolean). `actions.build(type, target, { worker })` takes the worker in an options object. `actions.do(units, abilityId, { target, queue })` takes the units first and accepts a `Unit`, a tag or an array of them. `actions.mine`'s parameter is `gasMine`. Update call sites: a stale `true` is a type error.
 - Return types say what they return: `map.getMain`, `getNatural`, `getEnemyMain` and `getEnemyNatural`, `data.getAbilityData`, `getUpgradeData` and `getEffectData` and `closestPoint` can be `undefined`; `map.getLocations().self` is `undefined` before the game starts; `frame.getPrevious()` is `GameFrame | undefined`. Nothing returns a different value.
+- Agent and engine call shapes: `agent.train(type, { count, near, idleOnly })` (was `train(type, amount, closestTo, trainOnlyIdleBuildings)`), `agent.canAfford(type, { earmark, count, supply })` and `canAffordUpgrade(upgradeId, { earmark })` (the earmark name was a positional argument), and `engine.createGame(map, players, { realtime, randomSeed, disableFog })` (`realtime` was positional). Update call sites: a stale positional argument is a type error.
+- `units.getAll()` and `getByTag()` no longer return your own units once they die, as they already left out dead enemies. The `Unit` object you hold keeps its `dead` label, and `unitDestroyed` still carries it. Code that looked up a dead own unit by tag gets `undefined`; neutral units that die (mined-out fields, rocks) stay in the store labelled `dead`.
 - `buildings.getNextExpansion`, an untargeted townhall step and a townhall retarget skip a spot another active tracked townhall build is heading to, so two builds no longer pick the same expansion.
 
 **Added**

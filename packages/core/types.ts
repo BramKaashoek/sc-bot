@@ -31,6 +31,7 @@ declare global {
     namespace SC2APIProtocol {
         interface Unit {
             isActive?: boolean;
+            isHallucination?: boolean;
             attackUpgradeLevel?: number;
             armorUpgradeLevel?: number;
             shieldUpgradeLevel?: number;
@@ -82,6 +83,7 @@ export interface SystemObject {
     pauseBuild?: () => void;
     resumeBuild?: () => void;
     buildComplete?: (world: World, gameLoop: number) => Promise<any>;
+    readonly buildCompleted?: boolean;
     idleFunctions?: IdleFunctions;
 }
 
@@ -170,8 +172,8 @@ export interface Agent extends PlayerData {
     onGameStart: (world: World, data?: null, event?: SystemEvent) => Promise<any>;
     onStep?: (resources: World, gameLoop?: number, event?: SystemEvent) => void;
     interface: SC2APIProtocol.InterfaceOptions;
-    canAfford(unitTypeId: number, earmarkName?: string | null, opts?: { count?: number; supply?: boolean }): boolean;
-    canAffordUpgrade: (upgradeId: number, earmarkName?: string | null) => boolean;
+    canAfford(unitTypeId: number, opts?: { earmark?: string | null; count?: number; supply?: boolean }): boolean;
+    canAffordUpgrade: (upgradeId: number, opts?: { earmark?: string | null }) => boolean;
     hasTechFor: (unitTypeId: number) => boolean;
     supplyCap: number;
     supplyUsed: number;
@@ -190,7 +192,7 @@ export interface Agent extends PlayerData {
     getNextExpansion(): Promise<Point2D | null>;
     ownedExpansions(): OwnedExpansion[];
     expandNow(unitTypeId?: number, location?: Point2D): Promise<void>;
-    train(unitTypeId: number, amount?: number, closestTo?: Point2D, trainOnlyIdleBuildings?: boolean): Promise<number>;
+    train(unitTypeId: number, opts?: { count?: number; near?: Point2D; idleOnly?: boolean }): Promise<number>;
     research(upgradeId: number): Promise<boolean>;
     race?: SC2APIProtocol.Race;
     opponent?: Opponent;
@@ -234,7 +236,9 @@ export interface Unit extends SC2APIProtocol.Unit {
     data: () => SC2APIProtocol.UnitTypeData;
     is: (unitType: UnitTypeId) => boolean;
     isCloaked: () => boolean;
-    isConstructing: () => boolean;
+    hasOrder: (abilityIds: AbilityId | AbilityId[]) => boolean;
+    hasBuildOrder: () => boolean;
+    isUnderConstruction: () => boolean;
     isCombatUnit: () => boolean;
     isEnemy: () => boolean;
     isFinished: () => boolean;
@@ -417,7 +421,7 @@ export type MapPathOptions = {
 };
 
 export interface MapResource {
-    _activeEffects: Array<SC2APIProtocol.Effect>;
+    _activeEffects: OwnedEffect[];
     _grids: Grids;
     _locations: Locations;
     _expansions: ReadonlyArray<Expansion>;
@@ -440,7 +444,7 @@ export interface MapResource {
     hasCreep: (point: Point2D) => boolean;
     freeGasGeysers: () => Unit[];
     getCreep: () => Point2D[];
-    getEffects: () => Array<SC2APIProtocol.Effect>;
+    getEffects: () => OwnedEffect[];
     getGrids: () => Grids;
     getLocations: () => Locations;
     getExpansions: (alliance?: SC2APIProtocol.Alliance) => Expansion[];
@@ -458,7 +462,7 @@ export interface MapResource {
     getSize: () => SC2APIProtocol.Size2DI;
     getCenter: (pathable?: boolean) => Point2D;
     closestPathable: (point: Point2D, radius?: number) => Point2D;
-    setActiveEffects: (currEffects: Array<SC2APIProtocol.Effect>) => void;
+    setActiveEffects: (currEffects: OwnedEffect[]) => void;
     setGrids: (grids: Grids) => void;
     setSize: (mapSize: SC2APIProtocol.Size2DI) => void;
     setGraph: (graph?: any) => void;
@@ -743,7 +747,6 @@ export type EventConsumer = {
     onCommandResults?(world: World, results: CommandResult[], event?: SystemEvent): Promise<any>;
     onEnemyStrategyDetected?(world: World, data: EnemyStrategyDetected, event?: SystemEvent): Promise<any>;
     onEnemyRaceDetected?(world: World, race: SC2APIProtocol.Race, event?: SystemEvent): Promise<any>;
-    onUnitDamaged?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
     onUnitCreated?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
     onUnitFinished?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
     onEnemyFirstSeen?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
@@ -753,8 +756,6 @@ export type EventConsumer = {
     onUnitHasSwitchedTargets?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
     onUnitIsTransforming?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
     onUnitHasBurrowed?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
-    onBuildingConstructionStarted?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
-    onBuildingConstructionComplete?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
     onStructureConstructionStarted?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
     onStructureConstructionComplete?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
     onUnitSpawned?(world: World, data: Unit, event?: SystemEvent): Promise<any>;
@@ -1061,6 +1062,8 @@ export type PlacementSettings = { reservationTimeout: number };
 
 export interface PlacementResource {
     request(unitType: number, opts?: PlacementRequest): Point2D | undefined;
+    isPowered(pos: Point2D, opts?: { pylonBuildProgress?: number }): boolean;
+    wouldPower(pylonPos: Point2D, pos: Point2D): boolean;
     reserve(pos: Point2D): boolean;
     release(pos: Point2D): void;
     canPlace(unitType: number, pos: Point2D, opts?: { includeAddon?: boolean }): boolean;
@@ -1409,12 +1412,12 @@ export type EngineOptions = {
 export type GameResult = [World, SC2APIProtocol.PlayerResult[]];
 
 export type CreateGameOptions = {
+    realtime?: boolean;
     randomSeed?: number;
     disableFog?: boolean;
 };
 
 export type RunGameOptions = CreateGameOptions & {
-    realtime?: boolean;
     gameTimeLimit?: number;
     saveReplayAs?: string;
 };
@@ -1467,7 +1470,6 @@ export interface Engine {
     createGame: (
         map?: string,
         playerSetup?: SC2APIProtocol.PlayerSetup[],
-        realtime?: boolean,
         options?: CreateGameOptions,
     ) => Promise<SC2APIProtocol.ResponseCreateGame | undefined>;
     joinGame: (agent: Agent, options?: object) => Promise<GameResult>;

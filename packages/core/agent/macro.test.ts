@@ -2,7 +2,7 @@ import { describe, expect, it, spyOn } from 'bun:test';
 import createAgent from './create-agent.ts';
 import { Ability, UnitType, Upgrade } from '../constants/index.ts';
 import { Alliance, Attribute, Race } from '../constants/enums.ts';
-import { createTestWorld, loadFixture, stepTo } from '../test/create-test-world.ts';
+import { createTestWorld, loadFixture, observationAt, stepTo } from '../test/create-test-world.ts';
 import { observation, rawUnit, toyWorld } from '../test/factories.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
 import type { CommandResult, Point2D, Unit } from '../types.ts';
@@ -287,7 +287,7 @@ describe('agent macro helpers', () => {
             world,
             world.client.fixture.observations[896],
             async () => [
-                await agent.train(UnitType.MARINE, 2),
+                await agent.train(UnitType.MARINE, { count: 2 }),
                 await actions.do('4342677505', Ability.TRAIN_SCV).then(() => agent.train(UnitType.SCV)),
                 await agent.research(Upgrade.STIMPACK),
                 await agent.research(Upgrade.SHIELDWALL),
@@ -338,7 +338,7 @@ describe('agent macro helpers', () => {
             await agent.research(Upgrade.ZERGLINGATTACKSPEED),
             await agent.train(UnitType.GHOST),
             await agent.research(Upgrade.STIMPACK),
-            await agent.train(UnitType.MARINE, 5),
+            await agent.train(UnitType.MARINE, { count: 5 }),
         ]);
 
         expect(results).toEqual([false, false, 1, false, 3]);
@@ -357,7 +357,7 @@ describe('agent macro helpers', () => {
         await stepTo(world, supplyCapped);
         expect(
             await commandsAfterStep(world, supplyCapped, async () => [
-                await agent.train(UnitType.MARINE, 5),
+                await agent.train(UnitType.MARINE, { count: 5 }),
                 await agent.research(Upgrade.TERRANVEHICLEANDSHIPARMORSLEVEL1),
             ]),
         ).toEqual({
@@ -427,6 +427,24 @@ describe('agent macro helpers', () => {
         });
     });
 
+    it('trains from the producer nearest the near point rather than the default order', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const raxes = [
+            rawUnit({ tag: 'far', unitType: UnitType.BARRACKS, pos: { x: 150, y: 150, z: 10 }, buildProgress: 1 }),
+            rawUnit({ tag: 'close', unitType: UnitType.BARRACKS, pos: { x: 60, y: 60, z: 10 }, buildProgress: 1 }),
+        ];
+        const stocked = observationAt(world, 900, { add: raxes });
+        stocked.observation!.playerCommon!.minerals = 500;
+        stocked.observation!.playerCommon!.foodCap = 100;
+        await stepTo(world, stocked);
+
+        const { results, commands } = await commandsAfterStep(world, observationAt(world, 904), () =>
+            world.agent.train(UnitType.MARINE, { near: { x: 60, y: 60 } }),
+        );
+
+        expect({ results, tags: commands.map(({ tag }) => tag) }).toEqual({ results: 1, tags: ['close'] });
+    });
+
     it('queues every macro command for one request after the step under the calling commander, not ordering a queued producer twice', async () => {
         const agent = createAgent();
         const world = await createTestWorld('blueshift', { loop: 224, agent, onQuery: straightLinePathing });
@@ -438,8 +456,8 @@ describe('agent macro helpers', () => {
             actions.as({ owner: 'Macro' }, async () => {
                 await agent.expandNow();
                 const trained = [
-                    await agent.train(UnitType.SCV, 1, undefined, false),
-                    await agent.train(UnitType.SCV, 1, undefined, false),
+                    await agent.train(UnitType.SCV, { idleOnly: false }),
+                    await agent.train(UnitType.SCV, { idleOnly: false }),
                 ];
                 expect(world.client.sent.actions.length).toBe(sentBefore);
                 return trained;
@@ -516,7 +534,7 @@ describe('agent macro helpers', () => {
 
         const supplyBlocked = await early.agent.train(UnitType.ZERGLING);
         const { results, commands } = await commandsAfterStep(late, late.client.fixture.observations[896], async () => [
-            await late.agent.train(UnitType.ZERGLING, 2),
+            await late.agent.train(UnitType.ZERGLING, { count: 2 }),
             await late.agent.train(UnitType.DRONE),
         ]);
 
@@ -545,9 +563,11 @@ describe('agent macro helpers', () => {
         const random = spyOn(Math, 'random').mockImplementation(() => 0);
 
         try {
-            const powered = await commandsAfterStep(late, unpoweredGateway, () => late.agent.train(UnitType.ZEALOT, 3));
+            const powered = await commandsAfterStep(late, unpoweredGateway, () =>
+                late.agent.train(UnitType.ZEALOT, { count: 3 }),
+            );
             const unpowered = await commandsAfterStep(late, unpoweredGateway, () =>
-                late.agent.train(UnitType.ZEALOT, 3),
+                late.agent.train(UnitType.ZEALOT, { count: 3 }),
             );
 
             expect({

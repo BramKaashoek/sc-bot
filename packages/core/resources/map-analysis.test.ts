@@ -40,6 +40,7 @@ describe.each(MAPS)('mapAnalysis on %s', (mapName) => {
         const unwalkable = { x: 0, y: 0 };
         const mainRegion = mapAnalysis.getRegion(map.getMain()!.townhallPosition)!;
         const perimeter = mapAnalysis.getPerimeter(mainRegion);
+        const cells = mapAnalysis.getRegionCells(mainRegion);
         const angles = perimeter.map(({ x, y }) => Math.atan2(y - mainRegion.center.y, x - mainRegion.center.x));
         const isEdge = ({ x, y }: { x: number; y: number }) =>
             [
@@ -62,11 +63,75 @@ describe.each(MAPS)('mapAnalysis on %s', (mapName) => {
         ).toBe(true);
         expect(map.getThirds()).toContain(mapAnalysis.getDefensiveThird()!);
         expect(pathLength(mapAnalysis.getDefensiveThird()!)).toBe(Math.max(...map.getThirds().map(pathLength)));
+        expect(cells).toHaveLength(mainRegion.area);
+        expect(cells.every((point) => mapAnalysis.getRegion(point)?.id === mainRegion.id)).toBe(true);
+        expect(cells).toContainEqual({
+            x: Math.floor(map.getMain()!.townhallPosition.x) + 0.5,
+            y: Math.floor(map.getMain()!.townhallPosition.y) + 0.5,
+        });
+        expect(perimeter.every((point) => cells.some(({ x, y }) => x === point.x && y === point.y))).toBe(true);
         expect(perimeter.length).toBeGreaterThan(0);
         expect(perimeter.every((point) => mapAnalysis.getRegion(point)?.id === mainRegion.id && isEdge(point))).toBe(
             true,
         );
         expect(angles.every((angle, index) => index === 0 || angle >= angles[index - 1])).toBe(true);
+    });
+});
+
+describe('overlord spots', () => {
+    it('hands out each spot once, nearest first, and falls back to the map centre when none exist', async () => {
+        const world = await createTestWorld('acropolis', { loop: 896 });
+        const { mapAnalysis } = world.resources.get();
+        const spots = mapAnalysis.getOverlordSpots();
+        expect(spots).toHaveLength(14);
+
+        const near = { x: 57, y: 33 };
+        expect(mapAnalysis.takeOverlordSpot(near)).toEqual({ x: 57.87719298245614, y: 32.12280701754386 });
+        expect(mapAnalysis.getOverlordSpots()).toEqual(spots.slice(1));
+        expect(mapAnalysis.takeOverlordSpot(near)).not.toEqual(spots[0]);
+
+        mapAnalysisResource.reset!(mapAnalysis, world);
+        expect(mapAnalysis.getOverlordSpots()).toEqual(spots);
+
+        const empty = await createTestWorld('simple64', { loop: 896 });
+        const { map, mapAnalysis: none } = empty.resources.get();
+        expect(none.getOverlordSpots()).toEqual([]);
+        expect(none.takeOverlordSpot({ x: 1, y: 1 })).toEqual(map.getCenter(true));
+    });
+});
+
+describe('overlord spot walkability', () => {
+    const image = (rows: string[], values: Record<string, number>) => ({
+        bitsPerPixel: 8,
+        size: { x: rows[0].length, y: rows.length },
+        data: Uint8Array.from(rows.flatMap((row) => [...row].map((char) => values[char]))),
+    });
+    const PLATEAU = ['ggggggg', 'ggggggg', 'ggpppgg', 'ggpppgg', 'ggpppgg', 'ggggggg', 'ggggggg'];
+
+    async function spotsFor(pathing: Record<string, number>, placement: Record<string, number>) {
+        const world = await createTestWorld('simple64', { loop: 896 });
+        const { frame, mapAnalysis } = world.resources.get();
+        const getGameInfo = spyOn(frame, 'getGameInfo').mockReturnValue({
+            startRaw: {
+                mapSize: { x: 7, y: 7 },
+                playableArea: { p0: { x: 0, y: 0 }, p1: { x: 7, y: 7 } },
+                pathingGrid: image(PLATEAU, pathing),
+                placementGrid: image(PLATEAU, placement),
+                terrainHeight: image(PLATEAU, { g: 100, p: 140 }),
+            },
+        } as never);
+        try {
+            mapAnalysisResource.reset!(mapAnalysis, world);
+            return mapAnalysis.getOverlordSpots();
+        } finally {
+            getGameInfo.mockRestore();
+        }
+    }
+
+    it('treats a cell as walkable when it is pathable or placeable', async () => {
+        expect(await spotsFor({ g: 1, p: 0 }, { g: 1, p: 0 })).toEqual([{ x: 3, y: 3 }]);
+        expect(await spotsFor({ g: 1, p: 1 }, { g: 1, p: 0 })).toEqual([]);
+        expect(await spotsFor({ g: 1, p: 0 }, { g: 1, p: 1 })).toEqual([]);
     });
 });
 
@@ -120,6 +185,18 @@ describe('mapAnalysis lifecycle', () => {
         const enemyMain = spyOn(map, 'getEnemyMain').mockReturnValue(undefined as never);
         expect(world.resources.get().mapAnalysis.getEnemyMainRamp()).toBeUndefined();
         enemyMain.mockRestore();
+    });
+
+    it('has no enemy main ramp on an arcade map', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { map, mapAnalysis } = world.resources.get();
+        expect(mapAnalysis.getEnemyMainRamp()).toBeDefined();
+
+        map.setLocations({ enemy: [] });
+
+        expect(map.isArcade()).toBe(true);
+        expect(map.getEnemyMain()).toBeDefined();
+        expect(mapAnalysis.getEnemyMainRamp()).toBeUndefined();
     });
 
     it('draws choke cells and region centres', async () => {

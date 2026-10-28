@@ -13,20 +13,11 @@ const ZERGLINGS_SPOT = { x: 14.7, y: 24.8 };
 
 const sortedTags = (group: Unit[]) => group.map((unit) => unit.tag).sort();
 
-function hideFogged(world: TestWorld, gameLoop: number, tag: string): SC2APIProtocol.ResponseObservation {
-    const responseObservation = observationAt(world, gameLoop, { hide: [tag] });
-    const { data, size } = responseObservation.observation!.rawData!.mapState!.visibility!;
-    for (let dy = -2; dy <= 2; dy++)
-        for (let dx = -2; dx <= 2; dx++)
-            data![(Math.floor(ZERGLINGS_SPOT.y) + dy) * size!.x! + Math.floor(ZERGLINGS_SPOT.x) + dx] = 1;
-    return responseObservation;
-}
-
 describe('SpatialIndex', () => {
     it('indexes enemies with ghosts and structures, split by flying, next to own units', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
         const { spatial, units } = world.resources.get();
-        await stepTo(world, hideFogged(world, 900, ZERGLINGS[0]));
+        await stepTo(world, observationAt(world, 900, { hide: [ZERGLINGS[0]], fogAt: [ZERGLINGS_SPOT] }));
         const [marine] = units.getByTag([MARINE]);
 
         expect({
@@ -38,6 +29,11 @@ describe('SpatialIndex', () => {
             ownAir: spatial.anyInRange(marine, 30, 'ownAir'),
             own: spatial.closest(units.getByTag([COMMAND_CENTER])[0], 'own', 0)?.tag,
             outOfReach: spatial.closest({ x: 70, y: 70 }, 'enemy', 10),
+            batch: spatial.anyInRangeBatch(
+                [...spatial.unitsInRange(ZERGLINGS_SPOT, 5, 'enemy').map(({ pos }) => pos), { x: 70, y: 70 }],
+                0,
+                'enemy',
+            ),
         }).toEqual({
             enemy: [...ZERGLINGS, OVERLORD].sort(),
             enemyGround: [...ZERGLINGS].sort(),
@@ -47,6 +43,7 @@ describe('SpatialIndex', () => {
             ownAir: false,
             own: COMMAND_CENTER,
             outOfReach: undefined,
+            batch: [true, true, true, false],
         });
     });
 
@@ -62,7 +59,7 @@ describe('SpatialIndex', () => {
             spatial.unitsInRange(ZERGLINGS_SPOT, 5, 'ownAir');
             expect(getEnemies).toHaveBeenCalledTimes(1);
 
-            await stepTo(world, hideFogged(world, 900, ZERGLINGS[0]));
+            await stepTo(world, observationAt(world, 900, { hide: [ZERGLINGS[0]], fogAt: [ZERGLINGS_SPOT] }));
             spatial.closest(ZERGLINGS_SPOT, 'enemy');
             expect(getEnemies).toHaveBeenCalledTimes(2);
         } finally {

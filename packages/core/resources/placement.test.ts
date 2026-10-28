@@ -5,7 +5,7 @@ import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
 import * as UnitType from '../constants/unit-type.ts';
 import { createTestWorld, observationAt, stepTo } from '../test/create-test-world.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
-import { rawUnit } from '../test/factories.ts';
+import { rawUnit, toyWorld } from '../test/factories.ts';
 import type { Placement, Point2D, UserPlacement, World } from '../types.ts';
 import type { Ramp } from '../utils/map/ramp.ts';
 
@@ -36,6 +36,8 @@ function cells({ pos, size }: Pick<Placement, 'pos' | 'size'>, withAddon = false
 }
 
 const kernelCells = (spot: Pick<Placement, 'pos' | 'size'>) => cells(spot, true);
+
+const samePos = (a: Point2D, b: Point2D) => a.x === b.x && a.y === b.y;
 
 const distanceSquared = (a: Point2D, b: Point2D) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
 
@@ -212,17 +214,24 @@ describe('placement resource (Terran)', () => {
     it('solves user placements first as custom, picks them by flag and otherwise last, skipping invalid ones', async () => {
         const baseline = (await solved()).resources.get().placement.getPlacements({ size: '3x3' });
         const userPos = { ...baseline.find((s) => s.flags.size === 0)!.pos };
+        const base = (await solved()).resources.get();
+        const pylonPos = { ...base.placement.getPlacements({ size: '2x2' }).find((s) => s.flags.size === 0)!.pos };
+        const inArea = (s: { pos: Point2D }) =>
+            Math.abs(pylonPos.x - s.pos.x) < 9 && Math.abs(pylonPos.y - s.pos.y) < 9 && !samePos(s.pos, pylonPos);
         const world = await solved('blueshift', {
             placements: [
                 { pos: userPos, size: '3x3', flags: ['production'] },
+                { pos: pylonPos, size: '2x2', flags: ['firstPylon'] },
                 { pos: { x: 0.5, y: 0.5 }, size: '3x3' },
             ],
         });
         const { placement } = world.resources.get();
-        const [first] = placement.getPlacements();
+        const [first, pylon] = placement.getPlacements();
         expect(first.pos).toEqual(userPos);
         expect([...first.flags]).toEqual(['custom', 'production']);
-        expect(placement.getPlacements({ flag: 'custom' })).toHaveLength(1);
+        expect([...pylon.flags]).toEqual(['custom', 'firstPylon']);
+        expect(placement.getPlacements({ flag: 'custom' })).toHaveLength(2);
+        expect(placement.getPlacements().some(inArea)).toBe(true);
 
         expect(placement.request(UnitType.BARRACKS, { reserve: false })).not.toEqual(userPos);
         expect(placement.request(UnitType.BARRACKS, { flags: ['production'] })).toEqual(userPos);
@@ -252,6 +261,16 @@ describe('placement resource (Terran)', () => {
         expect(placement.request(UnitType.SPAWNINGPOOL)).toBeUndefined();
         expect(() => placement.add([spot])).not.toThrow();
         expect(placement.getPlacements()).toEqual([]);
+    });
+
+    it.each([
+        [true, false],
+        [false, true],
+    ])('solves no formation on an arcade map (enemy start %s, own townhall %s)', async (enemyStart, ownTownhall) => {
+        const { placement } = (await toyWorld({ enemyStart, ownTownhall })).resources.get();
+
+        expect(placement.getPlacements()).toEqual([]);
+        expect(placement.request(UnitType.SUPPLYDEPOT)).toBeUndefined();
     });
 
     it('keeps configured settings across a reset but drops spots and reservations', async () => {
@@ -339,15 +358,12 @@ describe('placement resource (Protoss)', () => {
         ).toEqual(NATURAL_SPOTS);
     });
 
-    it('returns powered spots only near own pylons that are far enough along', async () => {
+    it('returns powered spots only near own pylons that are far enough along, on the same height', async () => {
         const world = await solved('blueshift-protoss');
         const { placement, map } = world.resources.get();
         const spot = placement.getPlacements({ size: '3x3', base: map.getNatural()!.townhallPosition })[7].pos;
-        const pylon = rawUnit({
-            unitType: UnitType.PYLON,
-            pos: { x: spot.x + 3.5, y: spot.y + 0.5, z: 12 },
-            buildProgress: 0.5,
-        });
+        const pylonPos = { x: spot.x + 3.5, y: spot.y + 0.5 };
+        const pylon = rawUnit({ unitType: UnitType.PYLON, pos: { ...pylonPos, z: 12 }, buildProgress: 0.5 });
         await stepTo(world, at(world, 16, [pylon]));
 
         const request = (pylonBuildProgress?: number) =>
@@ -360,6 +376,22 @@ describe('placement resource (Protoss)', () => {
             });
         expect(request()).toBeUndefined();
         expect(distanceSquared(request(0.5)!, pylon.pos as Point2D)).toBeLessThan(6.5 ** 2);
+
+        const offsets = [];
+        for (let dx = -6; dx <= 6; dx++) for (let dy = -6; dy <= 6; dy++) offsets.push({ dx, dy });
+        const within = offsets
+            .map(({ dx, dy }) => ({ x: pylonPos.x + dx, y: pylonPos.y + dy }))
+            .filter((pos) => distanceSquared(pos, pylonPos) < 6.5 ** 2);
+        const otherHeight = within.find((pos) => map.getTerrainHeight(pos) !== map.getTerrainHeight(pylonPos))!;
+        const sameHeight = within.find((pos) => map.getTerrainHeight(pos) === map.getTerrainHeight(pylonPos))!;
+        const edge = { x: pylonPos.x + 6.5, y: pylonPos.y };
+
+        expect(placement.isPowered(sameHeight)).toBe(false);
+        expect(placement.isPowered(sameHeight, { pylonBuildProgress: 0.5 })).toBe(true);
+        expect(placement.isPowered(otherHeight, { pylonBuildProgress: 0.5 })).toBe(false);
+        expect(placement.wouldPower(pylonPos, sameHeight)).toBe(true);
+        expect(placement.wouldPower(pylonPos, otherHeight)).toBe(false);
+        expect(placement.wouldPower(pylonPos, edge)).toBe(false);
     });
 
     it('never gives a pylon a staticDefence spot', async () => {
@@ -376,5 +408,68 @@ describe('placement resource (Protoss)', () => {
             defence.pos,
         );
         expect(placement.request(UnitType.PHOTONCANNON, { flags: ['staticDefence'] })).toEqual(defence.pos);
+    });
+
+    it('offers a user first pylon on request, falls back to a normal spot, and keeps formations 16x16 clear of it', async () => {
+        const baseline = (await solved('blueshift-protoss')).resources.get();
+        const main = baseline.map.getMain()!.townhallPosition;
+        const [free] = baseline.placement.getPlacements({ size: '2x2', base: main }).filter((s) => s.flags.size === 0);
+        const firstPos = { ...free.pos };
+        const inArea = (pos: Point2D) =>
+            Math.abs(pos.x - firstPos.x) < 8 + 1 && Math.abs(pos.y - firstPos.y) < 8 + 1 && !samePos(pos, firstPos);
+        expect(baseline.placement.getPlacements().some((s) => inArea(s.pos))).toBe(true);
+
+        const world = await solved('blueshift-protoss', {
+            placements: [{ pos: firstPos, size: '2x2', flags: ['firstPylon'] }],
+        });
+        const { placement } = world.resources.get();
+        const [first] = placement.getPlacements();
+        expect([...first.flags]).toEqual(['custom', 'wall', 'firstPylon']);
+        expect(placement.getPlacements().filter((s) => inArea(s.pos))).toEqual([]);
+
+        expect(placement.request(UnitType.PYLON, { firstPylon: true })).toEqual(firstPos);
+        expect(placement.request(UnitType.PYLON, { firstPylon: true, reserve: false })).not.toEqual(firstPos);
+        expect(placement.request(UnitType.PYLON, { reserve: false })).not.toEqual(firstPos);
+    });
+
+    it('keeps gatekeeper placements out of the spots and returns them per closest expansion', async () => {
+        const baseline = (await solved('blueshift-protoss')).resources.get();
+        const natural = baseline.map.getNatural()!.townhallPosition;
+        const main = baseline.map.getMain()!.townhallPosition;
+        const near = (base: Point2D, dx: number) => ({ x: base.x + dx, y: base.y + 3 });
+        const height = baseline.map.getTerrainHeight(main);
+        const bases = baseline.map.getExpansions().map((e) => e.townhallPosition);
+        const farHeight = Array.from({ length: 136 * 136 }, (_, i) => ({
+            x: (i % 136) + 0.5,
+            y: Math.trunc(i / 136) + 0.5,
+        }))
+            .filter((p) => baseline.map.getTerrainHeight(p) === height)
+            .find((p) => {
+                const nearest = bases.reduce((a, b) => (distanceSquared(p, b) < distanceSquared(p, a) ? b : a));
+                return (
+                    baseline.map.getTerrainHeight(nearest) !== height &&
+                    bases
+                        .filter((b) => baseline.map.getTerrainHeight(b) === height && b !== main)
+                        .every((b) => distanceSquared(p, main) < distanceSquared(p, b))
+                );
+            })!;
+        expect(farHeight).toBeDefined();
+        const world = await solved('blueshift-protoss', {
+            placements: [
+                { pos: farHeight, gateKeeper: true },
+                { pos: near(natural, 2), gateKeeper: true },
+                { pos: near(natural, 4), gateKeeper: true },
+                { pos: near(main, 2), gateKeeper: true },
+            ],
+        });
+        const { placement } = world.resources.get();
+
+        expect(placement.getPlacements().map((s) => s.pos)).toEqual(
+            baseline.placement.getPlacements().map((s) => s.pos),
+        );
+        expect(placement.getGatekeeperPositions(natural)).toEqual([near(natural, 2), near(natural, 4)]);
+        expect(placement.getGatekeeperPositions(main)).toEqual([farHeight, near(main, 2)]);
+        expect(placement.getNatGatekeeperPosition()).toEqual(near(natural, 2));
+        expect(baseline.placement.getNatGatekeeperPosition()).toBeUndefined();
     });
 });

@@ -10,8 +10,8 @@ import { GasMineRace } from '../constants/race-map.ts';
 import { GATHERING } from '../constants/unit-role.ts';
 import UnitAbilites from '../constants/unit-ability-map.ts';
 import createClient from '../engine/create-client.ts';
-import { ActionManagerError, BuildError, NodeSC2Error, TrainError, GatherError } from '../engine/errors.ts';
-import { researchAbilityOf, spend } from '../agent/macro.ts';
+import { ActionManagerError, BuildError, TrainError, GatherError } from '../engine/errors.ts';
+import { researchAbilityOf, spend } from '../utils/economy.ts';
 import { selectBuilder } from '../utils/workers/select-builder.ts';
 import { stalledWorkers } from './buildings.ts';
 import { arbitrate } from './command-arbiter.ts';
@@ -271,7 +271,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
 
             world.resources.get().flying.swap(unitA, unitB);
         },
-        async gather(unit: Unit, mineralField?: Unit, { queue = true }: CommandOptions = {}) {
+        async gather(unit: Unit, mineralField?: Unit, { queue = false }: CommandOptions = {}) {
             const { units } = world.resources.get();
 
             if (!unit.isWorker() && unit.unitType !== UnitType.MULE) {
@@ -317,7 +317,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
 
             this.queueAction(sendToGather);
         },
-        async mine(us: Unit | Unit[], gasMine: Unit, { queue = true }: CommandOptions = {}) {
+        async mine(us: Unit | Unit[], gasMine: Unit, { queue = false }: CommandOptions = {}) {
             const units = asArray(us);
             if (units.length === 0) return;
 
@@ -485,7 +485,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                     exclude,
                     reuseConstructing: world.agent.race === Race.PROTOSS,
                 });
-                if (builder?.isConstructing()) {
+                if (builder?.hasBuildOrder()) {
                     queue = true;
                 } else if (builder?.isCarryingResource()) {
                     this.queueAction({
@@ -511,7 +511,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
 
             builder.labels.set('command', frame.getGameLoop());
 
-            spend(world.agent, world.agent.calculateCost(unitTypeId));
+            spend(world, world.agent.calculateCost(unitTypeId));
 
             if (target) {
                 unitCommand.targetUnitTag = target.tag;
@@ -524,7 +524,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
             });
 
             if (unitTypeId === GasMineRace[world.agent.race!]) {
-                await this.gather(builder);
+                await this.gather(builder, undefined, { queue: true });
             }
         },
         async buildGasMine() {
@@ -595,7 +595,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 unitCommand = { abilityId, unitTags: [trainer.tag!] };
             }
 
-            spend(world.agent, world.agent.calculateCost(unitTypeId));
+            spend(world, world.agent.calculateCost(unitTypeId));
             this.queueAction(unitCommand);
         },
         async upgrade(upgradeId: number, upgradeFacility?: Unit) {
@@ -621,13 +621,13 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
                 });
             }
 
-            const abilityId = researchAbilityOf(world.agent, upgradeId);
+            const abilityId = researchAbilityOf(world, upgradeId);
             const unitCommand: SC2APIProtocol.ActionRawUnitCommand = {
                 abilityId,
                 unitTags: [upgrader.tag!],
             };
 
-            spend(world.agent, world.agent.calculateUpgradeCost(upgradeId));
+            spend(world, world.agent.calculateUpgradeCost(upgradeId));
             this.queueAction(unitCommand);
         },
         async warpIn(unitType: number, opts: WarpInOptions = {}) {
@@ -636,7 +636,7 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
             const n = opts.maxQty || 1;
 
             let qtyToWarp = n;
-            while (qtyToWarp > 0 && !world.agent.canAfford(unitType, null, { count: qtyToWarp })) qtyToWarp -= 1;
+            while (qtyToWarp > 0 && !world.agent.canAfford(unitType, { count: qtyToWarp })) qtyToWarp -= 1;
             if (qtyToWarp <= 0) {
                 throw new ActionManagerError(`cannot afford warping any qty of unit: ${UnitTypeId[unitType]}`, {
                     data: { unitType, opts },
@@ -669,8 +669,23 @@ function createActionManager(world: World, client?: NodeSC2Proto.ProtoClient): A
 
             this.queueAction(commands);
         },
-        unloadByTag() {
-            throw new NodeSC2Error('not implemented: unloadByTag');
+        unloadByTag(container: Unit, passengerTag: string) {
+            const unitIndex = (container.passengers ?? []).findIndex(({ tag }) => tag === passengerTag);
+            if (unitIndex === -1) {
+                debugActionManager(`unloadByTag: ${passengerTag} is not a passenger of ${container.tag}`);
+                return;
+            }
+            // Sent now, bypassing the arbiter like sendAction, but deliberately not committed or marked ordered:
+            // the raw half is only there to select the container, and committing it would make a same-loop
+            // rally on the container lose to this no-op.
+            protoClient
+                .action({
+                    actions: [
+                        { actionRaw: { unitCommand: { abilityId: 0, unitTags: [container.tag!] } } },
+                        { actionUi: { cargoPanel: { unitIndex } } },
+                    ],
+                })
+                .catch((err: Error) => debugActionManager(`unloadByTag failed: ${err.message}`));
         },
         async stop(units: Unit | Unit[], { queue = false }: CommandOptions = {}) {
             return this.do(units, Ability.STOP, { queue });

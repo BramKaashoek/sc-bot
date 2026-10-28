@@ -16,9 +16,12 @@ export type StaticDefenseSource = InfluenceSource & {
     upgradedRange?: { range: number; afterSeconds: number };
 };
 
+type TacticalStamp = { weak: number; solid: number; isWeak: (health: number) => boolean };
+
 export type EffectInfluence = { layers: readonly InfluenceLayer[]; perPosition?: true };
 
 const ALL_LAYERS = ['ground', 'air', 'groundAvoidance', 'airAvoidance'] as const;
+const PRIORITY_LAYERS = [...ALL_LAYERS, 'priorityGroundAvoidance'] as const;
 
 export const INFLUENCE_DEFAULTS = {
     rangeBuffer: 4,
@@ -32,6 +35,54 @@ export const INFLUENCE_DEFAULTS = {
         bile: { reactAfter: 16, duration: 50 },
         nuke: { reactAfter: 250, duration: 320 },
     },
+};
+
+// ares unit_data.py army_value entries that were hand-edited away from ((minerals / 0.9 + gas) * supply) / 50
+export const ARMY_VALUE_OVERRIDES: Record<number, number> = {
+    [UnitType.ZERGLING]: 1,
+    [UnitType.ZERGLINGBURROWED]: 1,
+    [UnitType.BANELING]: 2,
+    [UnitType.BANELINGBURROWED]: 2,
+    [UnitType.RAVAGER]: 12.667,
+    [UnitType.RAVAGERBURROWED]: 12.667,
+    [UnitType.RAVAGERCOCOON]: 12.667,
+    [UnitType.LURKERMP]: 19,
+    [UnitType.LURKERMPBURROWED]: 19,
+    [UnitType.LURKERMPEGG]: 19,
+    [UnitType.LOCUSTMP]: 1,
+    [UnitType.LOCUSTMPFLYING]: 1,
+    [UnitType.OVERLORD]: 1,
+    [UnitType.OVERLORDCOCOON]: 1,
+    [UnitType.OVERLORDTRANSPORT]: 1,
+    [UnitType.TRANSPORTOVERLORDCOCOON]: 1,
+    [UnitType.OVERSEER]: 2,
+    [UnitType.OVERSEERSIEGEMODE]: 2,
+    [UnitType.BROODLORD]: 46.667,
+    [UnitType.BROODLORDCOCOON]: 46.667,
+    [UnitType.BROODLING]: 1,
+    [UnitType.PLANETARYFORTRESS]: 25,
+    [UnitType.BUNKER]: 15,
+    [UnitType.MISSILETURRET]: 5,
+    [UnitType.AUTOTURRET]: 3,
+    [UnitType.PHOTONCANNON]: 15,
+    [UnitType.SHIELDBATTERY]: 10,
+    [UnitType.SPINECRAWLER]: 15,
+    [UnitType.SPORECRAWLER]: 10,
+};
+
+export const TACTICAL_STRUCTURES = new Set([
+    UnitType.AUTOTURRET,
+    UnitType.BUNKER,
+    UnitType.MISSILETURRET,
+    UnitType.PHOTONCANNON,
+    UnitType.PLANETARYFORTRESS,
+    UnitType.SPORECRAWLER,
+]);
+
+// on top of the army value; ares' bunker is weak at <= 100 health, its planetary fortress at < 100
+export const TACTICAL_STRUCTURE_STAMPS: Record<number, TacticalStamp> = {
+    [UnitType.BUNKER]: { weak: 15, solid: 10, isWeak: (health) => health <= 100 },
+    [UnitType.PLANETARYFORTRESS]: { weak: 25, solid: 40, isWeak: (health) => health < 100 },
 };
 
 export const WEIGHT_COSTS: Record<number, WeightCost> = {
@@ -89,12 +140,12 @@ export const STATIC_DEFENSE: Record<number, StaticDefenseSource> = {
 };
 
 export const UNIT_AVOIDANCE: Record<number, InfluenceSource> = {
-    [UnitType.BANELING]: { weight: 20, range: 3, layers: ['groundAvoidance'] },
+    [UnitType.BANELING]: { weight: 20, range: 3, layers: ['groundAvoidance', 'priorityGroundAvoidance'] },
     [UnitType.DISRUPTORPHASED]: {
         weight: 1000,
         range: 8,
         buffer: 'effectsRangeBuffer',
-        layers: ['ground', 'groundAvoidance'],
+        layers: ['ground', 'groundAvoidance', 'priorityGroundAvoidance'],
     },
 };
 
@@ -113,7 +164,20 @@ export const EFFECT_INFLUENCE: Record<number, EffectInfluence> = {
     [Effect.LIBERATORTARGETMORPHDELAYPERSISTENT]: { layers: ['ground'] },
     [Effect.LIBERATORTARGETMORPHPERSISTENT]: { layers: ['ground'] },
     [Effect.LURKERMP]: { layers: ['ground', 'groundAvoidance'], perPosition: true },
-    [Effect.NUKEPERSISTENT]: { layers: ALL_LAYERS },
-    [Effect.PSISTORMPERSISTENT]: { layers: ALL_LAYERS },
-    [Effect.RAVAGERCORROSIVEBILECP]: { layers: ALL_LAYERS },
+    [Effect.PSISTORMPERSISTENT]: { layers: PRIORITY_LAYERS },
 };
+
+// they vanish from the observation before they land, so ares tracks them by first sighting instead of stamping them live
+export const DELAYED_EFFECTS = {
+    bile: Effect.RAVAGERCORROSIVEBILECP,
+    nuke: Effect.NUKEPERSISTENT,
+} as const;
+
+export const DELAYED_EFFECT_LAYERS = PRIORITY_LAYERS;
+
+// a shade is harmless until its adept teleports onto it, which ares models as a unit that only counts once it is old
+export const SHADE_VISIBLE_AFTER_LOOPS = 120;
+export const SHADE_PRUNE_AFTER_LOOPS = 192;
+
+export const KD8_LAYERS = ['ground'] as const;
+export const PARASITIC_BOMB_LAYERS = ['air', 'airAvoidance', 'groundToAir'] as const;

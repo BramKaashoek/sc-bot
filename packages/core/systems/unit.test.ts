@@ -38,8 +38,8 @@ describe('unit system events', () => {
     it('emits construction started for new unfinished own structures and complete for new finished or finishing ones', async () => {
         const { events, record } = recorder();
         const agent = createAgent({
-            onBuildingConstructionStarted: record('started'),
-            onBuildingConstructionComplete: record('complete'),
+            onBuildingConstructionStarted: record('droppedStarted'),
+            onBuildingConstructionComplete: record('droppedComplete'),
             onStructureConstructionStarted: record('structureStarted'),
             onStructureConstructionComplete: record('structureComplete'),
             onUnitSpawned: record('spawned'),
@@ -74,21 +74,22 @@ describe('unit system events', () => {
                 .map((raw) => raw.tag!),
         );
         expect((events.spawned ?? []).map(([, tag]) => tag).sort()).toEqual([...new Set(ownNonStructureTags)].sort());
-        expect(sortedEvents(events.structureStarted)).toEqual([...sortedEvents(events.started), [900, morphingWorker]]);
-        expect(sortedEvents(events.structureComplete)).toEqual(sortedEvents(events.complete));
+        expect(events.droppedStarted).toBeUndefined();
+        expect(events.droppedComplete).toBeUndefined();
 
-        expect(sortedEvents(events.started)).toEqual([
+        expect(sortedEvents(events.structureStarted)).toEqual([
             [224, '4351066113'],
             [224, '4351328257'],
             [224, '4351590401'],
             [896, '4352638978'],
+            [900, morphingWorker],
         ]);
         expect(abilitiesByLoop).toEqual([
             [203, 416, 417, 524, 1],
             [203, 308, 416, 524, 1],
             [203, 416, 417, 524, 1450, 1516, 1],
         ]);
-        expect(sortedEvents(events.complete)).toEqual([
+        expect(sortedEvents(events.structureComplete)).toEqual([
             [0, '4342677505'],
             [224, '4350541825'],
             [224, '4350803969'],
@@ -106,7 +107,7 @@ describe('unit system events', () => {
             onUnitTookDamage: async (world: World, { unit, amount }: UnitDamage) =>
                 record('tookDamage')(world, unit, amount),
             onUnitIsTransforming: record('transforming'),
-            onUnitDamaged: record('damaged'),
+            onUnitDamaged: record('droppedDamaged'),
         });
         const fixture = loadFixture('blueshift');
         Object.assign(fixture.observations[896].observation!.rawData!.units!.find((raw) => raw.tag === '4354211841')!, {
@@ -134,10 +135,7 @@ describe('unit system events', () => {
             [900, '4354211841', 22],
         ]);
         expect(events.transforming).toEqual([[900, '4351328257']]);
-        expect(sortedEvents(events.damaged)).toEqual([
-            [900, '4342677505'],
-            [900, '4354211841'],
-        ]);
+        expect(events.droppedDamaged).toBeUndefined();
     });
 
     it('emits enemy entered vision every time an enemy appears and left vision when it disappears, first seen only once', async () => {
@@ -171,6 +169,71 @@ describe('unit system events', () => {
             [920, zerglings[1]],
         ]);
         expect(sortedEvents(events.firstSeen)).toEqual(enemiesAt896.map((tag): [number, string] => [896, tag]));
+    });
+
+    it('keeps the previous loop army and this loop morphed enemy tags per game loop, forgetting both when a new game starts', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { units } = world.resources.get();
+        const [zergling, hellion] = ['4354473985', '4354736129'];
+        const armyAt896 = units
+            .getCombatUnits()
+            .map((unit) => unit.tag!)
+            .sort();
+        const [lost, moved] = armyAt896;
+        const { health, pos } = units.getByTag(moved)!;
+        const decoy = '4353949698';
+        const tagsOfPreviousArmy = () =>
+            units
+                .getPreviousArmy()
+                .map((unit) => unit.tag!)
+                .sort();
+
+        await stepTo(
+            world,
+            editedObservation(world, 896, 900, (raws) =>
+                raws
+                    .filter((raw) => raw.tag !== lost)
+                    .map((raw) => {
+                        if (raw.tag === zergling) return { ...raw, unitType: UnitType.BANELING };
+                        if (raw.tag === hellion) return { ...raw, unitType: UnitType.HELLIONTANK };
+                        if (raw.tag === decoy) return { ...raw, unitType: UnitType.BANELING, isHallucination: true };
+                        return raw;
+                    }),
+            ),
+        );
+        const armyAt900 = tagsOfPreviousArmy();
+        const morphedAt900 = [...units.getMorphedEnemyTags()].sort();
+        await stepTo(
+            world,
+            // the unedited raws put the zergling, hellion and decoy back to their original types
+            editedObservation(world, 896, 904, (raws) =>
+                raws
+                    .filter((raw) => raw.tag !== lost)
+                    .map((raw) =>
+                        raw.tag === moved
+                            ? { ...raw, health: raw.health! - 1, pos: { ...raw.pos!, x: raw.pos!.x! + 1 } }
+                            : raw,
+                    ),
+            ),
+        );
+        const armyAt904 = tagsOfPreviousArmy();
+        const morphedAt904 = [...units.getMorphedEnemyTags()];
+        const snapshot = units.getPreviousArmy().find((unit) => unit.tag === moved)!;
+        const live = units.getByTag(moved)!;
+
+        world.client.setObservation(world.client.fixture.observations[896]);
+        await world.engine.setupGame();
+
+        expect(armyAt896.length).toBeGreaterThan(1);
+        expect([armyAt900, morphedAt900, armyAt904, morphedAt904]).toEqual([
+            armyAt896,
+            [zergling, hellion].sort(),
+            armyAt896.filter((tag) => tag !== lost),
+            [],
+        ]);
+        expect([snapshot.health, snapshot.pos]).toEqual([health, pos]);
+        expect([live.health, live.pos.x]).toEqual([health! - 1, pos.x + 1]);
+        expect([units.getPreviousArmy().length, units.getMorphedEnemyTags().size]).toEqual([0, 0]);
     });
 
     it('forgets which units were already seen when a second game starts on the same engine', async () => {

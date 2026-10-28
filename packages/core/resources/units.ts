@@ -19,6 +19,15 @@ import { NodeSC2Error } from '../engine/errors.ts';
 import { Units } from './units-collection.ts';
 import type { Point2D, ResourceDefinition, Unit, UnitResource, World } from '../types.ts';
 
+interface LoopCaches {
+    previousArmy: Unit[];
+    morphedEnemyTags: Set<string>;
+}
+
+const freshCaches = (): LoopCaches => ({ previousArmy: [], morphedEnemyTags: new Set() });
+
+const cachesByUnits = new WeakMap<UnitResource, LoopCaches>();
+
 const createdTypeByAbilityCache = new WeakMap<object, Map<number, number>>();
 
 // data-storage's findUnitTypesWithAbility maps to producers; an order needs the unit type it creates
@@ -44,13 +53,26 @@ export function storeUnit(units: UnitResource, alliance: number, tag: string, un
     units._units[alliance].set(tag, unit);
 }
 
+export function beginUnitLoop(units: UnitResource, previousLoop: number | undefined): void {
+    const caches = cachesByUnits.get(units)!;
+    // update() Object.assigns onto the stored unit; orders/pos are replaced, never mutated, so only labels needs its own copy
+    caches.previousArmy = [...units._units[Alliance.SELF].values()]
+        .filter((unit) => unit.lastSeen === previousLoop && unit.isCombatUnit())
+        .map((unit) => ({ ...unit, labels: new Map(unit.labels) }));
+    caches.morphedEnemyTags.clear();
+}
+
+export function markEnemyMorphed(units: UnitResource, tag: string): void {
+    cachesByUnits.get(units)!.morphedEnemyTags.add(tag);
+}
+
 export function setAvailableAbilities(unit: Unit, abilityIds: number[], loop: number | undefined): void {
     unit._availableAbilities = abilityIds;
     unit._availableAbilitiesLoop = loop;
 }
 
 function createUnits(world: World): UnitResource {
-    return {
+    const units: UnitResource = {
         _units: {
             [Alliance.SELF]: new Map(),
             [Alliance.ALLY]: new Map(),
@@ -106,10 +128,10 @@ function createUnits(world: World): UnitResource {
             return this.getAlive(Alliance.NEUTRAL).filter((unit) => unit.unitType === UnitType.XELNAGATOWER);
         },
         getPreviousArmy() {
-            throw new NodeSC2Error('not implemented: getPreviousArmy');
+            return Units.from(cachesByUnits.get(this)!.previousArmy);
         },
         getMorphedEnemyTags() {
-            throw new NodeSC2Error('not implemented: getMorphedEnemyTags');
+            return cachesByUnits.get(this)!.morphedEnemyTags;
         },
         getLarva() {
             return this.getAlive(Alliance.SELF).filter((unit) => unit.unitType === UnitType.LARVA);
@@ -279,10 +301,15 @@ function createUnits(world: World): UnitResource {
             return value;
         },
     };
+    cachesByUnits.set(units, freshCaches());
+    return units;
 }
 
 export const unitsResource: ResourceDefinition<'units'> = {
     name: 'units',
     create: (world) => createUnits(world),
-    reset: (units) => Object.values(units._units).forEach((store) => store.clear()),
+    reset: (units) => {
+        Object.values(units._units).forEach((store) => store.clear());
+        cachesByUnits.set(units, freshCaches());
+    },
 };

@@ -37,6 +37,7 @@ import {
     mineralFieldTypes,
     gatheringAbilities,
     returningAbilities,
+    harvestingAbilities,
     townhallTypes,
     constructionAbilities,
     burrowedTypes,
@@ -125,14 +126,9 @@ function createUnit(unitData: SC2APIProtocol.Unit, world: World): Unit {
             }
         },
         async toggle(options = {}) {
-            const opts = {
-                queue: true,
-                ...options,
-            };
-
             const abilityId = toggleAbilities[this.unitType];
             if (abilityId) {
-                return actions.do(this.tag, abilityId, opts);
+                return actions.do(this.tag, abilityId, options);
             }
         },
         addLabel(name, value) {
@@ -183,8 +179,17 @@ function createUnit(unitData: SC2APIProtocol.Unit, world: World): Unit {
         isCloaked() {
             return this.cloak !== CloakState.NOTCLOAKED;
         },
-        isConstructing() {
-            return this.orders.some((o) => constructionAbilities.includes(o.abilityId!));
+        hasOrder(abilityIds) {
+            const wanted = Array.isArray(abilityIds) ? abilityIds : [abilityIds];
+            return this.orders.some(
+                (o) => wanted.includes(o.abilityId!) || wanted.includes(generalAbility(data, o.abilityId!)),
+            );
+        },
+        hasBuildOrder() {
+            return this.hasOrder(constructionAbilities);
+        },
+        isUnderConstruction() {
+            return this.buildProgress < 1;
         },
         isCombatUnit() {
             return combatTypes.includes(this.unitType);
@@ -196,9 +201,7 @@ function createUnit(unitData: SC2APIProtocol.Unit, world: World): Unit {
             return this.buildProgress >= 1;
         },
         isHolding() {
-            return this.orders.some(
-                (o) => o.abilityId! === Ability.HOLDPOSITION || o.abilityId! === Ability.GENERAL_HOLDPOSITION,
-            );
+            return this.isUsingAbility([Ability.HOLDPOSITION, Ability.GENERAL_HOLDPOSITION]);
         },
         isTownhall() {
             return townhallTypes.includes(this.unitType);
@@ -213,26 +216,15 @@ function createUnit(unitData: SC2APIProtocol.Unit, world: World): Unit {
             return gasMineTypes.includes(this.unitType);
         },
         isReturning() {
-            return this.orders.some((o) => returningAbilities.includes(o.abilityId!));
+            return this.isUsingAbility(returningAbilities);
         },
         isGathering(type) {
-            return this.orders.some((o) => {
-                if (gatheringAbilities.includes(o.abilityId!)) {
-                    if (!type) return true;
+            if (!this.isUsingAbility(gatheringAbilities)) return false;
+            if (!type) return true;
 
-                    const gatherTarget = units.getByTag(o.targetUnitTag!);
-
-                    if (gatherTarget) {
-                        if (type === 'minerals') {
-                            return gatherTarget.isMineralField();
-                        }
-
-                        if (type === 'vespene') {
-                            return gatherTarget.isGasMine();
-                        }
-                    }
-                }
-            });
+            const gatherTarget = units.getByTag(this.orders[0].targetUnitTag!);
+            if (type === 'minerals') return !!gatherTarget?.isMineralField();
+            return !!gatherTarget?.isGasMine();
         },
         isCurrent() {
             return this.lastSeen === frame.getGameLoop();
@@ -286,7 +278,7 @@ function createUnit(unitData: SC2APIProtocol.Unit, world: World): Unit {
             return this.isUsingAbility(repairingAbilities);
         },
         isCollecting() {
-            return this.isUsingAbility([Ability.HARVEST_GATHER, Ability.HARVEST_RETURN]);
+            return this.isUsingAbility(harvestingAbilities);
         },
         isConstructingScv() {
             return this.isUsingAbility(scvConstructionAbilities);

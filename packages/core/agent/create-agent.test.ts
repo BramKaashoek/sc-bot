@@ -181,7 +181,7 @@ describe('createAgent', () => {
             ...gameData,
             playerCommon: { minerals: 30, vespene: 25, foodCap: 15, foodUsed: 14 },
         });
-        expect([poor.canAfford(UnitType.BANELING), poor.canAfford(UnitType.BANELING, null, { supply: true })]).toEqual([
+        expect([poor.canAfford(UnitType.BANELING), poor.canAfford(UnitType.BANELING, { supply: true })]).toEqual([
             true,
             true,
         ]);
@@ -203,7 +203,7 @@ describe('createAgent', () => {
             unitTypeIds.map((unitType) => ({
                 supplyCost: agent.calculateSupplyCost(unitType),
                 canFeed: agent.canFeed(unitType),
-                canAffordWithSupply: agent.canAfford(unitType, null, { supply: true }),
+                canAffordWithSupply: agent.canAfford(unitType, { supply: true }),
                 canAfford: agent.canAfford(unitType),
             })),
         ).toEqual([
@@ -215,12 +215,36 @@ describe('createAgent', () => {
             { supplyCost: 0, canFeed: true, canAffordWithSupply: true, canAfford: true },
         ]);
         expect(agent.canAfford(UnitType.ROACH)).toBe(true);
-        expect([1, 2].map((count) => agent.canAfford(UnitType.ORBITALCOMMAND, null, { count }))).toEqual([true, false]);
+        expect([1, 2].map((count) => agent.canAfford(UnitType.ORBITALCOMMAND, { count }))).toEqual([true, false]);
         expect(
             [4, 5]
-                .map((count) => agent.canAfford(UnitType.MARINE, null, { count }))
-                .concat([1, 2].map((count) => agent.canAfford(UnitType.MARINE, null, { count, supply: true }))),
+                .map((count) => agent.canAfford(UnitType.MARINE, { count }))
+                .concat([1, 2].map((count) => agent.canAfford(UnitType.MARINE, { count, supply: true }))),
         ).toEqual([true, false, true, false]);
+    });
+
+    it('lets a named earmark spend its own reservation and settles it on success, for units and upgrades', async () => {
+        const { agent, data } = await toyWorld({
+            ...gameData,
+            playerCommon: { minerals: 200, vespene: 100, foodCap: 15, foodUsed: 14 },
+        });
+        data.addEarmark({ name: 'saving', minerals: 200, vespene: 100 });
+
+        expect([
+            agent.canAfford(UnitType.MARINE),
+            agent.canAffordUpgrade(Upgrade.STIMPACK),
+            data.getEarmarkTotals(),
+        ]).toEqual([false, false, { minerals: 200, vespene: 100 }]);
+        expect([agent.canAfford(UnitType.MARINE, { earmark: 'saving' }), data.getEarmarkTotals()]).toEqual([
+            true,
+            { minerals: 0, vespene: 0 },
+        ]);
+
+        data.addEarmark({ name: 'research', minerals: 200, vespene: 100 });
+        expect([agent.canAffordUpgrade(Upgrade.STIMPACK, { earmark: 'research' }), data.getEarmarkTotals()]).toEqual([
+            true,
+            { minerals: 0, vespene: 0 },
+        ]);
     });
 
     it('passes (world, data, event) on to the blueprint onGameStart and onStep, keeping a preset opponent id when filling in its race', async () => {

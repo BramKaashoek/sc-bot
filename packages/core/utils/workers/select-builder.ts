@@ -29,7 +29,7 @@ export function selectBuilder(
     const received = actions.unitTagsReceivedAction();
     const free = units
         .getWorkers()
-        .filter((worker) => available(worker) && !worker.isConstructing() && !received.has(worker.tag!));
+        .filter((worker) => available(worker) && !worker.hasBuildOrder() && !received.has(worker.tag!));
     const ready = free.filter((worker) => worker.isIdle() || (worker.orders!.length === 1 && worker.isGathering()));
     const pool = ready.length > 0 ? ready : free;
     return pool.length > 0 ? pool.closestTo(near) : undefined;

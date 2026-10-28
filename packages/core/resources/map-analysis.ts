@@ -1,8 +1,11 @@
 import createDebug from 'debug';
-import { MapDecompositionError, NodeSC2Error } from '../engine/errors.ts';
+import { MapDecompositionError } from '../engine/errors.ts';
 import { analyzeChokes } from '../utils/map/chokes.ts';
+import { distance } from '../utils/geometry/point.ts';
 import { cellCentre } from '../utils/grid/cell.ts';
 import { createDistanceField } from '../utils/map/distance-field.ts';
+import { consumeImageData } from '../utils/map/grid.ts';
+import { computeOverlordSpots } from '../utils/map/overlord-spots.ts';
 import type {
     BaseChoke,
     Choke,
@@ -55,6 +58,7 @@ type State = {
     analysis?: Analysis;
     fields: Map<number, Float32Array>;
     distanceField?: { width: number; height: number; compute: ReturnType<typeof createDistanceField>['compute'] };
+    overlordSpots?: Point2D[];
     loggedStepError: boolean;
 };
 
@@ -111,6 +115,21 @@ function resolveCell({ walkable, width, height }: Analysis, point: Point2D): num
         }
     }
     return best;
+}
+
+function computeSpots(world: World): Point2D[] {
+    const { startRaw } = world.resources.get().frame.getGameInfo();
+    const { mapSize, pathingGrid, placementGrid, terrainHeight, playableArea } = startRaw ?? {};
+    if (!mapSize || !pathingGrid || !placementGrid || !terrainHeight || !playableArea) return [];
+    const { x: width, y: height } = mapSize;
+    const placement = consumeImageData(placementGrid, width!, height);
+    const pathing = consumeImageData(pathingGrid, width!, height);
+    const { p0, p1 } = playableArea;
+    return computeOverlordSpots({
+        walkable: pathing.map((row, y) => row.map((cell, x) => Math.max(cell === 0 ? 0 : 1, placement[y][x]))),
+        terrainHeight: consumeImageData(terrainHeight, width!, height),
+        playable: { x0: p0!.x!, y0: p0!.y!, x1: p1!.x!, y1: p1!.y! },
+    });
 }
 
 function analyze(world: World, settings: MapAnalysisSettings): Analysis {
@@ -290,14 +309,29 @@ function createMapAnalysis(world: World): MapAnalysisResource {
                     undefined,
                 );
         },
-        getRegionCells() {
-            throw new NodeSC2Error('not implemented: getRegionCells');
+        getRegionCells(region) {
+            const { width, labels } = getAnalysis();
+            const cells: Point2D[] = [];
+            labels.forEach((label, cell) => {
+                if (label === region.id) cells.push(cellCentre(cell, width));
+            });
+            return cells;
         },
         getOverlordSpots() {
-            throw new NodeSC2Error('not implemented: getOverlordSpots');
+            const state = stateByMapAnalysis.get(resource)!;
+            state.overlordSpots ??= computeSpots(world);
+            return state.overlordSpots.slice();
         },
-        takeOverlordSpot() {
-            throw new NodeSC2Error('not implemented: takeOverlordSpot');
+        takeOverlordSpot(near) {
+            const spots = resource.getOverlordSpots();
+            const state = stateByMapAnalysis.get(resource)!;
+            if (spots.length === 0) return world.resources.get().map.getCenter(true);
+            let best = 0;
+            spots.forEach((spot, index) => {
+                if (distance(spot, near) < distance(spots[best], near)) best = index;
+            });
+            state.overlordSpots!.splice(best, 1);
+            return spots[best];
         },
         getPerimeter(region) {
             const analysis = getAnalysis();
@@ -325,7 +359,7 @@ function createMapAnalysis(world: World): MapAnalysisResource {
             const { map } = world.resources.get();
             const enemyMain = map.getEnemyMain();
             const self = map.getLocations()?.self;
-            if (!enemyMain || !self) return undefined;
+            if (!enemyMain || !self || map.isArcade()) return undefined;
             return resource.getDefensivePosition(enemyMain, { towards: self })?.choke.ramp;
         },
         configure(settings) {

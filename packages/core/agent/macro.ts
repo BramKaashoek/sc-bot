@@ -12,7 +12,7 @@ import {
 } from '../constants/groups.ts';
 import { TownhallRace, TownhallWithFlyingRace, WorkerRace } from '../constants/race-map.ts';
 import getRandom from '../utils/get-random.ts';
-import { techAlias } from '../constants/dicts/tech-alias.ts';
+import { researchAbilityOf, REQUIRES_TECHLAB, spend, techEquivalents } from '../utils/economy.ts';
 import { techRequirement } from '../constants/dicts/tech-requirement.ts';
 import { trainedFrom } from '../constants/dicts/trained-from.ts';
 import { researchedFrom } from '../constants/dicts/researched-from.ts';
@@ -44,45 +44,6 @@ const TERRAN_STRUCTURES_REQUIRE_SCV = [
     UnitType.SUPPLYDEPOT,
 ];
 
-const EQUIVALENTS_FOR_TECH_PROGRESS: Record<number, number[]> = {
-    [UnitType.GATEWAY]: [UnitType.WARPGATE],
-    [UnitType.WARPPRISM]: [UnitType.WARPPRISMPHASING],
-    [UnitType.OBSERVER]: [UnitType.OBSERVERSIEGEMODE],
-    [UnitType.SUPPLYDEPOT]: [UnitType.SUPPLYDEPOTLOWERED, UnitType.SUPPLYDEPOTDROP],
-    [UnitType.BARRACKS]: [UnitType.BARRACKSFLYING],
-    [UnitType.FACTORY]: [UnitType.FACTORYFLYING],
-    [UnitType.STARPORT]: [UnitType.STARPORTFLYING],
-    [UnitType.COMMANDCENTER]: [
-        UnitType.COMMANDCENTERFLYING,
-        UnitType.PLANETARYFORTRESS,
-        UnitType.ORBITALCOMMAND,
-        UnitType.ORBITALCOMMANDFLYING,
-    ],
-    [UnitType.ORBITALCOMMAND]: [UnitType.ORBITALCOMMANDFLYING],
-    [UnitType.HELLION]: [UnitType.HELLIONTANK],
-    [UnitType.WIDOWMINE]: [UnitType.WIDOWMINEBURROWED],
-    [UnitType.SIEGETANK]: [UnitType.SIEGETANKSIEGED],
-    [UnitType.THOR]: [UnitType.THORAP],
-    [UnitType.VIKINGFIGHTER]: [UnitType.VIKINGASSAULT],
-    [UnitType.LIBERATOR]: [UnitType.LIBERATORAG],
-    [UnitType.LAIR]: [UnitType.HIVE],
-    [UnitType.HATCHERY]: [UnitType.LAIR, UnitType.HIVE],
-    [UnitType.SPIRE]: [UnitType.GREATERSPIRE],
-    [UnitType.SPINECRAWLER]: [UnitType.SPINECRAWLERUPROOTED],
-    [UnitType.SPORECRAWLER]: [UnitType.SPORECRAWLERUPROOTED],
-    [UnitType.OVERLORD]: [UnitType.OVERLORDTRANSPORT],
-    [UnitType.OVERSEER]: [UnitType.OVERSEERSIEGEMODE],
-    [UnitType.DRONE]: [UnitType.DRONEBURROWED],
-    [UnitType.ZERGLING]: [UnitType.ZERGLINGBURROWED],
-    [UnitType.ROACH]: [UnitType.ROACHBURROWED],
-    [UnitType.RAVAGER]: [UnitType.RAVAGERBURROWED],
-    [UnitType.HYDRALISK]: [UnitType.HYDRALISKBURROWED],
-    [UnitType.LURKERMP]: [UnitType.LURKERMPBURROWED],
-    [UnitType.SWARMHOSTMP]: [UnitType.SWARMHOSTBURROWEDMP],
-    [UnitType.INFESTOR]: [UnitType.INFESTORBURROWED],
-    [UnitType.ULTRALISK]: [UnitType.ULTRALISKBURROWED],
-};
-
 const CREATION_ABILITY_FIX: Record<number, number> = {
     [UnitType.ARCHON]: Ability.ARCHON_WARP_TARGET,
     [UnitType.ASSIMILATORRICH]: Ability.BUILD_ASSIMILATOR,
@@ -97,29 +58,10 @@ const CREATION_ABILITY_FIX: Record<number, number> = {
     [UnitType.TECHLAB]: Ability.BUILD_TECHLAB,
 };
 
-// python-sc2 TRAIN_INFO requires_techlab; 4.10 data lacks the TECHLAB requirement for GHOST/THOR/BATTLECRUISER
-export const REQUIRES_TECHLAB = [
-    UnitType.MARAUDER,
-    UnitType.GHOST,
-    UnitType.CYCLONE,
-    UnitType.SIEGETANK,
-    UnitType.THOR,
-    UnitType.BANSHEE,
-    UnitType.BATTLECRUISER,
-    UnitType.RAVEN,
-];
-
 type AbilityProgress = {
     counts: Map<number, number>;
     maxProgress: Map<number, number>;
 };
-
-export function techEquivalents(unitType: number): number[] {
-    const aliased = Object.entries(techAlias)
-        .filter(([, aliases]) => aliases.includes(unitType))
-        .map(([aliasType]) => Number(aliasType));
-    return [...new Set([...(EQUIVALENTS_FOR_TECH_PROGRESS[unitType] ?? []), ...aliased])];
-}
 
 function increment(counts: Map<number, number>, abilityId: number, amount = 1) {
     counts.set(abilityId, (counts.get(abilityId) ?? 0) + amount);
@@ -160,10 +102,6 @@ function receivedThisFrame(agent: Agent): Set<string> {
 
 function creationAbility({ _world: world }: Agent, unitType: number): number | undefined {
     return creationAbilityOverrides[unitType] ?? (world.data.getUnitTypeData(unitType)?.abilityId || undefined);
-}
-
-export function researchAbilityOf({ _world: world }: Agent, upgradeId: number): number | undefined {
-    return researchRequirements[upgradeId]?.ability ?? world.data.getUpgradeData(upgradeId)?.abilityId;
 }
 
 function abilitiesCountAndBuildProgress(agent: Agent, own = context(agent).own): AbilityProgress {
@@ -230,21 +168,6 @@ function issue(agent: Agent, command: SC2APIProtocol.ActionRawUnitCommand) {
     agent._world.resources.get().actions.queueAction(command);
 }
 
-export function spend(agent: Agent, { minerals, vespene }: Cost, supply = 0) {
-    agent.minerals = (agent.minerals ?? 0) - minerals;
-    agent.vespene = (agent.vespene ?? 0) - vespene;
-    if (supply > 0) agent.foodUsed = (agent.foodUsed ?? 0) + supply;
-}
-
-// Unlike agent.canAfford this never settles the earmark, which the tracker must keep until it sends BUILD
-export function affordable({ agent, data }: World, { minerals, vespene }: Cost, earmarkName?: string | null): boolean {
-    const reserved = data.getEarmarkTotals(earmarkName);
-    return (
-        (agent.minerals ?? 0) - reserved.minerals >= minerals &&
-        (!vespene || (agent.vespene ?? 0) - reserved.vespene >= vespene)
-    );
-}
-
 type MacroHelpers = Pick<
     Agent,
     | 'alreadyPending'
@@ -277,7 +200,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
     alreadyPendingUpgrade(upgradeId) {
         if ((this.upgradeIds ?? []).includes(upgradeId)) return 1;
 
-        const researchAbility = researchAbilityOf(this, upgradeId);
+        const researchAbility = researchAbilityOf(this._world, upgradeId);
         if (!researchAbility) return 0;
 
         const { structures } = context(this);
@@ -369,14 +292,14 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
         if (tracked || !this.canAfford(building)) return;
         buildings.build(building, { at: target });
     },
-    async train(unitType, amount = 1, closestTo, trainOnlyIdleBuildings = true) {
+    async train(unitType, { count: amount = 1, near, idleOnly = true } = {}) {
         if (this.techRequirementProgress(unitType) < 1) {
             debug(
                 `Trying to produce unit ${unitType} in train() but tech requirement ${techRequirement[unitType]} is not met`,
             );
             return 0;
         }
-        if (!this.canAfford(unitType, null, { supply: true })) return 0;
+        if (!this.canAfford(unitType, { supply: true })) return 0;
 
         const { structures, larva, own } = context(this);
         const received = receivedThisFrame(this);
@@ -398,8 +321,8 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
         const hasReactor = (structure: Unit) => reactorTags.has(structure.addOnTag!);
 
         let producers = this.race === Race.ZERG ? [...structures, ...larva] : [...structures];
-        if (closestTo) {
-            producers.sort((left, right) => distance(left.pos, closestTo) - distance(right.pos, closestTo));
+        if (near) {
+            producers.sort((left, right) => distance(left.pos, near) - distance(right.pos, near));
         } else if (canHaveAddons) {
             const addonRank = (structure: Unit) =>
                 -1 * Number(hasReactor(structure)) + Number(techlabTags.has(structure.addOnTag!));
@@ -409,7 +332,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
         const abilityId = creationAbility(this, unitType);
         const supply = this.calculateSupplyCost(unitType);
         const trainFrom = (structure: Unit, queue: boolean) => {
-            spend(this, this.calculateCost(unitType), supply);
+            spend(this._world, this.calculateCost(unitType), supply);
             issue(this, {
                 abilityId: generalAbility(this._world.data, abilityId!),
                 unitTags: [structure.tag!],
@@ -419,14 +342,14 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
 
         let trainedAmount = 0;
         for (const structure of producers) {
-            if (!this.canAfford(unitType, null, { supply: true })) return trainedAmount;
+            if (!this.canAfford(unitType, { supply: true })) return trainedAmount;
 
             const eligible =
                 !received.has(structure.tag!) &&
                 producerTypes.includes(structure.unitType) &&
                 structure.buildProgress === 1 &&
                 (!isProtoss || Boolean(structure.isPowered) || structure.unitType === UnitType.NEXUS) &&
-                (!trainOnlyIdleBuildings || (structure.orders ?? []).length < 1 + Number(hasReactor(structure))) &&
+                (!idleOnly || (structure.orders ?? []).length < 1 + Number(hasReactor(structure))) &&
                 (!requiresTechlab || techlabTags.has(structure.addOnTag!));
             if (!eligible) continue;
 
@@ -435,7 +358,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
                 if (pylons.length === 0) return trainedAmount;
                 const pylon = getRandom(pylons);
                 const angle = Math.random() * 2 * Math.PI;
-                spend(this, this.calculateCost(unitType), supply);
+                spend(this._world, this.calculateCost(unitType), supply);
                 issue(this, {
                     abilityId: WarpUnitAbility[unitType],
                     unitTags: [structure.tag!],
@@ -450,7 +373,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
                 trainFrom(structure, false);
                 if (
                     isTerran &&
-                    this.canAfford(unitType, null, { supply: true }) &&
+                    this.canAfford(unitType, { supply: true }) &&
                     (structure.orders ?? []).length === 0 &&
                     trainedAmount + 1 < amount &&
                     !requiresTechlab &&
@@ -472,7 +395,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
             throw new NodeSC2Error(`Could not find upgrade ${upgradeId} in the researched-from dictionary`);
         }
 
-        const researchAbility = researchAbilityOf(this, upgradeId);
+        const researchAbility = researchAbilityOf(this._world, upgradeId);
         const cost = this.calculateUpgradeCost(upgradeId);
         if (cost.minerals > (this.minerals ?? 0) || cost.vespene > (this.vespene ?? 0)) return false;
 
@@ -495,7 +418,7 @@ export const macroHelpers: MacroHelpers & ThisType<Agent> = {
         );
         if (!facility || !researchAbility) return false;
 
-        spend(this, cost);
+        spend(this._world, cost);
         issue(this, {
             abilityId: researchAbility,
             unitTags: [facility.tag!],

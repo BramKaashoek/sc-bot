@@ -61,7 +61,7 @@ The example logs `getOpening()` at game start and again at `buildComplete`, read
 Gaps against ares' YAML files:
 
 - YAML becomes JSON. `Cycle` / `WinrateBased` is `method`, `MinGamesWinrateBased` is `minGames`, `BuildChoices` is `choices`, and the options are camelCase (`autoSupplyAtSupply`, `constantWorkerProductionTill`, `persistentWorker`). Every build from the YAML files is present except the step below.
-- Dropped: `ShouldHandleGasSteal`, `BotName`, the `test_123` choice, `UseData` (no `dataDir`, so no history; it is opt-in), `set_build_completed`, the `ENEMY_NAT_HG_SPOT` target and Protoss' supply of -1.
+- Dropped: `ShouldHandleGasSteal`, `BotName`, the `test_123` choice, `UseData` (no `dataDir`, so no history; it is opt-in), and `set_build_completed`, and Protoss' supply of -1.
 - OneBaseTempests drops its `tempestgroundattackupgrade` step (see [String steps](../docs/build-orders.md#string-steps)).
 - The Protoss and Zerg YAMLs don't set `MinGamesWinrateBased`; those files carry core's default (3) explicitly. The YAMLs have race keys only, no opponent ids. Zerg's ProxyHatch is defined but in no choice list, as in the YAML.
 

@@ -3,14 +3,14 @@ import createAgent from '../agent/create-agent.ts';
 import * as Buff from '../constants/buff.ts';
 import * as Effect from '../constants/effect.ts';
 import { Alliance } from '../constants/enums.ts';
+import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
 import * as UnitType from '../constants/unit-type.ts';
-import { createTestWorld, stepTo } from '../test/create-test-world.ts';
+import { createTestWorld, observationAt, stepTo } from '../test/create-test-world.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
 import { rawUnit } from '../test/factories.ts';
 import type { EnemyStrategyDetected, IntelFlag, Point2D } from '../types.ts';
 import { intelResource } from './intel.ts';
 
-const LOOPS_PER_SECOND = 22.4;
 const OWN_CC = { x: 15.5, y: 15.5 };
 const OWN_START = { x: 15, y: 15 };
 const OWN_NATURAL = { x: 14, y: 43 };
@@ -40,16 +40,12 @@ function observation(
         effects = [],
     }: { own?: SC2APIProtocol.Unit[]; fog?: Point2D[]; effects?: SC2APIProtocol.Effect[] } = {},
 ): SC2APIProtocol.ResponseObservation {
-    const responseObservation = structuredClone(world.client.fixture.observations[896]);
-    const raw = responseObservation.observation!;
-    raw.gameLoop = Math.round(seconds * LOOPS_PER_SECOND);
-    raw.rawData!.units = [...raw.rawData!.units!.filter((unit) => unit.alliance !== Alliance.ENEMY), ...units, ...own];
-    raw.rawData!.effects = effects;
-    const { data, size } = raw.rawData!.mapState!.visibility!;
-    fog.forEach(({ x, y }) => {
-        for (let dy = -3; dy <= 3; dy++)
-            for (let dx = -3; dx <= 3; dx++) data![(Math.floor(y) + dy) * size!.x! + Math.floor(x) + dx] = 1;
+    const responseObservation = observationAt(world, Math.round(seconds * GAME_LOOPS_PER_SECOND), {
+        edit: (raws) => [...raws.filter((unit) => unit.alliance !== Alliance.ENEMY), ...units, ...own],
+        fogAt: fog,
+        fogRadius: 3,
     });
+    responseObservation.observation!.rawData!.effects = effects;
     return responseObservation;
 }
 
@@ -140,7 +136,7 @@ describe('intel flags', () => {
 describe('intel', () => {
     it('tracks ground threats with hysteresis and air threats by their own distance', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
-        const { intel } = world.resources.get();
+        const { intel, memory } = world.resources.get();
         const ling = enemies(UnitType.ZERGLING, at(OWN_CC, 14))[0];
         const overlord = enemies(UnitType.OVERLORD, { x: OWN_CC.x, y: OWN_CC.y + 18 }, 1, { isFlying: true })[0];
         const lingAt = (dx: number) => ({ ...ling, pos: { ...ling.pos!, x: OWN_CC.x + dx } });
@@ -161,6 +157,7 @@ describe('intel', () => {
 
         await stepTo(world, observation(world, 303, [lingAt(14)]));
         await stepTo(world, observation(world, 304, [], { fog: [at(OWN_CC, 14)] }));
+        expect(memory.getGhosts().map((unit) => unit.tag)).toContain(ling.tag);
         expect(intel.getBaseThreats()).toEqual([]);
     });
 
@@ -178,6 +175,19 @@ describe('intel', () => {
         expect(intel.has('lingRush')).toBe(true);
         expect(intel.has('proxy')).toBe(false);
         expect(intel.getProxies()).toHaveLength(0);
+    });
+
+    it('detects no strategy and reports no proxies on an arcade map, while still tracking base threats', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { intel, map } = world.resources.get();
+        map.setLocations({ enemy: [] });
+
+        await stepTo(world, observation(world, 100, enemies(UnitType.ZERGLING, at(OWN_START, 10), 8)));
+
+        expect(map.isArcade()).toBe(true);
+        expect(intel.has('lingRush')).toBe(false);
+        expect(intel.getProxies()).toHaveLength(0);
+        expect(intel.getMainThreat('ground')?.groundSupply).toBe(4);
     });
 
     it('picks the base with the most supply of a kind as the main threat', async () => {
@@ -212,7 +222,7 @@ describe('intel', () => {
         await stepTo(world, observation(world, 101, reaper));
         await stepTo(world, observation(world, 102, []));
 
-        const firstLoop = Math.round(100 * LOOPS_PER_SECOND);
+        const firstLoop = Math.round(100 * GAME_LOOPS_PER_SECOND);
         expect(seen.filter(({ flag }) => flag === 'reaper')).toEqual([
             { flag: 'reaper', gameLoop: firstLoop, stepLoop: firstLoop },
         ]);
@@ -222,14 +232,14 @@ describe('intel', () => {
     it('lists proxy structures near the own start, ghosts included, but not creep tumors or gas buildings', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
         const { intel } = world.resources.get();
-        const [barracks] = enemies(UnitType.BARRACKS, at(OWN_START, 30));
+        const [barracks] = enemies(UnitType.BARRACKS, at(OWN_START, 15));
         const excluded = [
             ...enemies(UnitType.CREEPTUMORBURROWED, at(OWN_START, 12)),
             ...enemies(UnitType.EXTRACTOR, at(OWN_START, 14)),
         ];
 
         await stepTo(world, observation(world, 200, [barracks, ...excluded]));
-        await stepTo(world, observation(world, 201, excluded, { fog: [at(OWN_START, 30)] }));
+        await stepTo(world, observation(world, 201, excluded, { fog: [at(OWN_START, 15)] }));
 
         expect(intel.getProxies().map((unit) => unit.tag)).toEqual([barracks.tag]);
     });

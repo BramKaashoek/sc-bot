@@ -3,7 +3,13 @@ import { Ability, UnitType, Upgrade } from '../constants/index.ts';
 import { ENEMY_NAT_VISION, ENEMY_SPAWN, NAT } from '../constants/build-target.ts';
 import { CARRYMINERALFIELDMINERALS } from '../constants/buff.ts';
 import { Alliance, BuildOrder, BuildResult, Race } from '../constants/enums.ts';
-import { BASE_DEFENDER, BUILD_RUNNER_SCOUT, GATHERING, PERSISTENT_BUILDER } from '../constants/unit-role.ts';
+import {
+    BASE_DEFENDER,
+    BUILD_RUNNER_SCOUT,
+    GAS_STEAL_PREVENTER,
+    GATHERING,
+    PERSISTENT_BUILDER,
+} from '../constants/unit-role.ts';
 import createAgent from '../agent/create-agent.ts';
 import { createTestWorld, stepTo } from '../test/create-test-world.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
@@ -513,6 +519,38 @@ describe('builderPlugin', () => {
         expect([pylon.length > 0, pylon.some(([, opts]) => opts?.powered)]).toEqual([true, false]);
     });
 
+    it('starts Protoss non-pylon build steps one supply early, in the fill and the fillWorkers-false gate, leaving pylons and other races alone', async () => {
+        const { build } = taskFunctions;
+        const supplies = async (race: (typeof Race)[keyof typeof Race], fillWorkers?: boolean) => {
+            const world = await createTestWorld('blueshift');
+            world.agent.race = race;
+            const system = {
+                state: {},
+                setState(this: { state: object }, newState: object) {
+                    this.state = { ...this.state, ...newState };
+                },
+                buildOrder: [
+                    [14, build(UnitType.PYLON)],
+                    [15, build(UnitType.GATEWAY)],
+                ],
+                buildOptions: { fillWorkers },
+            } as unknown as EventReader<System>;
+            builderPlugin(system);
+            await system.onGameStart!(world);
+            const [key] = Object.getOwnPropertySymbols(system.state);
+            return (system.state[key] as BuildTaskI[]).map(({ type, supply }) => [type, supply]);
+        };
+
+        const protoss = await supplies(Race.PROTOSS);
+        const terran = await supplies(Race.TERRAN);
+        const gated = await supplies(Race.PROTOSS, false);
+        expect([
+            protoss.filter(([type]) => type === 'worker').length,
+            terran.filter(([type]) => type === 'worker').length,
+            gated.map(([, supply]) => supply),
+        ]).toEqual([2, 3, [14, 14]]);
+    });
+
     it('without fillWorkers holds an unstarted step until supply used reaches its supply, adding no worker tasks, while a started step still completes or resets after 250 loops when supply drops', async () => {
         const world = await createTestWorld('blueshift', { loop: 896 });
         const { buildings } = world.resources.get();
@@ -762,12 +800,22 @@ describe('builderPlugin', () => {
             const system = world.agent.systems.find(({ name }) => name === 'OpenerWrapper' || name === 'Opener') as {
                 _system?: System;
             };
+            const completed = () => system._system!.buildCompleted;
+            const doneAfterFirst = completed();
             system._system!.switchOpening!('next', { removeCompleted: false });
+            const doneAfterSwitch = completed();
 
             const trained = await stepAt(world, 904);
             await stepAt(world, 908);
 
-            expect([idle, trained, completions]).toEqual([[], [Ability.TRAIN_MARINE], 2]);
+            expect([idle, trained, completions, doneAfterFirst, doneAfterSwitch, completed()]).toEqual([
+                [],
+                [Ability.TRAIN_MARINE],
+                2,
+                true,
+                false,
+                true,
+            ]);
         });
 
         it('sets fillWorkers false only while the current opening has constantWorkerProductionTill above 0, re-applying it on switch', async () => {
@@ -1052,6 +1100,31 @@ describe('builderPlugin', () => {
             ]).toEqual([BASE_DEFENDER, undefined, BASE_DEFENDER, undefined]);
         });
 
+        it('asks for the first pylon spot in the persistent builder pre-move only before 30s', async () => {
+            const preMove = async (time: number) => {
+                const world = await createTestWorld('blueshift', { loop: 896 });
+                const { frame, placement, units } = world.resources.get();
+                const probes = Object.fromEntries(
+                    units.getById(UnitType.SCV).map(({ tag }) => [tag, { unitType: UnitType.PROBE }]),
+                );
+                world.agent.race = Race.PROTOSS;
+                spyOn(frame, 'time').mockReturnValue(time);
+                const request = spyOn(placement, 'request').mockReturnValue({ x: 30.5, y: 40.5 });
+                world.agent.use(
+                    createSystem({
+                        name: 'Opener',
+                        type: 'build',
+                        openings: { a: { buildOrder: ['13 pylon'], constantWorkerProductionTill: 20 } },
+                        opening: 'a',
+                    }),
+                );
+                await stepCommands(world, 900, probes, [], { foodUsed: 12 });
+                return request.mock.calls.map(([, opts]) => opts?.firstPylon);
+            };
+
+            expect([await preMove(20), await preMove(40)]).toEqual([[true], [undefined]]);
+        });
+
         it('releases the persistent builder when a Protoss pylon task completes, before the opening does', async () => {
             const world = await createTestWorld('blueshift', { loop: 896 });
             const { buildings, placement, roles, units } = world.resources.get();
@@ -1059,7 +1132,7 @@ describe('builderPlugin', () => {
                 units.getById(UnitType.SCV).map(({ tag }) => [tag, { unitType: UnitType.PROBE }]),
             );
             world.agent.race = Race.PROTOSS;
-            spyOn(placement, 'request').mockReturnValue({ x: 30.5, y: 40.5 });
+            const request = spyOn(placement, 'request').mockReturnValue({ x: 30.5, y: 40.5 });
             world.agent.use(
                 createSystem({
                     name: 'Opener',
@@ -1081,6 +1154,129 @@ describe('builderPlugin', () => {
             await stepCommands(world, 912, probes, pylon, { foodUsed: 16 });
 
             expect([tag !== undefined, roles.roleOf(tag)]).toEqual([true, GATHERING]);
+            expect(request.mock.calls.map(([, opts]) => opts?.firstPylon)).toEqual([true, undefined]);
+        });
+
+        describe('gas-steal guard', () => {
+            const FIXTURE_GEYSER = { x: 19.5, y: 8.5 };
+            const ADDED_GEYSER = { x: 21.5, y: 11.5 };
+            const enemyWorker = () =>
+                rawUnit({ unitType: UnitType.SCV, alliance: Alliance.ENEMY, owner: 2, pos: { x: 12, y: 15, z: 10 } });
+            const addedGeyser = () =>
+                rawUnit({
+                    unitType: UnitType.VESPENEGEYSER,
+                    alliance: Alliance.NEUTRAL,
+                    owner: 0,
+                    pos: { ...ADDED_GEYSER, z: 10 },
+                });
+
+            async function start(def: OpeningDefinition | undefined, others: Record<string, OpeningDefinition> = {}) {
+                const world = await createTestWorld('blueshift', { loop: 896 });
+                const system = def
+                    ? createSystem({ name: 'Opener', type: 'build', openings: { a: def, ...others }, opening: 'a' })
+                    : createSystem({ name: 'Opener', type: 'build', buildOrder: ['100 barracks'] });
+                world.agent.use(system);
+                return { world, system };
+            }
+
+            const guards = (world: TestWorld) => [...world.resources.get().roles.getTags(GAS_STEAL_PREVENTER)];
+
+            it('puts one worker on each free main geyser while enemy workers are in the main, and sends them back to gathering when they leave', async () => {
+                const { world } = await start({ buildOrder: ['100 barracks'] });
+                const { roles } = world.resources.get();
+
+                const sent = await stepCommands(world, 900, {}, [enemyWorker(), addedGeyser()]);
+                const guarded = guards(world);
+                const during = guarded.map((tag) => roles.roleOf(tag));
+                await stepCommands(world, 904, {}, [addedGeyser()]);
+
+                expect([
+                    sent
+                        .filter(({ abilityId }) => abilityId === Ability.MOVE)
+                        .map(({ targetWorldSpacePos }) => targetWorldSpacePos)
+                        .sort((a, b) => a!.x! - b!.x!),
+                    during,
+                    guards(world),
+                    guarded.map((tag) => roles.roleOf(tag)),
+                ]).toEqual([
+                    [expect.objectContaining(FIXTURE_GEYSER), expect.objectContaining(ADDED_GEYSER)],
+                    [GAS_STEAL_PREVENTER, GAS_STEAL_PREVENTER],
+                    [],
+                    [GATHERING, GATHERING],
+                ]);
+            });
+
+            it('builds the gas with its guard when the current step is an affordable gas step, and marks the step started', async () => {
+                const { world, system } = await start({ buildOrder: [taskFunctions.build(UnitType.REFINERY)] });
+                const { buildings } = world.resources.get();
+
+                await stepCommands(world, 900, {}, [enemyWorker()], { minerals: 400 });
+
+                const [tasksKey] = Object.getOwnPropertySymbols(system._system.state);
+                expect([
+                    buildings.getTracked().map(({ unitType, target }) => [unitType, target]),
+                    (system._system.state[tasksKey] as BuildTaskI[]).map(({ status }) => status),
+                ]).toEqual([
+                    [[UnitType.REFINERY, expect.objectContaining(FIXTURE_GEYSER)]],
+                    [BuildOrder.COMMAND_GIVEN],
+                ]);
+            });
+
+            it('drops its guards when a new game starts, so a guard from the last game is not released', async () => {
+                const { world, system } = await start({ buildOrder: ['100 barracks'] });
+                const { roles } = world.resources.get();
+
+                await stepCommands(world, 900, {}, [enemyWorker()]);
+                const [tag] = guards(world);
+                await (system._system as EventReader<System>).onGameStart!(world);
+                await stepCommands(world, 904);
+
+                expect(roles.roleOf(tag)).toBe(GAS_STEAL_PREVENTER);
+            });
+
+            it('releases its guards to gathering when switchOpening resets the state, the opening opts out, or the build order completes', async () => {
+                const guarded = async (started: Awaited<ReturnType<typeof start>>) => {
+                    await stepCommands(started.world, 900, {}, [enemyWorker()]);
+                    return guards(started.world)[0];
+                };
+                const roleOf = (started: Awaited<ReturnType<typeof start>>, tag: string) =>
+                    started.world.resources.get().roles.roleOf(tag);
+
+                const switched = await start({ buildOrder: ['100 barracks'] }, { b: { buildOrder: ['100 barracks'] } });
+                const switchedTag = await guarded(switched);
+                switched.system._system.switchOpening!('b');
+
+                const optOutDef: OpeningDefinition = { buildOrder: ['100 barracks'] };
+                const optedOut = await start(optOutDef);
+                const optedOutTag = await guarded(optedOut);
+                optOutDef.shouldHandleGasSteal = false;
+                await stepCommands(optedOut.world, 904, {}, [enemyWorker()]);
+
+                const completed = await start({ buildOrder: [] });
+                const completedTag = await guarded(completed);
+                await stepCommands(completed.world, 904, {}, [enemyWorker()]);
+
+                expect([
+                    roleOf(switched, switchedTag),
+                    roleOf(optedOut, optedOutTag),
+                    roleOf(completed, completedTag),
+                ]).toEqual([GATHERING, GATHERING, GATHERING]);
+            });
+
+            it('runs for the default opening and for none of: shouldHandleGasSteal false, a tuple build order', async () => {
+                const guardsFor = async (def: OpeningDefinition | undefined) => {
+                    const { world } = await start(def);
+                    await stepCommands(world, 900, {}, [enemyWorker()]);
+                    return guards(world).length;
+                };
+                const idle = { buildOrder: ['100 barracks'] };
+
+                expect([
+                    await guardsFor(idle),
+                    await guardsFor({ ...idle, shouldHandleGasSteal: false }),
+                    await guardsFor(undefined),
+                ]).toEqual([1, 0, 0]);
+            });
         });
     });
 });

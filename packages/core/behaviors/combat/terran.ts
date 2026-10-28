@@ -4,6 +4,7 @@ import { Units } from '../../resources/units-collection.ts';
 import { CHANGELINGS } from '../../utils/combat/changelings.ts';
 import { distance, distanceSquared } from '../../utils/geometry/point.ts';
 import { isFlying } from '../../utils/geometry/units.ts';
+import { totalSupply } from '../../utils/units/supply.ts';
 import { keepUnitSafe, pathUnitToTarget } from './individual.ts';
 import { plan } from '../plan.ts';
 import type { Behavior, InfluenceGrid, InfluenceLayer, Point2D, Unit, UnitRole } from '../../types.ts';
@@ -60,7 +61,8 @@ export function pickUpCargo({
         name: 'pickUpCargo',
         execute(ctx) {
             const range = PICKUP_RANGE[unit.unitType!];
-            if (targets.length === 0 || range === undefined) {
+            const target = Units.from(targets).closestTo(unit);
+            if (!target || range === undefined) {
                 const passengers = (unit.passengers ?? []).map(({ tag }) => tag!);
                 if (passengers.length > 0 && switchCargoToRole) {
                     ctx.world.resources.get().roles.assign(passengers, switchCargoToRole);
@@ -68,7 +70,6 @@ export function pickUpCargo({
                 return false;
             }
 
-            const target = Units.from(targets).closestTo(unit);
             if (distance(unit.pos, target.pos) <= range) {
                 ctx.order(unit, SMART, target);
                 return true;
@@ -151,7 +152,7 @@ export function siegeTankDecision({
 
             if (unit.unitType === UnitType.SIEGETANK) {
                 if (forceUnsiege || within(enemies, 6.5).length > 0) return false;
-                const supply = enemies.reduce((sum, enemy) => sum + (enemy.data().foodRequired ?? 0), 0);
+                const supply = totalSupply(enemies);
                 if (
                     within(enemies, 13).some(({ unitType }) => STATIC_DEFENCE.includes(unitType!)) ||
                     (staySiegedNearTarget && nearTarget(5)) ||

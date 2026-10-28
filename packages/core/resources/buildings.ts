@@ -8,7 +8,7 @@ import { GasMineRace } from '../constants/race-map.ts';
 import { BUILDING } from '../constants/unit-role.ts';
 import * as UnitType from '../constants/unit-type.ts';
 import { distanceSquared } from '../utils/geometry/point.ts';
-import { affordable, spend } from '../agent/macro.ts';
+import { affordable, spend } from '../utils/economy.ts';
 import { selectBuilder } from '../utils/workers/select-builder.ts';
 import type {
     BuildingSettings,
@@ -16,7 +16,6 @@ import type {
     BuildOptions,
     CommandResult,
     Earmark,
-    OwnedEffect,
     Point2D,
     ResourceDefinition,
     TrackedBuild,
@@ -292,7 +291,7 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
             const { units } = context(world);
             if (build.structureTag) {
                 const known = units.getByTag(build.structureTag);
-                if (known && !known.labels.has('dead')) return known;
+                if (known) return known;
             }
             const gas = isGas(build.unitType);
             return units
@@ -338,7 +337,7 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
             const { abilityId } = world.data.getUnitTypeData(build.unitType);
             const geyser = build.geyserTag ? context(world).units.getByTag(build.geyserTag) : undefined;
             worker.labels.set('command', frame.getGameLoop());
-            spend(world.agent, world.agent.calculateCost(build.unitType));
+            spend(world, world.agent.calculateCost(build.unitType));
             const settled = build.earmark
                 ? world.data.get('earmarks').filter((earmark: Earmark) => earmark.name === build.earmark)
                 : [];
@@ -421,9 +420,9 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
 
         function clearBlocked() {
             const { spatial, map } = context(world);
-            const scans = (map.getEffects() as OwnedEffect[]).filter(
-                (effect) => effect.effectId === SCANNERSWEEP && effect.alliance === Alliance.SELF,
-            );
+            const scans = map
+                .getEffects()
+                .filter((effect) => effect.effectId === SCANNERSWEEP && effect.alliance === Alliance.SELF);
             state.blocked = state.blocked.filter((pos) => {
                 const detected =
                     spatial
@@ -494,7 +493,7 @@ export const buildingsResource: ResourceDefinition<'buildings'> = {
             }
 
             let worker = build.workerTag ? units.getByTag(build.workerTag) : undefined;
-            if (!worker || worker.labels.has('dead')) {
+            if (!worker) {
                 worker = selectWorker(world, build.target, busyWorkers(build.unitType));
                 if (!worker) {
                     build.workerTag = undefined;

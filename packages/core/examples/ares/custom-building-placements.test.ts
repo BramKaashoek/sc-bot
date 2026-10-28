@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'bun:test';
-import { createAgent } from '@sc-bot/core';
-import type { Placement } from '@sc-bot/core';
+import { createAgent, createPlacer } from '@sc-bot/core';
+import type { Placement, PlacementTable } from '@sc-bot/core';
 import { Race } from '@sc-bot/core/constants/enums';
 import { createTestWorld, loadFixture } from '../../test/create-test-world.ts';
-import { createPlacer } from './custom-building-placements.ts';
-import type { PlacementTable } from './custom-building-placements.ts';
+import { createShippedYamlBot, natGatekeeper, nextFirstPylon, placerFromYaml } from './custom-building-placements.ts';
 
 const TABLE: PlacementTable = {
     Blueshift: {
@@ -41,6 +40,16 @@ async function worldVs(opponent: number) {
     });
     return createTestWorld(fixture, { agent });
 }
+
+const YAML = `
+Blueshift:
+  LowerSpawn:
+    VsAll:
+      FirstPylon:
+        - [ [ 22.0, 29.0 ] ]
+      GateKeeper:
+        - [ [ 16.5, 38.5 ] ]
+`;
 
 describe('custom-building-placements example', () => {
     it('maps every key to its size and flags, picking the entries for the spawn side only', async () => {
@@ -79,5 +88,28 @@ describe('custom-building-placements example', () => {
             { pos: { x: 22, y: 8 }, size: '2x2', flags: ['custom', 'wall'] },
             { pos: { x: 24, y: 12 }, size: '2x2', flags: ['custom', 'staticDefence', 'wall'] },
         ]);
+    });
+
+    it('loads FirstPylon and GateKeeper from ares YAML text, and the first pylon request takes the FirstPylon spot', async () => {
+        const fixture = loadFixture('blueshift');
+        fixture.gameInfo.playerInfo!.find(({ playerId }) => playerId === 1)!.raceRequested = Race.PROTOSS;
+        const agent = createAgent({
+            settings: { race: Race.PROTOSS },
+            async onGameStart({ resources }) {
+                resources.set({ placer: placerFromYaml(YAML) });
+            },
+        });
+        const world = await createTestWorld(fixture, { agent });
+
+        expect([nextFirstPylon(world), natGatekeeper(world)]).toEqual([
+            { x: 22, y: 29 },
+            { x: 16.5, y: 38.5 },
+        ]);
+    });
+
+    it('ships a Protoss bot that loads the bundled ares table without a map match error', async () => {
+        const world = await createTestWorld(loadFixture('blueshift'), { agent: createShippedYamlBot() });
+
+        expect(world.resources.get().placement.getPlacements({ flag: 'custom' })).toEqual([]);
     });
 });

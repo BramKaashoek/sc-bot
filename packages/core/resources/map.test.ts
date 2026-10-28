@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { Alliance } from '../constants/enums.ts';
 import { createTestWorld } from '../test/create-test-world.ts';
 import { toyFixture } from '../test/factories.ts';
 import { Ramp } from '../utils/map/ramp.ts';
@@ -385,6 +386,7 @@ describe('MapResource', () => {
     it('leaves a natural without a wall-off empty and rallies from the natural townhall instead', async () => {
         const { map } = (await createTestWorld('simple64')).resources.get();
 
+        expect(map.isArcade()).toBe(false);
         expect(map.getNatural()!.getWall()).toEqual([]);
         expect(map.getCombatRally()).toEqual({ x: 49, y: 51 });
     });
@@ -397,6 +399,11 @@ describe('MapResource', () => {
         async (_, options, pathsFromMain, pathsFromEnemy) => {
             const { map } = (await createTestWorld(toyFixture(options))).resources.get();
 
+            expect([map.isArcade(), map.getEnemyMain(), map.getExpansions(Alliance.ENEMY)]).toEqual([
+                true,
+                undefined,
+                [],
+            ]);
             expect(
                 map
                     .getExpansions()

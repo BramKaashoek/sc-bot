@@ -388,3 +388,19 @@ parity-r2.md: 18 tickets, RQ1–RQ10 for the user (morning). Running now: T01 sc
 - 2026-10-28 (lead): batch 9 pushed 73b77f2 (unreviewed: R2-T19, R2-T13 rework; reviews stopped at user request). Resume: re-review T19 + T13, then CS-I06, T19 feature tickets per parity-r2.md runnable order; RQ11' awaits user; live-hardening report pending (junior-backend-live2).
 
 - 2026-10-28 (lead, correction): R2-T13 pending guard — my "moving-only" call was wrong: SC2 charges at placement, so the guard must cover every active status (moving/ordered/constructing) for both the no-location and explicit-location paths. Restores the changelog guarantee "calling every step sends one worker". Also: programmatic at: ENEMY_NAT_HG_SPOT must throw not-implemented until R2-T28 (not silently resolve to own start).
+
+- 2026-10-28 (user): canAfford bug → fix bot/economy.ts (re-check after await / inside train loop) + docs note canAfford is point-in-time. RQ11' (b) wrap the built-in (+ public-interface-only prerequisite). PQ1 (a) layered rule. PQ2 a+b+c. PQ3 yes (reservedAtLoop). PQ4 (a) keep cell + townhallCenter. PQ5 yes (sync commands). PQ6 a+b+c. PQ7 a+b+c+d. PQ8 superseded (user pushed with stubs). PQ9 latest wins. PQ10 a, c, d, e yes; b no.
+
+- 2026-10-28 (lead): accept architect splits PM05a/b/c and PM18a/b.
+
+- 2026-10-28 (lead): R2-T39 added (placement.isPowered/wouldPower public; restorePower switched) — names approved. Owed docs deltas appended to R2-T18 checklist (T14 divergences, T10 nine layers, T12 shouldHandleGasSteal, T21 deviations+cache, T25 unloadByTag, T30 abilityTracker reset).
+
+- 2026-10-28 (lead): T18 owed-docs additions: PQ02a (getting-started.md:126/:140, agents.md:162 mine/gather examples; units.md:337 toggle default; changelog "gather/mine/toggle default queue:false"), PQ06b changelog (removed onUnitDamaged/onBuildingConstruction*), PQ09 (macro.md earmark replace, units.md raw data, changelog), PM18a (map.md getEffects OwnedEffect[]), T33 gas speed-mining divergence, T21 creep docs done.
+
+- 2026-10-28 (lead, correction): R2-T26 — revert deviation 10 (deleting traveller after unload): ares manager re-issues unload each loop until the unit is out and never removes the traveller there; my earlier request rested on a wrong premise. Match ares.
+
+- 2026-10-28 (lead): T18 owed-docs additions: PQ01a (changelog breaking entries; combat.md:270 enemies.first?.pos; macro.md:396 guard closestTo; units.md:159-166 example change), T27 nydusPathUnitToTarget, T23 zerg behaviors, T31 (build-orders Protoss supply shift + buildCompleted; compatibility remove P6b-D10 note), T39.
+
+- 2026-10-28 (lead): snapshot 6 calls — (1) no temporary re-export; CS-I06 waits for T15. (2) CS-PQ07c off the types.ts chain, after PQ07b + T15. (3) drop the "after T18" gate on PM05a.
+
+- 2026-10-28 (lead): R2-T16 review calls (ares parity): drop PylonsWall (ares ignores it); map Bunkers 3x3 [bunker], Pylons 2x2 [wall,productionPylon], ProductionWall 3x3 [production,wall], StaticDefences 2x2 [staticDefence], ThreeByThrees 3x3 [], UpgradeStructuresWall 3x3 [] (faithful ares quirk); VsRandom fallback; gate keys by bot race; winrate only with UseData.

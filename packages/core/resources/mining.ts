@@ -1,6 +1,6 @@
 import { ATTACK, HARVEST_GATHER, HARVEST_RETURN, MOVE, SMART } from '../constants/ability.ts';
 import { Race } from '../constants/enums.ts';
-import { gasMineTypes, gatheringAbilities, returningAbilities } from '../constants/groups.ts';
+import { gasMineTypes, returningAbilities } from '../constants/groups.ts';
 import { WorkerRace } from '../constants/race-map.ts';
 import { BUILDING, GATHERING } from '../constants/unit-role.ts';
 import { ASSIMILATORRICH, EXTRACTORRICH, REFINERYRICH } from '../constants/unit-type.ts';
@@ -61,10 +61,7 @@ const freshState = (settings: MiningSettings): MiningState => ({
 });
 
 const isAlive = (unit: Unit | undefined): unit is Unit => !!unit && unit.isCurrent() && !unit.labels.has('dead');
-const isBusy = (worker: Unit) => worker.labels.has('command') || worker.isConstructing();
-// python-sc2 semantics: only the current order counts, unlike Unit.isGathering/isReturning
-const isGathering = (worker: Unit) => worker.isUsingAbility(gatheringAbilities);
-const isReturning = (worker: Unit) => worker.isUsingAbility(returningAbilities);
+const isBusy = (worker: Unit) => worker.labels.has('command') || worker.hasBuildOrder();
 
 function assign({ resourceOf, workersOn }: Assignments, worker: string, resource: string) {
     resourceOf.set(worker, resource);
@@ -104,9 +101,9 @@ export const miningResource: ResourceDefinition<'mining'> = {
     name: 'mining',
     create(world) {
         const mining: MiningResource = {
-            selectWorker(near, { forceClose = false, minHealth = 0, role, exclude } = {}) {
+            selectWorker(near, { forceClose = false, minHealth = 0, minShield = 0, role, exclude } = {}) {
                 const state = stateByMining.get(mining)!;
-                const worker = pickWorker(world, state, near, forceClose, minHealth, exclude);
+                const worker = pickWorker(world, state, near, forceClose, minHealth, minShield, exclude);
                 if (!worker) return undefined;
                 unassign(state, worker.tag);
                 world.resources.get().roles.assign(worker, role ?? BUILDING);
@@ -157,7 +154,7 @@ export const miningResource: ResourceDefinition<'mining'> = {
     },
     onStep(mining, world) {
         const state = stateByMining.get(mining)!;
-        if (!state.settings.enabled) return;
+        if (!state.settings.enabled || world.resources.get().map.isArcade()) return;
 
         const workers = managedWorkers(world);
         const managed = new Set(workers.map((worker) => worker.tag));
@@ -212,11 +209,17 @@ function pickWorker(
     near: Point2D,
     forceClose: boolean,
     minHealth: number,
+    minShield: number,
     exclude?: ReadonlySet<string>,
 ) {
     const { units } = world.resources.get();
+    const checkShield = world.agent.race === Race.PROTOSS && minShield > 0;
     const workers = managedWorkers(world).filter(
-        (worker) => !isBusy(worker) && !exclude?.has(worker.tag) && worker.health! / worker.healthMax! >= minHealth,
+        (worker) =>
+            !isBusy(worker) &&
+            !exclude?.has(worker.tag) &&
+            worker.health! / worker.healthMax! >= minHealth &&
+            (!checkShield || (worker.shieldMax ? worker.shield! / worker.shieldMax : 0) >= minShield),
     );
     if (workers.length === 0) return undefined;
 
@@ -268,11 +271,13 @@ function assignGas(world: World, state: MiningState, townhalls: Units) {
         }
         if (count === workersPerGas) continue;
 
-        const worker = pickWorker(world, state, gas.pos, true, 0);
+        const townhall = townhalls.closestTo(gas);
+        if (!townhall) continue;
+        const worker = pickWorker(world, state, gas.pos, true, 0, 0);
         if (!worker) continue;
         unassign(state, worker.tag);
         assign(state.gas, worker.tag, gas.tag);
-        state.townhallOf.set(worker.tag, townhalls.closestTo(gas).tag);
+        state.townhallOf.set(worker.tag, townhall.tag);
         break;
     }
 }
@@ -293,7 +298,8 @@ function availableMinerals(world: World, state: MiningState, townhalls: Units) {
 
 function assignToPatch(state: MiningState, worker: Unit, mineral: Unit, townhalls: Units) {
     assign(state.minerals, worker.tag, mineral.tag);
-    state.townhallOf.set(worker.tag, townhalls.closestTo(mineral).tag);
+    const townhall = townhalls.closestTo(mineral);
+    if (townhall) state.townhallOf.set(worker.tag, townhall.tag);
 }
 
 const startOf = (world: World, townhalls: Units) =>
@@ -324,6 +330,7 @@ function assignMinerals(world: World, state: MiningState, step: Step, workers: U
     for (const worker of unassigned) {
         if (minerals.length === 0) return;
         const mineral = pickMineral(world, step, worker, minerals);
+        if (!mineral) return;
         if (countOn(state.minerals, mineral.tag) < 2) assignToPatch(state, worker, mineral, townhalls);
         if (countOn(state.minerals, mineral.tag) >= 2) minerals = minerals.filter((other) => other !== mineral);
     }
@@ -334,7 +341,9 @@ function pickMineral(world: World, step: Step, worker: Unit, minerals: Units) {
     if (time < 120) return minerals.closestTo(worker);
     if (time < 300 && step.threatened) return minerals.closestTo(startOf(world, step.townhalls));
     const closest = minerals.closestTo(worker);
-    return minerals.closerThan(MINERAL_RANGE, closest).closestTo(step.townhalls.closestTo(closest));
+    if (!closest) return undefined;
+    const home = step.townhalls.closestTo(closest);
+    return home ? minerals.closerThan(MINERAL_RANGE, closest).closestTo(home) : closest;
 }
 
 function targetsOf(world: World, state: MiningState) {
@@ -418,11 +427,12 @@ function mine(world: World, state: MiningState, step: Step, worker: Unit) {
             orders.length === 1 &&
             orders[0].abilityId === MOVE &&
             ready.length > 0 &&
-            target === ready.closestTo(worker).tag;
-        if (stuckMove || (isGathering(worker) && target !== resource.tag)) {
+            target === ready.closestTo(worker)?.tag;
+        if (stuckMove || (worker.isGathering() && target !== resource.tag)) {
             return issue(world, worker, SMART, resource.tag);
         }
-        if (settings.speedMining && mineralTag !== undefined) return speedMine(world, state, step, worker, resource);
+        if (settings.speedMining && mineralTag !== undefined)
+            return speedMine(world, state, worker, resource, step.townhalls);
         return standardMine(world, state, worker, resource, mineralTag !== undefined);
     }
 
@@ -430,30 +440,51 @@ function mine(world: World, state: MiningState, step: Step, worker: Unit) {
     if (!safe) flee(world, worker);
 }
 
-function speedMine(world: World, state: MiningState, step: Step, worker: Unit, mineral: Unit) {
-    if ((worker.orders ?? []).length >= 2) return;
+export function speedMineWorker(world: World, worker: Unit, mineral: Unit, townhall?: Unit) {
+    const { units, mining } = world.resources.get();
+    const state = stateByMining.get(mining)!;
+    return speedMine(world, state, worker, mineral, units.getBases(), townhall);
+}
 
-    if (isReturning(worker) || worker.isCarryingResource()) {
+function speedMine(
+    world: World,
+    state: MiningState,
+    worker: Unit,
+    mineral: Unit,
+    townhalls: Units,
+    explicit?: Unit,
+): boolean {
+    if ((worker.orders ?? []).length >= 2) return true;
+
+    if (worker.isReturning() || worker.isCarryingResource()) {
         const assigned = world.resources.get().units.getByTag(state.townhallOf.get(worker.tag) ?? '');
-        const townhall = isAlive(assigned) ? assigned : step.townhalls.closestTo(worker);
+        const townhall = explicit ?? (isAlive(assigned) ? assigned : townhalls.closestTo(worker));
+        if (!townhall) return false;
         const target = townhallTarget(townhall.pos, worker.pos, state.settings.townhallDistanceFactor);
         const away = distance(worker.pos, target);
         if (away > 0.75 && away < 2) {
             issue(world, worker, MOVE, target);
-            return issue(world, worker, SMART, townhall.tag, true);
+            issue(world, worker, SMART, townhall.tag, true);
+            return true;
         }
-        if (!isReturning(worker)) issue(world, worker, SMART, townhall.tag);
-        return;
+        if (worker.isReturning()) return false;
+        issue(world, worker, SMART, townhall.tag);
+        return true;
     }
 
     const target = targetsOf(world, state).get(pointKey(mineral.pos));
-    if (!target) return;
+    if (!target) return false;
     const away = distance(worker.pos, target);
     if ((away > 0.75 && away < 2) || worker.isIdle()) {
         issue(world, worker, MOVE, target);
-        return issue(world, worker, SMART, mineral.tag, true);
+        issue(world, worker, SMART, mineral.tag, true);
+        return true;
     }
-    if (away > 2 && isGathering(worker)) issue(world, worker, MOVE, target);
+    if (away > 2 && worker.isGathering()) {
+        issue(world, worker, MOVE, target);
+        return true;
+    }
+    return false;
 }
 
 function standardMine(world: World, state: MiningState, worker: Unit, resource: Unit, isMineral: boolean) {
@@ -502,16 +533,17 @@ function longDistanceMine(world: World, state: MiningState, step: Step, worker: 
     const { map, pathing, frame } = world.resources.get();
     const target = worker.orders?.[0]?.targetUnitTag;
     const onManagedPatch = target !== undefined && countOn(state.minerals, target) > 0;
-    if (isGathering(worker) && !onManagedPatch) return;
+    if (worker.isGathering() && !onManagedPatch) return;
 
     const { ready, minerals } = step;
     if (ready.length === 0) return;
 
-    if ((!isGathering(worker) && !worker.isCarryingResource()) || onManagedPatch) {
+    if ((!worker.isGathering() && !worker.isCarryingResource()) || onManagedPatch) {
         const pending = step.townhalls.filter((townhall) => townhall.buildProgress! < 1);
         let mineral: Unit | undefined;
-        if (pending.length > 0 && minerals.length > 0) {
-            mineral = minerals.closestTo(pending.closestTo(worker));
+        const pendingBase = pending.closestTo(worker);
+        if (pendingBase && minerals.length > 0) {
+            mineral = minerals.closestTo(pendingBase);
         } else {
             const fields = longDistanceFields(world, state, step);
             if (fields.length > 0) {
@@ -528,8 +560,9 @@ function longDistanceMine(world: World, state: MiningState, step: Step, worker: 
         return;
     }
 
-    if (isReturning(worker)) return;
+    if (worker.isReturning()) return;
     const base = ready.closestTo(worker);
+    if (!base) return;
     if (!safe && distanceSquared(worker.pos, base.pos) > 64) {
         const next = pathing.nextPoint(worker.pos, base.pos, { layer: 'ground', senseDanger: false });
         return issue(world, worker, MOVE, next);

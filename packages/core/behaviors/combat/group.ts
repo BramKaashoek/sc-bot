@@ -101,6 +101,7 @@ export function pathGroupToTarget({
     distanceCheckSquared = 26.25,
     successAtDistance = 0,
     sensitivity = 12,
+    smoothing = false,
     senseDanger = false,
     dangerDistance = 20,
     dangerThreshold = 5,
@@ -127,6 +128,7 @@ export function pathGroupToTarget({
             const next = ctx.world.resources.get().pathing.nextPoint(start, target, {
                 layer: layerFor(group[0], layer),
                 sensitivity,
+                smoothing,
                 senseDanger,
                 dangerDistance,
                 dangerThreshold,

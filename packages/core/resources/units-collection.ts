@@ -1,25 +1,13 @@
-import { HARVEST_GATHER_MULE } from '../constants/ability.ts';
 import { DisplayType } from '../constants/enums.ts';
-import { gatheringAbilities, returningAbilities } from '../constants/groups.ts';
 import getRandom, { shuffle } from '../utils/get-random.ts';
 import { distanceSquared, toPoint } from '../utils/geometry/point.ts';
 import { isFlying } from '../utils/geometry/units.ts';
-import { NodeSC2Error } from '../engine/errors.ts';
 import type { Point2D, Unit } from '../types.ts';
 
 type Position = Unit | Point2D;
 type UnitPredicate = (unit: Unit, index: number, array: Unit[]) => unknown;
 
 const squaredDistance = (unit: Unit, position: Position): number => distanceSquared(unit.pos, toPoint(position));
-
-const usesAbility = (unit: Unit, abilityIds: number[]): boolean => {
-    const [current] = unit.orders ?? [];
-    return current !== undefined && abilityIds.includes(current.abilityId!);
-};
-
-// python-sc2 compares the remapped HARVEST_GATHER, which the MULE's raw id also maps to
-const gatheringOrMuleAbilities = [...gatheringAbilities, HARVEST_GATHER_MULE];
-const collectingAbilities = [...gatheringOrMuleAbilities, ...returningAbilities];
 
 const isUnitLike = (value: unknown): boolean => typeof value === 'object' && value !== null && 'tag' in value;
 
@@ -92,18 +80,16 @@ export class Units extends Array<Unit> {
         return this.length > 0;
     }
 
-    get first(): Unit {
-        this.assertNotEmpty();
+    get first(): Unit | undefined {
         return this[0];
     }
 
-    get random(): Unit {
-        this.assertNotEmpty();
-        return getRandom(this);
+    get random(): Unit | undefined {
+        return this.length > 0 ? getRandom(this) : undefined;
     }
 
-    get center(): Point2D {
-        this.assertNotEmpty();
+    get center(): Point2D | undefined {
+        if (this.length === 0) return undefined;
         return {
             x: this.reduce((sum, unit) => sum + unit.pos.x, 0) / this.length,
             y: this.reduce((sum, unit) => sum + unit.pos.y, 0) / this.length,
@@ -155,15 +141,15 @@ export class Units extends Array<Unit> {
     }
 
     get gathering(): Units {
-        return this.filter((unit) => usesAbility(unit, gatheringOrMuleAbilities));
+        return this.filter((unit) => unit.isGathering());
     }
 
     get returning(): Units {
-        return this.filter((unit) => usesAbility(unit, returningAbilities));
+        return this.filter((unit) => unit.isReturning());
     }
 
     get collecting(): Units {
-        return this.filter((unit) => usesAbility(unit, collectingAbilities));
+        return this.filter((unit) => unit.isCollecting());
     }
 
     get preferIdle(): Units {
@@ -193,20 +179,12 @@ export class Units extends Array<Unit> {
         return this.find((unit) => unit.tag === tag);
     }
 
-    byTag(tag: string): Unit {
-        const unit = this.findByTag(tag);
-        if (!unit) {
-            throw new NodeSC2Error(`Unit not found: ${tag}`);
-        }
-        return unit;
-    }
-
     take(count: number): Units {
         return this.slice(0, Math.max(count, 0));
     }
 
     randomOr<Fallback>(fallback: Fallback): Unit | Fallback {
-        return this.length > 0 ? this.random : fallback;
+        return this.random ?? fallback;
     }
 
     randomGroupOf(count: number): Units {
@@ -221,24 +199,23 @@ export class Units extends Array<Unit> {
     }
 
     closestDistanceTo(position: Position): number {
-        this.assertNotEmpty();
         return Math.sqrt(Math.min(...this.map((unit) => squaredDistance(unit, position))));
     }
 
     furthestDistanceTo(position: Position): number {
-        this.assertNotEmpty();
+        if (this.length === 0) return -Infinity;
         return Math.sqrt(Math.max(...this.map((unit) => squaredDistance(unit, position))));
     }
 
-    closestTo(position: Position): Unit {
-        this.assertNotEmpty();
+    closestTo(position: Position): Unit | undefined {
+        if (this.length === 0) return undefined;
         return this.reduce((best, unit) =>
             squaredDistance(unit, position) < squaredDistance(best, position) ? unit : best,
         );
     }
 
-    furthestTo(position: Position): Unit {
-        this.assertNotEmpty();
+    furthestTo(position: Position): Unit | undefined {
+        if (this.length === 0) return undefined;
         return this.reduce((best, unit) =>
             squaredDistance(unit, position) > squaredDistance(best, position) ? unit : best,
         );
@@ -264,21 +241,15 @@ export class Units extends Array<Unit> {
     }
 
     furthestNUnits(position: Position, count: number): Units {
-        return count <= 0 ? Units.from([]) : this.sortedByDistanceTo(position).slice(-count);
+        return count <= 0 ? Units.from([]) : this.sortedByDistanceTo(position, true).slice(0, count);
     }
 
     inDistanceOfGroup(other: Units, distance: number): Units {
-        if (other.length === 0) {
-            throw new NodeSC2Error('Other units object is empty');
-        }
         return this.filter((unit) => other.some((target) => squaredDistance(unit, target) < distance ** 2));
     }
 
-    inClosestDistanceToGroup(other: Units): Unit {
-        this.assertNotEmpty();
-        if (other.length === 0) {
-            throw new NodeSC2Error('Given units object is empty');
-        }
+    inClosestDistanceToGroup(other: Units): Unit | undefined {
+        if (this.length === 0 || other.length === 0) return undefined;
         const nearestSquared = (unit: Unit) => Math.min(...other.map((target) => squaredDistance(unit, target)));
         return this.reduce((best, unit) => (nearestSquared(unit) < nearestSquared(best) ? unit : best));
     }
@@ -352,11 +323,5 @@ export class Units extends Array<Unit> {
 
     private sortedByDistanceFrom(position: Position, distance: number): Units {
         return this.sorted((unit) => Math.abs(Math.sqrt(squaredDistance(unit, position)) - distance));
-    }
-
-    private assertNotEmpty(): void {
-        if (this.length === 0) {
-            throw new NodeSC2Error('Units object is empty');
-        }
     }
 }

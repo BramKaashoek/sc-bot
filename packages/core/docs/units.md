@@ -1,6 +1,6 @@
 # Units
 
-Everything on the board is a [`Unit`](#unit): your army and buildings, the enemy's, minerals, geysers, rocks and xel'naga towers. The engine keeps one `Unit` object per tag and updates it in place every step, so a reference you hold stays valid for the whole game. Units your own side lost, and neutral ones that died, stay in the store labelled `dead`; enemies are kept as [memory](#memory) after they leave vision.
+Everything on the board is a [`Unit`](#unit): your army and buildings, the enemy's, minerals, geysers, rocks and xel'naga towers. The engine keeps one `Unit` object per tag and updates it in place every step, so a reference you hold stays valid for the whole game. Neutral units that died stay in the store labelled `dead`; your own and enemy units that died leave it (the `Unit` you hold keeps the label); enemies that left vision are kept as [memory](#memory) after they leave vision.
 
 Four resources cover them:
 
@@ -17,7 +17,7 @@ Where a getter takes a `filter`, it is an `Alliance` value (`Alliance.ENEMY`) or
 
 #### `units.getAll(filter?: Alliance | UnitFilter | ((unit: Unit) => boolean)) => Units`
 
-Every unit the engine knows: the current ones, enemies kept as memory, and own and neutral units that died (labelled `dead`) or left the observation. Without a filter that is your own, enemy and neutral units (allied units are left out). Use it with a filter; `getAlive` is what you usually want.
+Every unit the engine knows: the current ones, enemies kept as memory, and own and neutral units that left the observation, plus neutral units that died (labelled `dead`). Own and enemy units whose death SC2 reported are gone. Without a filter that is your own, enemy and neutral units (allied units are left out). Use it with a filter; `getAlive` is what you usually want.
 
 #### `units.getAlive(filter?: Alliance | UnitFilter) => Units`
 
@@ -48,7 +48,7 @@ Alive units of those types, of any alliance. No filter.
 
 #### `units.getByTag(tags: string[]) => Units`
 
-One tag gives the `Unit`, or `undefined` for an unknown tag. An array gives the known units as `Units`, leaving out unknown tags. Looks in your own, neutral and enemy units, so a dead unit is found too.
+One tag gives the `Unit`, or `undefined` for an unknown tag. An array gives the known units as `Units`, leaving out unknown tags. Looks in your own, neutral and enemy units, so a dead neutral unit is found, but a dead own or enemy unit is `undefined`.
 
 #### `units.getBases(filter: Alliance | UnitFilter = { alliance: Alliance.SELF }) => Units`
 
@@ -156,13 +156,13 @@ export async function onStep({ resources }: World) {
     const { units, map, actions } = resources.get();
     const army = units.getById([MARINE, MARAUDER]).ready;
     const enemies = units.getEnemyUnits().visible;
-    if (army.empty) return;
-
     const front = army.closestTo(map.getEnemyMain()!.townhallPosition);
-    const threats = enemies.closerThan(12, front).sortedByDistanceTo(front);
-    const stragglers = army.idle.furtherThan(15, army.center);
+    if (!front) return;
 
-    if (threats.exists) {
+    const threats = enemies.closerThan(12, front).sortedByDistanceTo(front);
+    const stragglers = army.idle.furtherThan(15, front);
+
+    if (threats.first) {
         await actions.attackMove(army, threats.first.pos);
     } else if (stragglers.exists) {
         await actions.move(stragglers.take(8), front.pos);
@@ -172,19 +172,23 @@ export async function onStep({ resources }: World) {
 
 #### Empty collections
 
-These throw `Error` on an empty `Units`, so check `exists` first, or use `randomOr`:
+Nothing on `Units` throws on an empty collection.
 
-- `first`, `random`, `center`
-- `closestTo`, `furthestTo`, `closestDistanceTo`, `furthestDistanceTo`
-- `inClosestDistanceToGroup`
+| Member | On an empty `Units` |
+| --- | --- |
+| `first`, `random`, `center`, `closestTo`, `furthestTo` | `undefined` |
+| `inClosestDistanceToGroup` | `undefined`, also when `other` is empty |
+| `closestDistanceTo` | `Infinity` |
+| `furthestDistanceTo` | `-Infinity` |
+| `inDistanceOfGroup` | an empty `Units`, also when `other` is empty |
 
-`inDistanceOfGroup` and `inClosestDistanceToGroup` also throw when `other` is empty, and `byTag` throws when the tag is missing. Everything else returns an empty collection.
+`findByTag` returns `undefined` for a missing tag. Everything else returns an empty collection.
 
 #### Properties
 
 ```text
 amount: number, empty: boolean, exists: boolean
-first: Unit, random: Unit, center: Point2D, tags: Set<string>
+first: Unit | undefined, random: Unit | undefined, center: Point2D | undefined, tags: Set<string>
 ```
 
 Each of these returns `Units`:
@@ -211,7 +215,6 @@ preferIdle     the same units, idle ones first
 copy() => Units
 union(other), intersection(other), difference(other) => Units    // by tag
 findByTag(tag) => Unit | undefined
-byTag(tag) => Unit
 take(count) => Units
 randomGroupOf(count) => Units
 randomOr(fallback) => Unit | Fallback
@@ -226,15 +229,16 @@ sorted(key: (unit) => Key, reverse = false) => Units
 #### Distance
 
 ```text
-closestTo(position) => Unit
-furthestTo(position) => Unit
+closestTo(position) => Unit | undefined
+furthestTo(position) => Unit | undefined
 closestDistanceTo(position), furthestDistanceTo(position) => number
 closerThan(distance, position), furtherThan(distance, position) => Units
 inDistanceBetween(position, min, max) => Units
-closestNUnits(position, count), furthestNUnits(position, count) => Units
+closestNUnits(position, count) => Units, nearest first
+furthestNUnits(position, count) => Units, furthest first
 nClosestToDistance(position, distance, count), nFurthestToDistance(position, distance, count) => Units
 inDistanceOfGroup(other: Units, distance) => Units
-inClosestDistanceToGroup(other: Units) => Unit
+inClosestDistanceToGroup(other: Units) => Unit | undefined
 sortedByDistanceTo(position, reverse = false) => Units
 inAttackRangeOf(unit, bonusDistance = 0) => Units
 ```
@@ -258,11 +262,15 @@ isEnemy(), isFinished(), isCurrent(), isIdle(), isCloaked(), isSnapshot(), isMem
 age() => number                       // seconds since last seen
 isMoving(), isAttacking(), isPatrolling(), isRepairing(), isHolding(), isTransforming()
 isGathering(type?: 'minerals' | 'vespene'), isReturning(), isCollecting()
-isConstructing(), isConstructingScv()
+isUnderConstruction(), isConstructingScv()
 isCarryingMinerals(), isCarryingVespene(), isCarryingResource()
-isUsingAbility(abilityIds: number | number[])
+isUsingAbility(abilityIds: number | number[])   // first order only; matches remapped abilities
+hasOrder(abilityIds: number | number[])         // any queued order; same remapping
+hasBuildOrder()                                 // any queued order is a build order
 isFlyingOrGravitoned()
 ```
+
+Predicate rule: every `is<Activity>()` (`isMoving`, `isAttacking`, `isGathering`, `isReturning`, `isHolding`, ...) checks the first order only; `has<Order>`/`hasOrder` check every queued order. `Units#gathering`, `returning` and `collecting` answer the same as the per-unit methods, and a MULE's gather counts as gathering.
 
 `isCurrent()` is true when the unit was in this step's observation. `isMemory()` is `true` for a unit that is not current and not labelled `dead`: an enemy ghost. `isSnapshot()` is `displayType === SNAPSHOT`; on SC2 versions before 5.0.4 (base build 82457, which includes 4.10) the API misreports `displayType`, so there it falls back to the visibility grid, as python-sc2 does (the `visible` filter follows).
 
@@ -312,7 +320,7 @@ export async function microMarines({ resources }: World) {
         const targets = enemies.inAttackRangeOf(marine);
         if (targets.empty || !marine.weaponReady()) continue;
 
-        const bestTarget: Unit = targets.sorted(enemy => marine.calculateDpsVsTarget(enemy), true).first;
+        const bestTarget: Unit = targets.sorted(enemy => marine.calculateDpsVsTarget(enemy), true).first!;
         const [damage, weaponSpeed, range] = marine.calculateDamageVsTarget(bestTarget);
         console.log(damage, weaponSpeed, range, marine.hasBuff(STIMPACK), marine.realSpeed());
         await actions.attack([marine], bestTarget);
@@ -410,6 +418,10 @@ The units of that kind within `distance`.
 #### `spatial.anyInRange(from: Point2D | Unit, distance: number, kind: SpatialKind) => boolean`
 
 Whether there is at least one; stops at the first.
+
+#### `spatial.anyInRangeBatch(points: Point2D[], distance: number, kind: SpatialKind) => boolean[]`
+
+`anyInRange` for each point, in order, in one call.
 
 #### `spatial.closest(from: Point2D | Unit, kind: SpatialKind, maxDistance?: number) => Unit | undefined`
 

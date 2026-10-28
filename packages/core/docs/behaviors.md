@@ -103,13 +103,13 @@ Your finished units of a type plus `agent.alreadyPending`.
 
 When the unit stands on a dangerous cell and a safe spot exists, paths to the closest safe spot and returns `true`. `false` when it is already safe or no safe spot exists.
 
-#### `pathUnitToTarget({ unit, target, layer?, successAtDistance = 0, sensitivity = 5, senseDanger = true, dangerDistance = 20, dangerThreshold = 5 }) => Behavior`
+#### `pathUnitToTarget({ unit, target, layer?, successAtDistance = 0, sensitivity = 5, smoothing = false, senseDanger = true, dangerDistance = 20, dangerThreshold = 5 }) => Behavior`
 
 `target: Point2D`. Moves to `pathing.nextPoint(unit.pos, target, ...)` (the options after `layer` are passed through, see [pathing](map.md#pathing)). `false` when the unit is already within `successAtDistance` of the target.
 
 #### `moveToSafeTarget({ unit, target, layer?, usePathing = true, successAtDistance = 1, radius = 12, ...pathOptions }) => Behavior`
 
-`target: Point2D`; `pathOptions` are the `sensitivity`, `senseDanger`, `dangerDistance` and `dangerThreshold` of `pathUnitToTarget`. Moves to the safe spot closest to the target within `radius` of it, by pathing (or a plain move without `usePathing`). `false` when the unit is within `successAtDistance` of the target or no safe spot exists.
+`target: Point2D`; `pathOptions` are the `sensitivity`, `smoothing`, `senseDanger`, `dangerDistance` and `dangerThreshold` of `pathUnitToTarget`. Moves to the safe spot closest to the target within `radius` of it, by pathing (or a plain move without `usePathing`). `false` when the unit is within `successAtDistance` of the target or no safe spot exists.
 
 #### `shootAndMoveToTarget({ unit, enemies, target, layer?, distToTarget = 4, attackDestructables = true }) => Behavior`
 
@@ -156,7 +156,7 @@ Each returns `false` for an empty group.
 
 `closeEnemy: Unit[]`. Per unit: shoots a target in range (`shootTargetInRange` on `closeEnemy`, with `attackInRangeEnemy`), otherwise `keepUnitSafe`. `true` when any unit moved to safety.
 
-#### `pathGroupToTarget({ start, group, target, layer?, distanceCheckSquared = 26.25, successAtDistance = 0, sensitivity = 12, senseDanger = false, dangerDistance = 20, dangerThreshold = 5, preventDuplicate = true }) => Behavior`
+#### `pathGroupToTarget({ start, group, target, layer?, distanceCheckSquared = 26.25, successAtDistance = 0, sensitivity = 12, smoothing = false, senseDanger = false, dangerDistance = 20, dangerThreshold = 5, preventDuplicate = true }) => Behavior`
 
 `start: Point2D`, `target: Point2D`. Moves the group to `pathing.nextPoint(start, target, ...)`. `false` when `start` is within `successAtDistance` of the target, or, with `preventDuplicate`, when the unit closest to `start` is within `distanceCheckSquared` (squared) of a similar move.
 
@@ -212,7 +212,7 @@ The key is a unit type id. `proportion` is the unit's share of the army (the pro
 
 #### `spawnController({ composition, freeflow = false, ignoreProportionsBelowUnitCount = 0, overProduceOnLowTech = true, maximum = 20, spawnTarget? }) => Behavior`
 
-Trains toward `composition`. `spawnTarget?: Point2D` is passed to `agent.train` as `closestTo`. Throws `NodeSC2Error` at creation for a proportion sum other than 1 or a priority that isn't an integer from 0 to 10, unless `freeflow` is set.
+Trains toward `composition`. `spawnTarget?: Point2D` is passed to `agent.train` as `near`. Throws `NodeSC2Error` at creation for a proportion sum other than 1 or a priority that isn't an integer from 0 to 10, unless `freeflow` is set.
 
 Each step it goes through the types by priority. For each type that has its tech and an idle producer (a finished structure, powered for Protoss, with a free slot: two with a finished reactor, a tech lab for the units that need one) it skips the type when its share of the composition, units in production included, is already above its proportion, and otherwise trains up to `maximum`, limited by money and supply. When it can't afford a type it stops there, so cheaper types further down don't starve it. `freeflow`, or a total below `ignoreProportionsBelowUnitCount`, ignores the proportions and carries on to the next type instead. With `overProduceOnLowTech`, when only one type has its tech it tops that type up to `maximum`. Once warp gate research is done it returns `false` while a finished gateway is idle, so the gateway can morph. `true` when anything was trained.
 

@@ -40,8 +40,8 @@ describe('ActionManager', () => {
         await actions.move(marine, { x: 5, y: 6 }, { queue: true });
         await actions.smart(scv, depot, { queue: true });
         await actions.patrol(marine, { x: 8, y: 9 }, { queue: true });
-        await actions.gather(otherWorker, mineralField, { queue: false });
-        await actions.mine(otherWorker, depot, { queue: false });
+        await actions.gather(otherWorker, mineralField);
+        await actions.mine(otherWorker, depot);
         await actions.do([marine, scv], Ability.STOP);
 
         await actions.flushQueuedActions();
@@ -223,7 +223,7 @@ describe('ActionManager', () => {
 
         await charge(() => actions.build(UnitType.SUPPLYDEPOT, { x: 0, y: 7 }));
         await charge(() => actions.train(UnitType.ORBITALCOMMAND, cc1));
-        await charge(() => world.agent.train(UnitType.ORBITALCOMMAND, 1, cc2.pos));
+        await charge(() => world.agent.train(UnitType.ORBITALCOMMAND, { near: cc2.pos }));
         await charge(() => actions.upgrade(Upgrade.TERRANINFANTRYWEAPONSLEVEL1, ebay));
 
         expect(charged).toEqual([
@@ -570,5 +570,43 @@ describe('ActionManager', () => {
         await expect(world.resources.get().actions.build(UnitType.SUPPLYDEPOT, { x: 16, y: 16 })).rejects.toThrow(
             new BuildError(`Unit type ${UnitType.SUPPLYDEPOT} has no build ability to build it with`),
         );
+    });
+
+    it('unloadByTag sends the container no-op and cargo-panel unload at the passenger index immediately, without taking part in arbitration, and ignores unknown passengers', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const medivac = rawUnit({
+            unitType: UnitType.MEDIVAC,
+            pos: { x: 30, y: 30, z: 10 },
+            passengers: [{ tag: 'p1' }, { tag: 'p2' }],
+        });
+        await stepWith(world, 900, [medivac]);
+        const { actions, units } = world.resources.get();
+        const container = units.getByTag(medivac.tag)!;
+        const sentBefore = world.client.sent.actions.length;
+
+        await actions.as({ owner: 'army', priority: 1 }, () => actions.move(container, { x: 1, y: 1 }));
+        await actions.as({ owner: 'army', priority: 1 }, () => actions.unloadByTag(container, 'ghost'));
+        expect(world.client.sent.actions.length).toBe(sentBefore);
+
+        await actions.as({ owner: 'nydus', priority: 9 }, () => actions.unloadByTag(container, 'p2'));
+        expect(world.client.sent.actions.slice(sentBefore)).toEqual([
+            {
+                actions: [
+                    { actionRaw: { unitCommand: { abilityId: 0, unitTags: [medivac.tag] } } },
+                    { actionUi: { cargoPanel: { unitIndex: 1 } } },
+                ],
+            },
+        ]);
+
+        await actions.as({ owner: 'rally', priority: 2 }, () => actions.move(container, { x: 2, y: 2 }));
+        await actions.flushQueuedActions();
+        expect(world.client.sent.actions.slice(sentBefore + 1)).toEqual([
+            unitCommand({
+                abilityId: Ability.MOVE,
+                unitTags: [medivac.tag],
+                targetWorldSpacePos: { x: 2, y: 2 },
+                queueCommand: false,
+            }),
+        ]);
     });
 });

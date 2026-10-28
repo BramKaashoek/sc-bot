@@ -913,7 +913,6 @@ async function captureMap(target: MapTarget) {
                 { type: PlayerType.PARTICIPANT, race: target.race },
                 { type: PlayerType.COMPUTER, race: Race.ZERG, difficulty: Difficulty.VERYEASY },
             ],
-            false,
             { randomSeed: RANDOM_SEED },
         );
         // SC2 sends actions/errors/chat/deadUnits once, so fixtures keep the response the frame system consumed

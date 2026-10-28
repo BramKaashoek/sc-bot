@@ -20,12 +20,12 @@ const bot = createAgent({
     async onStep({ agent, resources }) {
         const { buildings } = resources.get();
 
-        if (agent.supplyLeft < 3 && agent.alreadyPending(SUPPLYDEPOT) === 0 && agent.canAfford(SUPPLYDEPOT, null, { supply: true })) {
+        if (agent.supplyLeft < 3 && agent.alreadyPending(SUPPLYDEPOT) === 0 && agent.canAfford(SUPPLYDEPOT, { supply: true })) {
             buildings.build(SUPPLYDEPOT, { placement: { flags: ['wall'] } });
         }
 
         if (agent.supplyWorkers < 22) await agent.train(SCV);
-        await agent.train(MARINE, 2);
+        await agent.train(MARINE, { count: 2 });
         await agent.research(TERRANINFANTRYWEAPONSLEVEL1);
 
         if ((agent.minerals ?? 0) > 400) await agent.expandNow();
@@ -73,11 +73,11 @@ Your occupied expansions with their townhalls.
 
 Builds a townhall (`unitType`, default your race's first townhall type) at `location` (default `getNextExpansion()`) through [`buildings.build`](#buildings) with `at`, so it is tracked. Without a `location` it builds at the spot `buildings.getNextExpansion()` picks (corner coordinates, not the `getNextExpansion()` centre). Does nothing when there is no location, while an active townhall build of that type exists (`moving`, `ordered` or `constructing`; with a `location`, only one within 1 of it), or when the townhall is unaffordable.
 
-#### `agent.train(unitType: number, amount = 1, closestTo?: Point2D, trainOnlyIdleBuildings = true) => Promise<number>`
+#### `agent.train(unitType: number, opts?: { count = 1, near?: Point2D, idleOnly = true }) => Promise<number>`
 
-Starts up to `amount` units across your production structures, larva and warp gates, and resolves with how many were started. A reactor structure with no orders gets two at once for non-tech-lab units. Without `closestTo`, structures with a reactor come first and ones with a tech lab last; with it, the nearest producer first. `trainOnlyIdleBuildings` allows one queued order per structure (two with a reactor) when `true`; `false` queues without limit.
+Starts up to `count` units across your production structures, larva and warp gates, and resolves with how many were started. A reactor structure with no orders gets two at once for non-tech-lab units. Without `near`, structures with a reactor come first and ones with a tech lab last; with it, the nearest producer first. `idleOnly` allows one queued order per structure (two with a reactor) when `true`; `false` queues without limit.
 
-Resolves `0`, starting nothing, when the tech requirement is unmet or the unit isn't affordable with its supply (`canAfford(unitType, null, { supply: true })`). A structure is skipped when it is unfinished, has already received a command this observation, is unpowered (Protoss; a nexus never is), or lacks the tech lab the unit needs. A warp gate warps in 4 away from a random pylon, and stops the whole call when there is no pylon.
+Resolves `0`, starting nothing, when the tech requirement is unmet or the unit isn't affordable with its supply (`canAfford(unitType, { supply: true })`). A structure is skipped when it is unfinished, has already received a command this observation, is unpowered (Protoss; a nexus never is), or lacks the tech lab the unit needs. A warp gate warps in 4 away from a random pylon, and stops the whole call when there is no pylon.
 
 #### `agent.research(upgradeId: number) => Promise<boolean>`
 
@@ -331,9 +331,9 @@ A worker-saturation manager with speed mining, danger avoidance and self-defence
 
 Each step it drops assignments to dead, mined-out or orphaned resources (no own townhall within 10 of a mineral field or 12 of a gas building), assigns gas first (up to `workersPerGas` for each ready gas building, one new gas worker per step, one worker released from each overfull building per step), then minerals (up to two workers per field of a townhall more than 85% built; the very first assignment is the opening split over the fields closest to your main). Its commands (`HARVEST_GATHER`, `HARVEST_RETURN`, `MOVE`, `SMART`, `ATTACK`) are proposed as the `GATHERING` role at `priority` -10, so a bot command for a worker (priority 0) wins and a worker you pull is simply not managed that step.
 
-#### `mining.selectWorker(near: Point2D, opts?: { forceClose = false, minHealth = 0, role = BUILDING, exclude?: ReadonlySet<string> }) => Unit | undefined`
+#### `mining.selectWorker(near: Point2D, opts?: { forceClose = false, minHealth = 0, minShield = 0, role = BUILDING, exclude?: ReadonlySet<string> }) => Unit | undefined`
 
-Takes a worker for your own use, or `undefined`. It is unassigned and given `role`. Tags in `exclude` are never picked, nor are `command`-labelled or constructing workers. `minHealth` is a fraction of max health. Without `forceClose` the closest unassigned worker is preferred; otherwise (and when none is unassigned) a mining worker not carrying resources, preferring ones at the base closest to `near`. Nothing is assigned while mining is disabled, so `forceClose` then finds no one.
+Takes a worker for your own use, or `undefined`. It is unassigned and given `role`. Tags in `exclude` are never picked, nor are `command`-labelled or constructing workers. `minHealth` is a fraction of max health. `minShield` is a fraction of max shield and only applies to Protoss; other races ignore it. Without `forceClose` the closest unassigned worker is preferred; otherwise (and when none is unassigned) a mining worker not carrying resources, preferring ones at the base closest to `near`. Nothing is assigned while mining is disabled, so `forceClose` then finds no one.
 
 #### `mining.release(worker: Unit | string) => void`
 
@@ -374,7 +374,7 @@ type MiningSettings = {
 };
 ```
 
-- **Speed mining** (`speedMining`, minerals only): when a worker is near the field's mining point, or the townhall's return point (`townhallDistanceFactor` scales its distance from the townhall's centre), it is sent to that point and then queued onto the field or the townhall, so it skips the slow turn-around. Gas workers use plain gather and return commands. It is weaker at the default step size of 4 game loops than at 2 or 1.
+- **Speed mining** (`speedMining`, minerals only): when a worker is near the field's mining point, or the townhall's return point (`townhallDistanceFactor` scales its distance from the townhall's centre), it is sent to that point and then queued onto the field or the townhall, so it skips the slow turn-around. Gas workers use plain gather and return commands. It is weaker at the default step size of 4 game loops than at 2 or 1. The `speedMining({ worker, target, townhall? })` behavior runs the same move for one worker outside `mining`.
 - **Safety** (`keepSafe`): a worker moves to the closest safe spot when its position is in the ground-avoidance layer, when it is not on a safe ground cell and its health (plus shield, for Protoss) is at or below `fleeAtHealth`, or when the ground cost at its position is over `weightSafetyLimit`. These use [`pathing`](map.md#pathing) and [`influence`](map.md#influence). With no safe spot it gets no command.
 - **Self-defence** (`selfDefence`): while an enemy ground unit threatens one of your bases (`intel.getMainThreat('ground')`, see [`intel`](combat.md#intel)) and the worker's cell is not safe, a worker with its weapon ready attacks the weakest enemy in its range instead of fleeing, unless it is collecting and within 1 of its resource.
 - **Long-distance mining** (`longDistanceMine`): a worker without an assigned resource (its base is gone, or all fields are full) mines at an unassigned field that is safe, close to the natural early on, or at the fields of a townhall under construction, and returns its cargo to the closest ready townhall. With no ready townhall it does nothing.

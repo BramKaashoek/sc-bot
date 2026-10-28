@@ -13,6 +13,7 @@ import type {
     Grid2D,
     MapPathOptions,
     MapResource,
+    OwnedEffect,
     Point2D,
     ResourceDefinition,
     Unit,
@@ -35,7 +36,7 @@ type MapManager = MapResource & {
     setPathable: (point: Point2D, pathable?: boolean) => void;
     setPlaceable: (point: Point2D, placeable?: boolean) => void;
     closestPathable: (point: Point2D, r?: number) => Point2D;
-    setActiveEffects: (effects?: SC2APIProtocol.Effect[]) => void;
+    setActiveEffects: (effects?: OwnedEffect[]) => void;
     getCenter: (pathable?: boolean) => Point2D;
 };
 
@@ -158,13 +159,13 @@ function createMapManager(world: World): MapManager {
         getOccupiedExpansions(alliance = Alliance.SELF) {
             return this._expansions.filter((expansion) => {
                 const base = expansion.getBase();
-                return !!base && !base.labels.has('dead') && base.alliance === alliance;
+                return !!base && base.alliance === alliance;
             });
         },
         getAvailableExpansions() {
             return this._expansions.filter((expansion) => {
                 const currentBase = expansion.getBase();
-                return !currentBase || currentBase.labels.has('dead');
+                return !currentBase;
             });
         },
         closestPathable(point, r: number = 3) {
@@ -390,7 +391,9 @@ function createMapManager(world: World): MapManager {
         setExpansions(exps) {
             this._expansions = Object.freeze(exps);
             this._expansionsFromEnemy = Object.freeze(
-                this._expansions.slice().sort((a, b) => a.pathFromEnemy!.length - b.pathFromEnemy!.length),
+                this.isArcade()
+                    ? []
+                    : this._expansions.slice().sort((a, b) => a.pathFromEnemy!.length - b.pathFromEnemy!.length),
             );
         },
         setRamps(ramps) {
@@ -418,7 +421,8 @@ function createMapManager(world: World): MapManager {
             return ramps.slice();
         },
         isArcade() {
-            throw new NodeSC2Error('not implemented: isArcade');
+            const { self, enemy } = this.getLocations();
+            return !self || !enemy?.length;
         },
         getMainBaseRamp() {
             if (mainBaseRamp) return mainBaseRamp;

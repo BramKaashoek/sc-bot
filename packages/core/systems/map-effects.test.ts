@@ -3,8 +3,7 @@ import createAgent from '../agent/create-agent.ts';
 import { createTestWorld, stepTo } from '../test/create-test-world.ts';
 import { Alliance } from '../constants/enums.ts';
 import { observation, toyFixture } from '../test/factories.ts';
-
-type OwnedEffect = SC2APIProtocol.Effect & { alliance?: SC2APIProtocol.Alliance; owner?: number };
+import type { OwnedEffect } from '../types.ts';
 
 describe('map system effects', () => {
     it('keeps an own and an enemy effect of the same id at the same spot as separate effects', async () => {

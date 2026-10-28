@@ -203,7 +203,7 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
             agent.settings.race = player.race;
 
             const { realtime = false, randomSeed, disableFog, gameTimeLimit, saveReplayAs } = options;
-            await this.createGame(map, players, realtime, { randomSeed, disableFog });
+            await this.createGame(map, players, { realtime, randomSeed, disableFog });
             return this._playGame(agent, { realtime, gameTimeLimit, saveReplayAs });
         },
         async runBotVsBot(map, players, options = {}) {
@@ -251,7 +251,7 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
                 const hostMapPath = whitespaceFreeMapPath(mapPath);
 
                 await Promise.all([_client._ws ? undefined : this.connect(), guestLaunch.then(() => guest.connect())]);
-                await this.createGame(hostMapPath, players, realtime, { randomSeed, disableFog });
+                await this.createGame(hostMapPath, players, { realtime, randomSeed, disableFog });
                 const agents = [players[0].agent!, players[1].agent!];
                 const games = await Promise.all([
                     this._playGame(agents[0], { joinOptions, realtime, gameTimeLimit, saveReplayAs }),
@@ -314,7 +314,7 @@ function createEngine({ client, ...options }: EngineOptions = {}): Engine & { sh
 
             return gameResult;
         },
-        async createGame(map = '', playerSetup = [], realtime = false, { randomSeed, disableFog } = {}) {
+        async createGame(map = '', playerSetup = [], { realtime = false, randomSeed, disableFog } = {}) {
             if (isManaged) {
                 debugEngine(`Engine tried to create a game, but is being managed by a ladder manager - skipping...`);
                 return;

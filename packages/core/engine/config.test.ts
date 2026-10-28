@@ -73,6 +73,30 @@ describe('resolveConfig', () => {
         expect(resolveConfig(undefined, { file: 'relative.json', env: {}, cwd }).gameStep).toBe(5);
     });
 
+    it('reads a default .yml or .yaml file like the JSON one, and names every default file when several exist', () => {
+        const yaml = 'gameStep: 7\nfeatures:\n  chatDebug: true\nresources:\n  mining:\n    priority: -5\n';
+        const dirNamed = (name: string, contents: string) => {
+            const dir = dirWith();
+            writeFileSync(join(dir, name), contents);
+            return dir;
+        };
+        const both = dirNamed('sc-bot.config.yml', yaml);
+        writeFileSync(join(both, 'sc-bot.config.json'), '{}');
+
+        expect(resolveConfig({ gameStep: 2 }, { env: {}, cwd: dirNamed('sc-bot.config.yaml', yaml) })).toMatchObject({
+            gameStep: 2,
+            features: { chatDebug: true, eagerMapAnalysis: true },
+            resources: { mining: { priority: -5 } },
+        });
+        expect(resolveConfig(undefined, { env: {}, cwd: dirNamed('sc-bot.config.yml', yaml) }).gameStep).toBe(7);
+        expect(() => resolveConfig(undefined, { env: {}, cwd: both })).toThrow(
+            `${join(both, 'sc-bot.config.json')}, ${join(both, 'sc-bot.config.yml')}`,
+        );
+        expect(() => resolveConfig(undefined, { env: {}, cwd: dirNamed('sc-bot.config.yml', 'a: [') })).toThrow(
+            /Malformed config file .*sc-bot\.config\.yml: .*YAML/,
+        );
+    });
+
     it('rejects a bad gameStep or feature value and warns once per unknown feature', () => {
         const options = { file: false as const, env: {} };
 

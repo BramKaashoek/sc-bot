@@ -38,10 +38,10 @@ export default createSystem({
     async onUnitCreated(world, unit) {
         if (!unit.isStructure()) log(world, `created ${nameOf(unit)}`, 'cyan');
     },
-    async onBuildingConstructionStarted(world, building) {
+    async onStructureConstructionStarted(world, building) {
         log(world, `building ${nameOf(building)} at ${posOf(building.pos)}`);
     },
-    async onBuildingConstructionComplete(world, building) {
+    async onStructureConstructionComplete(world, building) {
         log(world, `built ${nameOf(building)}`, 'green');
     },
     async onUnitDestroyed(world, unit) {
