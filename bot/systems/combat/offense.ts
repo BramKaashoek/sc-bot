@@ -2,7 +2,7 @@ import { Units, type ResourceManager } from '@sc-bot/core';
 import { Alliance } from '@sc-bot/core/constants/enums';
 import { log } from '../log.ts';
 import type { CombatState, OffenseTarget, Tag } from './types.ts';
-import { getFreeUnits, getMopUpTargets, getUnitsCost, toPoint } from './utils.ts';
+import { getFreeUnits, getMopUpTargets, getUnitsCost, isGroundReachable, toPoint } from './utils.ts';
 import { runMicro } from './micro/index.ts';
 
 export const getOffenseTargets = ({
@@ -32,7 +32,7 @@ export const getOffenseTargets = ({
     // TODO: cluster scattered and score appropriately
     const enemyScatteredBuildings = units
         .getEnemyStructures()
-        .filter((building) => !building.isFlying || map.isPathable(building.pos))
+        .filter((building) => !building.isFlying || isGroundReachable(map, building.pos))
         .filter((building) => !enemyBases.some((base) => building.distanceTo(base.pos) < TOWN_SIZE_LIMIT))
         .map((building) => ({
             pos: building.pos,

@@ -14,10 +14,6 @@ const { build, train, upgrade } = taskFunctions;
 export default createSystem({
     name: 'Build',
     type: 'build',
-    async onGameStart() {
-        // train/worker tasks never release their earmarks, which leaks reserved minerals until nothing is affordable
-        this.earmarkDelay(0);
-    },
     buildOrder: [
         [16, build(REFINERY)],
         [19, build(COMMANDCENTER)],

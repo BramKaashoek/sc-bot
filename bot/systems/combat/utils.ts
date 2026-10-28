@@ -3,10 +3,20 @@ import { Alliance } from '@sc-bot/core/constants/enums';
 import type { CombatState, StringPosition, Tag } from './types.ts';
 
 export const MOP_UP_RADIUS = 25;
+const GROUND_REACH = 5;
 
 export const toPoint = (position: StringPosition): Point2D => {
     const [x, y] = position.split(',');
     return { x: Number(x), y: Number(y) };
+};
+
+export const isGroundReachable = (map: ReturnType<ResourceManager['get']>['map'], pos: Point2D) => {
+    for (let dx = -GROUND_REACH; dx <= GROUND_REACH; dx++) {
+        for (let dy = -GROUND_REACH; dy <= GROUND_REACH; dy++) {
+            if (dx * dx + dy * dy <= GROUND_REACH ** 2 && map.isPathable({ x: pos.x + dx, y: pos.y + dy })) return true;
+        }
+    }
+    return false;
 };
 
 export const getMopUpTargets = (resources: ResourceManager, target: Point2D) => {
@@ -14,7 +24,7 @@ export const getMopUpTargets = (resources: ResourceManager, target: Point2D) => 
     return units
         .getAlive(Alliance.ENEMY)
         .closerThan(MOP_UP_RADIUS, target)
-        .filter((enemy) => !enemy.isFlying || map.isPathable(enemy.pos));
+        .filter((enemy) => !enemy.isFlying || isGroundReachable(map, enemy.pos));
 };
 
 export const getFreeUnits = ({
