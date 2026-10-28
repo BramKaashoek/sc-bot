@@ -3,7 +3,8 @@ import createUnit from '../engine/create-unit.ts';
 import { perWorld } from '../engine/per-world.ts';
 import { Alliance } from '../constants/enums.ts';
 import { UnitType } from '../constants/index.ts';
-import { setAvailableAbilities, storeUnit } from '../resources/units.ts';
+import { morphSource } from '../constants/dicts/morph-source.ts';
+import { beginUnitLoop, markEnemyMorphed, setAvailableAbilities, storeUnit } from '../resources/units.ts';
 import type { Unit, UnitSystem, World } from '../types.ts';
 
 // python's on_unit_created fires once per tag per game, even if the unit later leaves the observation (e.g. loaded)
@@ -30,6 +31,8 @@ const unitSystem: UnitSystem = {
     async onStep(world: World) {
         const { events, units, frame, actions } = world.resources.get();
         const previousLoop = frame.getPrevious()?._gameLoop;
+
+        beginUnitLoop(units, previousLoop);
 
         const { units: rawUnits } = frame.getObservation().rawData!;
 
@@ -110,14 +113,6 @@ const unitSystem: UnitSystem = {
                         type: 'all',
                     });
 
-                    if (currentUnit.isStructure()) {
-                        events.write({
-                            name: 'buildingConstructionComplete',
-                            data: currentUnit,
-                            type: 'all',
-                        });
-                    }
-
                     if (unitData.orders!.length === 0) {
                         events.write({
                             name: 'unitIdle',
@@ -134,6 +129,13 @@ const unitSystem: UnitSystem = {
                         type: 'all',
                     });
                 }
+
+                if (
+                    unitData.alliance === Alliance.ENEMY &&
+                    !unitData.isHallucination &&
+                    (unitData.unitType! in morphSource || unitData.unitType === UnitType.HELLIONTANK)
+                )
+                    markEnemyMorphed(units, unitData.tag!);
 
                 if (isTransforming(unitData, currentUnit)) {
                     events.write({
@@ -170,14 +172,6 @@ const unitSystem: UnitSystem = {
                 if (hasSwitchedTargets(unitData, currentUnit)) {
                     events.write({
                         name: 'unitHasSwitchedTargets',
-                        data: currentUnit,
-                        type: 'all',
-                    });
-                }
-
-                if (unitData.alliance === Alliance.SELF && isDamaged(unitData, currentUnit)) {
-                    events.write({
-                        name: 'unitDamaged',
                         data: currentUnit,
                         type: 'all',
                     });
@@ -228,17 +222,6 @@ const unitSystem: UnitSystem = {
                         data: newUnit,
                         type: 'all',
                     });
-
-                    if (newUnit.isStructure()) {
-                        events.write({
-                            name:
-                                newUnit.buildProgress! < 1
-                                    ? 'buildingConstructionStarted'
-                                    : 'buildingConstructionComplete',
-                            data: newUnit,
-                            type: 'all',
-                        });
-                    }
 
                     if (unitData.orders!.length === 0) {
                         events.write({

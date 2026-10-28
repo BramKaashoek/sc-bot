@@ -228,6 +228,7 @@ const combatTypes: UnitTypeGroup = [
 const gatheringAbilities = [
     Ability.HARVEST_GATHER,
     Ability.HARVEST_GATHER_DRONE,
+    Ability.HARVEST_GATHER_MULE,
     Ability.HARVEST_GATHER_PROBE,
     Ability.HARVEST_GATHER_SCV,
 ];
@@ -493,6 +494,7 @@ export {
     gasMineTypes,
     gatheringAbilities,
     halfSupplyTypes,
+    harvestingAbilities,
     mineralFieldTypes,
     reactorTypes,
     repairingAbilities,

@@ -1,4 +1,4 @@
-import { researchAbilityOf, spend, techEquivalents } from '../../agent/macro.ts';
+import { researchAbilityOf, spend, techEquivalents } from '../../utils/economy.ts';
 import { Ability } from '../../constants/index.ts';
 import { Race } from '../../constants/enums.ts';
 import { researchRequirements } from '../../constants/dicts/research-requirements.ts';
@@ -41,7 +41,7 @@ type TechUpOptions = {
 
 function pendingOrComplete({ world }: BehaviorContext, upgrade: number): boolean {
     if ((world.agent.upgradeIds ?? []).includes(upgrade)) return true;
-    const ability = researchAbilityOf(world.agent, upgrade);
+    const ability = researchAbilityOf(world, upgrade);
     return (
         !!ability &&
         world.resources
@@ -63,7 +63,7 @@ function morphTownhall(ctx: BehaviorContext, structureType: number): boolean {
         .getById(structureType === LAIR ? HATCHERY : LAIR)
         .find((townhall) => townhall.buildProgress === 1 && townhall.isIdle());
     if (!idle || !ctx.order(idle, structureType === LAIR ? Ability.MORPH_LAIR : Ability.MORPH_HIVE)) return false;
-    spend(agent, agent.calculateCost(structureType));
+    spend(ctx.world, agent.calculateCost(structureType));
     return true;
 }
 
@@ -104,7 +104,7 @@ async function addTechlab(
     );
     const idleWithAddon = hosts.some((structure) => structure.isIdle() && structure.hasAddOn());
     if (!bare || idleWithAddon || !ctx.order(bare, ability)) return false;
-    spend(agent, agent.calculateCost(techlabType));
+    spend(ctx.world, agent.calculateCost(techlabType));
     return true;
 }
 

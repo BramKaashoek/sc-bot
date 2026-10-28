@@ -32,11 +32,11 @@ Proposes a move to `from` (default: the first unit's position), then a queued pa
 
 Shortcuts for `do` with the matching ability.
 
-#### `actions.gather(worker: Unit, mineralField?: Unit, opts?: { queue = true }) => Promise<void>`
+#### `actions.gather(worker: Unit, mineralField?: Unit, opts?: { queue = false }) => Promise<void>`
 
 Mine. Without a field, picks the closest finished own base that is below its ideal harvester count (or the closest base), and of that base's three nearest mineral fields the one closest to the worker. Rejects (`GatherError`) for a unit that isn't a worker or MULE, or when there is nothing to mine. A worker with the `command` label is always queued, whatever `queue` says.
 
-#### `actions.mine(workers: Unit | Unit[], gasMine: Unit, opts?: { queue = true }) => Promise<void>`
+#### `actions.mine(workers: Unit | Unit[], gasMine: Unit, opts?: { queue = false }) => Promise<void>`
 
 Like `gather`, for gas. Must be given the target gas mine.
 
@@ -91,6 +91,10 @@ Queries SC2 for at most 10 of the positions (sampled at random from longer lists
 Returns `near` itself when `unitType` can be placed there, otherwise searches outward in square rings `placementStep` apart and returns a position from the first ring with valid spots, or `false`. Options: `maxDistance = 20`, `placementStep = 2`, `randomAlternative = true` (pick randomly among the valid spots of that ring, instead of the closest) and `addonPlace = false` (also require room for a Terran add-on). For Terran and Protoss, [`placement.request`](./macro.md#placement) returns precomputed spots with flags and reservations.
 
 #### `actions.sendAction(commands: ActionRawUnitCommand | ActionRawUnitCommand[]) => Promise<ResponseAction>`
+
+#### `actions.unloadByTag(container: Unit, passengerTag: string) => void`
+
+Unloads one passenger through the container's cargo panel, sent immediately like `sendAction`. A `passengerTag` that isn't in `container.passengers` is logged on `sc2:debug:actionManager` and nothing is sent.
 
 #### `actions.sendQuery(query: RequestQuery) => Promise<ResponseQuery>`
 
@@ -175,7 +179,7 @@ A command proposed after the flush, from a promise a handler didn't await, goes 
 
 ### Sending immediately
 
-`sendAction`, `toggleAutocast` and `chatSend` (and `surrender`) send at once, outside arbitration. Units given a command through `sendAction` count as commanded for the rest of the observation: a proposal from another commander is dropped unless it strictly outranks the sender (higher priority, or at equal priority a lower rank); the sender's own follow-ups still go out. These calls are not reported in `onCommandResults`.
+`sendAction`, `unloadByTag`, `toggleAutocast` and `chatSend` (and `surrender`) send at once, outside arbitration. `unloadByTag` does not count its container as commanded. Units given a command through `sendAction` count as commanded for the rest of the observation: a proposal from another commander is dropped unless it strictly outranks the sender (higher priority, or at equal priority a lower rank); the sender's own follow-ups still go out. These calls are not reported in `onCommandResults`.
 
 ### `CommandResult`
 

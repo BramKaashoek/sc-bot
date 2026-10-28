@@ -1,4 +1,4 @@
-import { spend } from '../../agent/macro.ts';
+import { spend } from '../../utils/economy.ts';
 import { Race } from '../../constants/enums.ts';
 import { Ability } from '../../constants/index.ts';
 import {
@@ -136,7 +136,7 @@ export function autoSupply({
             if (numSupplyRequired(ctx.world) <= 0) return false;
             const structureType = SupplyUnitRace[agent.race as number];
             if (isZerg(ctx.world)) {
-                if (agent.canAfford(structureType) && (await agent.train(structureType, 1)) > 0) return true;
+                if (agent.canAfford(structureType) && (await agent.train(structureType)) > 0) return true;
             } else {
                 const flags = agent.race === Race.TERRAN ? (['supplyDepot'] as PlacementFlag[]) : undefined;
                 await buildStructure({ structureType, base, closestTo, flags }).execute(ctx);
@@ -211,7 +211,7 @@ export function upgradeCCs({
                 cc,
                 to === PLANETARYFORTRESS ? Ability.MORPH_PLANETARYFORTRESS : Ability.MORPH_ORBITALCOMMAND,
             );
-            if (ordered) spend(agent, agent.calculateCost(to));
+            if (ordered) spend(world, agent.calculateCost(to));
             return ordered;
         },
     };

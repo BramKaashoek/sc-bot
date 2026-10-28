@@ -36,7 +36,7 @@ function createExpansion(world: World, cluster: Cluster): Expansion | undefined 
         getAlliance() {
             if (this.base) {
                 const base = units.getByTag(this.base);
-                return !base || base.labels.has('dead') ? Alliance.NEUTRAL : base.alliance!;
+                return base ? base.alliance! : Alliance.NEUTRAL;
             } else {
                 return Alliance.NEUTRAL;
             }

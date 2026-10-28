@@ -1,7 +1,6 @@
 'use strict';
 
 import createDebug from 'debug';
-import { Race, Attribute } from '../constants/enums.ts';
 import { AbilitiesByUnit } from '../constants/index.ts';
 import { unitAbilities } from '../constants/dicts/unit-abilities.ts';
 import type { Cost, DataStorage, Earmark, StorageBlueprint } from '../types.ts';
@@ -42,16 +41,7 @@ function createDataManager(): DataStorage {
             );
         },
         getUnitTypeData(unitTypeId) {
-            const unitData: SC2APIProtocol.UnitTypeData = this.get('units')[unitTypeId];
-
-            if (unitData.race === Race.ZERG && unitData.attributes!.includes(Attribute.STRUCTURE)) {
-                return {
-                    ...unitData,
-                    mineralCost: unitData.mineralCost! - 50,
-                };
-            } else {
-                return unitData;
-            }
+            return this.get('units')[unitTypeId];
         },
         getUpgradeData(upgradeId) {
             return this.get('upgrades')[upgradeId];
@@ -68,14 +58,13 @@ function createDataManager(): DataStorage {
         addEarmark(earmark) {
             const earmarks: Earmark[] = this.get('earmarks');
 
-            const exists = earmarks.find((em: Earmark) => em.name === earmark.name);
+            const existing = earmarks.find((em: Earmark) => em.name === earmark.name);
 
-            if (exists) {
+            if (existing && existing.minerals === earmark.minerals && existing.vespene === earmark.vespene) {
                 return earmarks;
-            } else {
-                debugEarmark('New earmark:', earmark);
-                return this.set('earmarks', [...earmarks, earmark]);
             }
+            debugEarmark(existing ? 'Replaced earmark:' : 'New earmark:', earmark);
+            return this.set('earmarks', [...earmarks.filter((em: Earmark) => em.name !== earmark.name), earmark]);
         },
         getEarmarkTotals(earmarkName) {
             return this.get('earmarks')

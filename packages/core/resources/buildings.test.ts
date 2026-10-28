@@ -3,14 +3,15 @@ import { Ability, UnitType } from '../constants/index.ts';
 import { Alliance, Race } from '../constants/enums.ts';
 import { SCANNERSWEEP } from '../constants/effect.ts';
 import { BASE_DEFENDER, BUILDING, GATHERING, PERSISTENT_BUILDER } from '../constants/unit-role.ts';
-import { createTestWorld, stepTo } from '../test/create-test-world.ts';
+import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
+import { createTestWorld, observationAt, stepTo } from '../test/create-test-world.ts';
 import type { TestWorld } from '../test/create-test-world.ts';
 import { rawUnit } from '../test/factories.ts';
 import { Units } from './units-collection.ts';
 import type { Point2D } from '../types.ts';
 
 const BARRACKS_BUILDER = '4344512513';
-const LATER = Math.ceil(896 + 70 * 22.4);
+const LATER = Math.ceil(896 + 70 * GAME_LOOPS_PER_SECOND);
 const BARRACKS = '4350541825';
 const REFINERY = '4351590401';
 
@@ -29,16 +30,16 @@ async function step(
     gameLoop: number,
     { edits = {}, extra = [], dead = [], errors = [], effects = [] }: Step = {},
 ) {
-    const next = structuredClone(world.client.fixture.observations[896]);
-    next.observation!.gameLoop = gameLoop;
+    const next = observationAt(world, gameLoop, {
+        hide: [...dead, ...Object.keys(edits).filter((tag) => edits[tag] === null)],
+        add: extra,
+        patch: Object.fromEntries(Object.entries(edits).filter(([, edit]) => edit !== null)) as Record<
+            string,
+            Partial<SC2APIProtocol.Unit>
+        >,
+    });
     next.actionErrors = errors;
     const { rawData } = next.observation!;
-    rawData!.units = rawData!.units!.flatMap((raw) => {
-        const edit = edits[raw.tag!];
-        if (edit === null || dead.includes(raw.tag!)) return [];
-        return [edit ? { ...raw, ...edit } : raw];
-    });
-    rawData!.units.push(...extra);
     rawData!.effects = effects;
     if (dead.length > 0) rawData!.event = { deadUnits: dead };
 
@@ -287,7 +288,7 @@ describe('building tracker', () => {
         ]).toEqual([[true, true], false]);
         select.mockRestore();
         spyOn(mining, 'isEnabled').mockReturnValue(false);
-        await step(world, 1755 + 60 * 22.4, standAt(4));
+        await step(world, 1755 + 60 * GAME_LOOPS_PER_SECOND, standAt(4));
         expect(buildings.build(UnitType.SUPPLYDEPOT, there)!.workerTag).toBe(worker);
     });
 
@@ -382,7 +383,7 @@ describe('building tracker', () => {
         await step(world, 904);
         expect([blocked.status, blocked.failure]).toEqual(['failed', 'blocked']);
 
-        await step(world, 896 + 121 * 22.4);
+        await step(world, 896 + 121 * GAME_LOOPS_PER_SECOND);
         expect([gas.status, gas.failure]).toEqual(['failed', 'timeout']);
     });
 
@@ -620,7 +621,7 @@ describe('building tracker', () => {
         expect(explicit.geyserTag).toBe(nearest);
         buildings.cancel(explicit);
 
-        await step(world, 900 + 60 * 22.4 + 100, { ...enemyStep, edits: freed });
+        await step(world, 900 + 60 * GAME_LOOPS_PER_SECOND + 100, { ...enemyStep, edits: freed });
         expect(buildings.buildGas()!.geyserTag).toBe(nearest);
     });
 
@@ -682,7 +683,7 @@ describe('building tracker', () => {
         const cancelled = await step(world, 904, { extra: [{ ...structure, health: 40 }] });
         expect(cancelled).toContainEqual({ abilityId: Ability.CANCEL_BUILDINPROGRESS, tags: [structure.tag] });
 
-        await step(world, Math.ceil(896 + 121 * 22.4), { extra: [{ ...structure, health: 40 }] });
+        await step(world, Math.ceil(896 + 121 * GAME_LOOPS_PER_SECOND), { extra: [{ ...structure, health: 40 }] });
         expect([gateway.status, gateway.failure, roles.roleOf(gateway.workerTag!)]).toEqual([
             'failed',
             'timeout',

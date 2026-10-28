@@ -1,5 +1,4 @@
 import { Alliance } from '../constants/enums.ts';
-import { NodeSC2Error } from '../engine/errors.ts';
 import { createBucketIndex } from '../utils/spatial/bucket-index.ts';
 import type { BucketIndex } from '../utils/spatial/bucket-index.ts';
 import { Units } from './units-collection.ts';
@@ -54,8 +53,9 @@ export const spatialResource: ResourceDefinition<'spatial'> = {
             anyInRange(from, distance, kind) {
                 return groupFor(kind).index.forEachInRange(toPoint(from), distance, () => true);
             },
-            anyInRangeBatch() {
-                throw new NodeSC2Error('not implemented: anyInRangeBatch');
+            anyInRangeBatch(points, distance, kind) {
+                const { index } = groupFor(kind);
+                return points.map((point) => index.forEachInRange(point, distance, () => true));
             },
             closest(from, kind, maxDistance) {
                 const { units, index } = groupFor(kind);

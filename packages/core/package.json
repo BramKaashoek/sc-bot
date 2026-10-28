@@ -59,7 +59,8 @@
         ".": "./index.ts",
         "./constants/*": "./constants/*.ts",
         "./behaviors": "./behaviors/index.ts",
-        "./types": "./types.ts"
+        "./types": "./types.ts",
+        "./data/protoss_building_placements.yml": "./data/protoss_building_placements.yml"
     },
     "private": true
 }

@@ -110,6 +110,39 @@ describe('PathingResource', () => {
         expect(sparse[0]).toEqual(nextPoint(start, goal, { layer: open, senseDanger: false, sensitivity: 5 }));
     });
 
+    it('smooths the full path before sensitivity thinning, never through blocked cells', async () => {
+        const { findPath, nextPoint } = await pathing();
+        const open = grid(40, 40);
+        const start = { x: 0.5, y: 0.5 };
+        const goal = { x: 30.5, y: 12.5 };
+        const raw = findPath(start, goal, { layer: open });
+        const smooth = findPath(start, goal, { layer: open, smoothing: true });
+        expect(smooth.length).toBeLessThan(raw.length);
+        expect(smooth.at(-1)).toEqual(goal);
+        expect(findPath(start, goal, { layer: open, smoothing: false })).toEqual(raw);
+        expect(nextPoint(start, goal, { layer: open, senseDanger: false, smoothing: true, sensitivity: 2 })).toEqual(
+            smooth[1],
+        );
+
+        const walled = grid(40, 40);
+        block(walled, square(15, 6, 3));
+        expect(smooth).toEqual([
+            { x: 1.5, y: 1.5 },
+            { x: 30.5, y: 12.5 },
+        ]);
+
+        const around = findPath(start, goal, { layer: walled, smoothing: true });
+        expect(around).toEqual([
+            { x: 1.5, y: 1.5 },
+            { x: 14.5, y: 12.5 },
+            { x: 30.5, y: 12.5 },
+        ]);
+        expect(around.every((point) => walled.get(point) === 1)).toBe(true);
+        expect(findPath(start, goal, { layer: walled, smoothing: true, sensitivity: 2 })).toEqual([
+            { x: 14.5, y: 12.5 },
+        ]);
+    });
+
     it('returns only the goal for short paths and 8 linspace samples plus the goal for long ones', async () => {
         const { findLowPriorityPath } = await pathing();
         const open = grid(80, 5);

@@ -1,9 +1,9 @@
 import { describe, expect, it, spyOn } from 'bun:test';
 import { ATTACK, BUILD_SUPPLYDEPOT, HARVEST_GATHER, HARVEST_RETURN, MOVE, SMART } from '../constants/ability.ts';
 import { CARRYMINERALFIELDMINERALS } from '../constants/buff.ts';
-import { Alliance, DisplayType } from '../constants/enums.ts';
+import { Alliance, DisplayType, Race } from '../constants/enums.ts';
 import { BUILDING, GATHERING } from '../constants/unit-role.ts';
-import { COMMANDCENTER, REFINERY, ZERGLING } from '../constants/unit-type.ts';
+import { COMMANDCENTER, PROBE, REFINERY, SCV, ZERGLING } from '../constants/unit-type.ts';
 import createAgent from '../agent/create-agent.ts';
 import { createTestWorld, observationAt, stepTo } from '../test/create-test-world.ts';
 import { rawUnit } from '../test/factories.ts';
@@ -88,6 +88,14 @@ describe('mining', () => {
         expect(events.read(reader).filter(({ name }) => name === 'commandResults')).toHaveLength(0);
         expect([roles.getTags(GATHERING).size, roles.getTags(BUILDING).size]).toEqual([before, 0]);
         expect(world.resources.get().mining.isEnabled()).toBe(false);
+    });
+
+    it('assigns and commands no worker on an arcade map', async () => {
+        const { world, step } = await miningWorld();
+        world.resources.get().map.setLocations({ enemy: [] });
+
+        expect(await step()).toEqual([]);
+        expect(counts(world, PATCHES)).toEqual(PATCHES.map(() => 0));
     });
 
     it('splits 2 onto the 4 closest patches and 1 onto the rest, then caps every patch at 2', async () => {
@@ -311,6 +319,32 @@ describe('mining', () => {
         expect(await at(off(target, 1.9), [])).toEqual([{ abilityId: HARVEST_GATHER, target: patch }]);
     });
 
+    it('filters selectWorker by shield fraction for Protoss only', async () => {
+        const { world, step } = await miningWorld();
+        const { mining, roles } = world.resources.get();
+        await step();
+        const workers = roles.get(GATHERING, { types: [SCV] });
+        const near = { x: 16, y: 9 };
+
+        expect(mining.selectWorker(near, { minShield: 1, role: GATHERING })).toBeDefined();
+
+        world.agent.race = Race.PROTOSS;
+        workers.forEach((worker) => {
+            worker.unitType = PROBE;
+            worker.shield = 10;
+            worker.shieldMax = 20;
+        });
+        expect(mining.selectWorker(near, { minShield: 0.6, role: GATHERING })).toBeUndefined();
+        expect(mining.selectWorker(near, { minShield: 0.5, role: GATHERING })).toBeDefined();
+
+        workers.forEach((worker) => {
+            worker.shield = 0;
+            worker.shieldMax = 0;
+        });
+        expect(mining.selectWorker(near, { minShield: 0, role: GATHERING })).toBeDefined();
+        expect(mining.selectWorker(near, { minShield: 0.1, role: GATHERING })).toBeUndefined();
+    });
+
     it('flees on avoidance, on low health in danger, or above weightSafetyLimit', async () => {
         const { world, step } = await miningWorld();
         const { mining, units, influence, pathing } = world.resources.get();
@@ -370,9 +404,9 @@ describe('mining', () => {
         const [spare] = extra.map(({ tag }) => units.getByTag(tag)!).filter((worker) => !mining.getAssignment(worker));
         const natural = map.getNatural()!.townhallPosition;
         const fields = units.getMineralFields().filter((mineral) => mining.getWorkersOn(mineral).length === 0);
-        const costly = fields.closestTo(natural);
+        const costly = fields.closestTo(natural)!;
         influence.addCost('ground', mining.getMineralTarget(costly)!, 1, 50);
-        const next = fields.filter((mineral) => mineral !== costly).closestTo(natural);
+        const next = fields.filter((mineral) => mineral !== costly).closestTo(natural)!;
         const gathers = async (collectionRateMinerals: number) => {
             frame.getObservation().score = { scoreDetails: { collectionRateMinerals } };
             return commandsFor(world, spare);

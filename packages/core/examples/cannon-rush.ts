@@ -46,6 +46,7 @@ const bot = createAgent({
         await behaviors.run(buildWorkers({ toCount: WORKER_TARGET }));
 
         const nexus = nexuses.random;
+        if (!nexus) return;
         const pylons = units.getById(PYLON);
         const readyPylons = pylons.ready;
 
@@ -53,7 +54,7 @@ const bot = createAgent({
             if (buildings.pending(PYLON) === 0) buildings.build(PYLON, { placement: { closestTo: nexus.pos } });
         } else if (units.getById(FORGE).empty) {
             if (readyPylons.exists && buildings.pending(FORGE) === 0) {
-                buildings.build(FORGE, { placement: { closestTo: readyPylons.closestTo(nexus).pos } });
+                buildings.build(FORGE, { placement: { closestTo: readyPylons.closestTo(nexus)!.pos } });
             }
         } else if (pylons.amount < 2) {
             if (buildings.pending(PYLON) === 0) {
@@ -63,7 +64,7 @@ const bot = createAgent({
         } else if (units.getById(PHOTONCANNON).empty) {
             const nearEnemy = readyPylons.closerThan(20, enemyStart);
             if (nearEnemy.exists && buildings.pending(PHOTONCANNON) === 0) {
-                await buildNear(PHOTONCANNON, nearEnemy.random.pos);
+                await buildNear(PHOTONCANNON, nearEnemy.random!.pos);
             }
         } else if (buildings.pending() === 0 && agent.canAfford(PYLON) && agent.canAfford(PHOTONCANNON)) {
             const target = randomOnDistance(enemyStart, randomBetween(5, 12));

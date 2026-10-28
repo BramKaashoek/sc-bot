@@ -3,7 +3,7 @@
 Source: user 2026-10-27 "(1) ares parity round 2: architect compiles the remaining gaps into a plan + tickets" (core-arch.decisions.md "next work"). Inputs: ares-gap.md, ares-inventory.md, examples.md (EX-T01/T02/T05/T06 gaps), core-arch.decisions.md, ares source, current packages/core (code-checked 2026-10-27).
 Design: .agent-work/parity-r2.design.md (contracts C1–C11). Scope: packages/core only.
 
-Status: RQ1–RQ10 answered (user, 2026-10-28; core-arch.decisions.md): RQ1 c, RQ2 a, RQ3 a, RQ4 a, RQ5 a, RQ6 c, RQ7 a, RQ8 b, RQ9 "port if possible", RQ10 yes. RQ11 was answered "do it nicer?"; the redesign is RQ11' below, waiting on the user, and nothing is ticketed for it. Done: T01–T07. T08–T35 run in the order under "Runnable order with the consistency queue". T09 started (lead). New tickets T19–T35 (2026-10-28) cover Zerg (RQ1 c), path smoothing (RQ8 b) and the RQ9 items; contracts C12–C17 in parity-r2.design.md.
+Status: RQ1–RQ10 answered (user, 2026-10-28; core-arch.decisions.md): RQ1 c, RQ2 a, RQ3 a, RQ4 a, RQ5 a, RQ6 c, RQ7 a, RQ8 b, RQ9 "port if possible", RQ10 yes. RQ11 was answered "do it nicer?"; RQ11' answered (b) wrap the built-in, with the public-interface prerequisite (user, 2026-10-28): tickets T37 (prerequisite) and T38 (override). Current order: "Runnable order (snapshot 7)" (restart point). T09 started (lead). New tickets T19–T35 (2026-10-28) cover Zerg (RQ1 c), path smoothing (RQ8 b) and the RQ9 items; contracts C12–C17 in parity-r2.design.md.
 
 Ticket numbers are local to this file (R2-Tnn). "P2-D8" etc. refer to core-arch.decisions.md.
 
@@ -32,7 +32,7 @@ Every candidate re-checked against the code, not the docs.
 | 15 | Zerg: creep manager, queen/tumor creep spread, transfuse, nydus manager + nydus pathing, overlord spots | missing (roadmap "Excluded", 6a-D10) | ares creep_manager.py (787 lines), nydus_manager.py (472) | T21–T28 (RQ1 c; research audits/r2-zerg.md) |
 | 16 | adept shade tracking, ability tracker, ENEMY_NAT_HG_SPOT, Protoss supply −1 start, ares' shipped protoss_building_placements.yml data | missing, low value | core queries available abilities every step instead of tracking cooldowns | T28–T35 (RQ9 "port if possible"; research audits/r2-rq9.md; verdicts below) |
 | 17 | AddonSwap as a behavior | covered | `flying.addonSwap` (types.ts:1090) is callable from any behavior | none |
-| 18 | Replacing a built-in manager (ares Hub per-slot replacement + `additional_managers`, hub.py:38, 216) | missing for built-ins | engine/create-resource-manager.ts:34 throws on a duplicate name; adding new resources works | RQ11' (redesign, waiting on the user) |
+| 18 | Replacing a built-in manager (ares Hub per-slot replacement + `additional_managers`, hub.py:38, 216) | missing for built-ins | engine/create-resource-manager.ts:34 throws on a duplicate name; adding new resources works | T37, T38 (RQ11' (b)) |
 
 ### Section 1 (architecture) and the section 2–16 sweep
 
@@ -64,7 +64,7 @@ After phases 2–6, core covers most of ares, but a Terran bio bot still hits ga
 
 ## Non-goals
 
-- Replacing a built-in resource, until RQ11' is answered.
+- Replacing a built-in resource's slot (RQ11' (a)) and declared readers / contract suites (RQ11' (c)). Wrapping a built-in (RQ11' (b)) is in scope: T37, T38.
 - The RQ9 items that can't or shouldn't be ported (reasons under "RQ9 verdicts"): look_ahead, the build-step setters, the Ley Lines expansion fix, the persistent-builder selectWorker flags.
 - A queens manager (inject, queen roles): ares has none; the bot picks which queens run the creep and transfuse behaviors (audits/r2-zerg.md §0).
 - A gas-steal *step* (ares has none).
@@ -144,7 +144,7 @@ Each has a recommendation; "yes" accepts it.
 - **RQ9 Confirm these stay unported:** adept shade tracking, the ability tracker, ENEMY_NAT_HG_SPOT, the Protoss supply −1 start, and ares' shipped Protoss placement data (2025 map pool; T16 can load it instead), plus the low-value items under "Section 1 and the section 2–16 sweep". **Recommend yes.**
 - **RQ11 Replace a built-in resource** (ares lets a bot swap any manager). (a) `resources.register(def, { replace: true })`: keeps the built-in's slot (order, onStep, reset, onGameEnd) and must happen before the first game starts; one junior ticket (engine/create-resource-manager.ts + test + docs line), added on "yes". (b) Skip it; bots wrap or add resources instead. **Recommend (b).** No bot needs it today, and replacing a resource that others read (influence, mining) breaks their contracts silently. **Answered 2026-10-28: "do it nicer?"**, so it's re-asked as RQ11' below.
 
-### RQ11' Replacing a built-in resource, designed properly (for the user)
+### RQ11' Replacing a built-in resource, designed properly (answered 2026-10-28: (b) plus the prerequisite; T37, T38)
 
 What has to hold for any design. Other core code reaches every resource through `world.resources.get().<name>`. So a replacement is seen everywhere, as long as nobody kept a reference from before the swap and nobody reads the built-in's private state. Two things break that today:
 - Built-in resources keep their state in module WeakMaps keyed by the resource object. The built-in's `onStep`/`reset` look that state up through the instance they are handed (resources/*.ts `stateByX`), so handing them a different object fails.
@@ -183,7 +183,7 @@ Not ported, and why:
 
 - **P4 (added 2026-10-28):** T20 smoothing, T21–T28 Zerg, T29–T35 RQ9 items. Within them: T29 adept shades (real grid gap) and T20 first; T35 arcade mode last.
 
-Waves T01–T07: done. The current order for T08–T35, interleaved with the consistency queue and with file sets, is in "Runnable order with the consistency queue" after T35.
+Waves T01–T07: done. The current order for T08–T35, interleaved with the consistency queue and with file sets, is in "Runnable order (snapshot 7)" after T39.
 
 Staffing: junior by default. Senior: T09, T21, T23, T24, T25, T26, T28, T35 (reason in each ticket).
 
@@ -385,17 +385,18 @@ Staffing: junior by default. Senior: T09, T21, T23, T24, T25, T26, T28, T35 (rea
 - API contract: C1.
 - Acceptance criteria:
   - [ ] climber = ground plus mask cells. The mask is computed once per game; live footprints still block.
-  - [ ] airVsGround = air, with ground-pathable cells at `airVsGroundDefault`. groundToAir = air. priorityGroundAvoidance = ground. tacticalGround = 200 in the playable area.
+  - [ ] airVsGround = air, with ground-pathable cells at `airVsGroundDefault`. groundToAir = air. priorityGroundAvoidance = ground. tacticalGround = 200 on pathable playable cells, Infinity on walls and outside the playable area (ares get_pyastar_grid(default_weight=200)).
   - [ ] Routing follows C1:
     - an enemy marine costs ground, climber, air, airVsGround and groundToAir;
     - an enemy viking (air) costs air and airVsGround but not groundToAir;
     - a missile turret costs groundToAir;
     - a storm costs priorityGroundAvoidance and not groundToAir;
     - a disruptor shot and a baneling cost priorityGroundAvoidance.
-  - [ ] tacticalGround isn't built while disabled (getGrid returns its base). Enabled, an own marauder lowers the cells around it by army value and an enemy one raises them (×1.5 under 100 health).
+  - [ ] tacticalGround isn't built while disabled (getGrid returns its base). Enabled, an own marauder lowers the cells around it by army value and an enemy one raises them (×1.5 at 100 health or below). Army value is ares' hand-edited UNIT_DATA value where there is one (ARMY_VALUE_OVERRIDES), else (minerals / 0.9 + gas) * supply / 50. Enemy structures stamp only for the six ares handler types, and bunker (10, 15 at 100 or less) and planetary fortress (25 under 100, else 40) add an explicit stamp. Own structures subtract unless we play Zerg. Flying units never stamp. `addCost` doesn't clamp tacticalGround.
   - [ ] `getCleanGrid` works for every new layer.
   - [ ] Existing layer values are unchanged in every existing test.
-  - [ ] Influence build time before and after recorded (ad hoc).
+  - [x] Influence build time before and after recorded (ad hoc). `build()` with 300 neutral rocks, 80 enemy pylons and 100 marines, median over 60 loops: 1.83 ms before the review fixes, 1.49 ms after (the climber `held` set is gone; blocker cells are cached per tag and re-derived when unitType or position changes).
+  - Baneling: kept in priorityGroundAvoidance. ares' `_handle_baneling` is dead code (banelings take the WEIGHT_COSTS branch), but this ticket's design and the parity-2 deliberate fix put banelings in groundAvoidance and priority.
   - [ ] lint, tsc and tests green.
 - Implementation plan:
   - Where: resources/influence.ts (bases, `stamp` routing, a per-game mask cache cleared in reset); constants/influence.ts (layer lists for the priority sources; STATIC_DEFENSE air sources tagged for groundToAir).
@@ -567,7 +568,16 @@ Staffing: junior by default. Senior: T09, T21, T23, T24, T25, T26, T28, T35 (rea
   - compatibility.md: ares deviations (DEV-1 to DEV-4, climber rule, AoE finder, tactical opt-in, creep cadences, nydus fixes) and the RQ9 not-ported list with reasons.
   - changelog: entry by feature name, no ticket ids.
   - examples/README.md: gap lists trimmed.
+  - Owed deltas from finished tickets (lead, 2026-10-28; to be logged in decisions.md). Each is a checklist item; check the dev reports named for the exact text:
+    - [ ] R2-T14 (behaviors.md): the divergences from ares listed in T14's dev report; `techBaseLocation` is the tech location only (not where defence goes).
+    - [ ] R2-T10 (map.md:398, behaviors.md:20): nine influence layers, not the old count.
+    - [ ] R2-T12 (build-orders.md): `shouldHandleGasSteal`.
+    - [ ] R2-T21 (macro.md or zerg.md; compatibility.md): the ares deviations (the three DEV fixes in the 2026-10-28 decisions: creepEdges around all own townhalls, isValidTumorSpot floor-both bounds, spotters over every edge) and the creep cache semantics.
+    - [ ] R2-T25 (commands.md): `actions.unloadByTag`, raw and non-arbitrated, with its order against queued commands.
+    - [ ] R2-T30 (resources.md): `abilityTracker`; reset clears everything, including cooldowns set with `setCooldown`.
+    - [ ] R2-T39 (macro.md, behaviors.md): `placement.isPowered`/`wouldPower` and restorePower's height rule.
 - Acceptance criteria:
+  - [ ] Every owed delta above is applied.
   - [ ] Every new or changed public member appears once, in its owner page, in the doc contract's heading format with defaults.
   - [ ] Changelog Unreleased has Added/Changed and an "Upgrading" note: findPath sensitivity, the expansion picker, bile/nuke timing, adept shades ignored for 120 loops.
   - [ ] compatibility.md has no stale "not ported" line for anything ported here, and lists what stays unported with its reason.
@@ -676,6 +686,29 @@ Four tickets that create new files only, so parity work can start while types.ts
 - Stack: core. SENIOR.
 - Blocked by: T19, T21a (wires its functions).
 - Slice siblings: T22, T23, T28.
+- Record (done):
+  - Kept ares quirks:
+    - the `findAlternative: false` first tile is returned unchecked;
+    - `nextTumorOnPath` stops at its first passing path point;
+    - `minSeparation` is the radius of the alternative search;
+    - results are integer tile corners (NOT cell centres).
+  - Fixes:
+    - all townhall types for the 3.5 (enemy) and 2.5 (own) clearances;
+    - both tumor orders (`BUILD_CREEPTUMOR`, `BUILD_CREEPTUMOR_QUEEN`) count a queen's target as occupied;
+    - the T21a fixes.
+  - DEV-2: the spread gate uses loops-since-last-firing, not a modulo of the game loop.
+  - 300-tumor budget, measured on blueshift-zerg (136x136):
+
+    | Call | ms |
+    |---|---|
+    | cold getEdges | 5.6 |
+    | cold getCoverage | 11.8 |
+    | findEdgePosition x300 | 22 |
+    | nextTumorOnPath x300 | 113 |
+    | tumorLowestCostPosition x300 | 9.6 |
+    | closestTile x300 | 13.5 |
+    | randomPosition x300 | 0.5 |
+    | shouldSpread x300 | 0.3 |
 
 ## T22 Zerg behaviors: tumorSpreadCreep, useTransfuse
 
@@ -903,96 +936,293 @@ Four tickets that create new files only, so parity work can start while types.ts
 - Blocked by: T26 (nydus.ts, map-analysis.ts), T28, T33 (mining.ts), T15 (placement.ts), consistency CS-I13a (intel.ts).
 - Slice siblings: none.
 
-## Runnable now (snapshot 2, 2026-10-28; priority list for "run anything and everything")
+## T37 Resources reach each other only through public interfaces (RQ11' (b) prerequisite)
 
-Based on core-arch.status.md, which is newer than the lead's last message: CS-PM03, I10 and R2-T09 are approved. In flight: CS-PM04, R2-T08, R2-T13, CS-I13 (unsplit), CS-I14. Approved and therefore free: CS-I02, I04, I05, I07, I08, I12, PM01, PM14, PM16, PM17, CS-D01–D10, R2-T01–T07, T09.
+- Source: RQ11' answered (b) with the prerequisite (user, 2026-10-28; core-arch.decisions.md). Builds on CS-I04, CS-I05 and CS-PM09 (writer types for map/frame).
+- Why it's needed: T38 hands everyone else a wrapper at `resources.get().<name>` while the built-in keeps running. That's only safe when (1) no module reads another resource's private state through `resources.get()`, since the wrapper doesn't carry it live, and (2) engine writers and module helpers that look up state by resource instance (`stateByX`, `cachesByUnits`, `storeUnit(units, …)`) are handed the registered instance, not whatever `resources.get()` returns.
+- What to build:
+  - No resource, system or agent module reads or writes another resource's `_` member. At audit:
+    - resources/memory.ts reads the enemy store (`units._units[ENEMY]`) → `units.getAll(Alliance.ENEMY)` (same set).
+    - systems/unit.ts reads `units._units` (has/get by tag, iterate SELF/ENEMY) → `units.getByTag` / `units.getAll(alliance)`.
+    - resources/debug.ts and resources/openings.ts read `actions._client` → the definition takes the client, as `actionsResource(client)` does (`debugResource(client)`, `openingsResource(client)` in engine/create-world.ts `coreResources`).
+    - resources/actions.ts reads `frame._observation` → `frame.getObservation()`.
+    - resources/creep.ts and resources/placement.ts read `map._mapState.creep` → a public map getter. Add `map.getCreepGrid(): Readonly<Grid2D>` if CS-PM09 left none (additive).
+  - Engine writers address the registered instance: systems/frame.ts, systems/map.ts and systems/unit.ts, and the resources/units.ts module helpers (storeUnit, forgetUnit, beginUnitLoop, markEnemyMorphed), get it from an engine-internal `registeredResource(world, name)` exported by engine/create-resource-manager.ts. It isn't on the public ResourceManager type and isn't exported from index.ts. Module state keyed by a resource instance is only looked up with that instance or from inside the resource's own closure.
+  - `_units` and `_client` leave the public UnitResource and ActionManager types (onto CS-PM09's engine-only writer types). test/live.ts `clientOf` and scripts/capture-fixtures.ts use the writer type or `registeredResource`.
+- Acceptance criteria:
+  - [ ] Guard test (new engine/resource-boundaries.test.ts): scans the non-test sources under resources/, systems/, engine/, agent/ and behaviors/ and fails on a `_`-prefixed member read through `resources.get()` or through a resource object other than the module's own. Allowlist: Unit internals (`_availableAbilities*`), engine/create-client.ts internals.
+  - [ ] Test: after `resources.set({ units: { ...units }, frame: { ...frame } })` replaces what `get()` returns, one fixture step still lands in the registered instances: `registeredResource(world, 'units').getAll()` holds the step's units and `registeredResource(world, 'frame').getGameLoop()` advanced.
+  - [ ] memory, debug and openings behave as before (existing tests; openings' in-replay check is covered by a fake client status).
+  - [ ] lint, tsc and tests green; no bot/ or examples change needed (0 `_` reads there at audit).
+- Implementation plan:
+  - Where: resources/{memory,units,debug,openings,actions,creep,placement}.ts, systems/{frame,map,unit}.ts, engine/create-world.ts (coreResources), engine/create-resource-manager.ts (`registeredResource`), types.ts (UnitResource, ActionManager; MapResource getter if added), test/live.ts, scripts/capture-fixtures.ts, engine/resource-boundaries.test.ts (new), tests next to each changed resource.
+  - Interfaces: `registeredResource<K extends keyof ResourceContainer>(world: World, name: K): NonNullable<ResourceContainer[K]>` (engine-internal); `debugResource(client?)`, `openingsResource(client?)` factories.
+  - Follow: `actionsResource(client)` in engine/create-world.ts; engine/per-world.ts for a world-keyed engine-internal lookup.
+  - Don't touch: Unit internals in engine/create-unit.ts; resources/command-arbiter.ts.
+- Stack: core. Junior.
+- Blocked by: consistency CS-PM09 (types.ts chain; map/frame writer types, systems/frame.ts), CS-PQ06b and CS-PQ07c (systems/unit.ts, systems/frame.ts, units.ts), T21 (creep.ts), T35 (placement.ts), T12 (openings.ts), CS-PQ05 (actions.ts). CS-I04 ✓, CS-I05 ✓.
+- Slice siblings: T38.
 
-Can start now, all in parallel; file sets are disjoint from each other and from the in-flight set:
+## T38 Override a built-in resource (SENIOR)
+
+- Senior because: the built-in keeps its slot, state and lifecycle while everyone else sees the wrapper. Step order, both reset paths (a definition's `reset`, and `Object.assign(resource, create(world))` for resources without one) and `configure` must keep hitting the built-in, and the wrapper's non-overridden members must reach the built-in's current members after every reset. A mistake makes callers read a discarded object, with no error anywhere.
+- Source: RQ11' (b) (user, 2026-10-28); ares hub.py:38, :216 (per-slot replacement).
+- API contract:
+
+  ```ts
+  interface ResourceManager {
+      override<K extends keyof ResourceContainer>(
+          name: K,
+          factory: (builtIn: NonNullable<ResourceContainer[K]>, world: World) => NonNullable<ResourceContainer[K]>,
+          opts?: { onStep?: (resource: NonNullable<ResourceContainer[K]>, world: World) => void },
+      ): NonNullable<ResourceContainer[K]>;
+  }
+  ```
+
+  Usage: `resources.override('influence', (builtIn) => ({ ...builtIn, getGrid(layer) { … } }))`.
+- What to build:
+  - `override` calls `factory` once, with a forwarding view of the registered instance: each function member calls the registered instance's current member, with `this` bound to it, at call time. Spreading the view therefore keeps working after resets that reassign members. The returned object becomes what `resources.get()[name]` returns. The factory's return type is the full public interface, so the compiler checks the surface.
+  - The built-in's lifecycle is unchanged: onStep, reset, onGameEnd and configure (applyConfig) receive the registered instance (`registeredResource`, T37), in its slot. `opts.onStep(wrapper, world)` runs right after the built-in's onStep in the same slot, and its errors are triaged like the built-in's.
+  - Allowed until the first `resources.step` call; after that `override` throws NodeSC2Error. An unknown name throws NodeSC2Error. A second override of the same name throws NodeSC2Error (OQ-E).
+  - A factory that returns an object without spreading the view replaces the public surface. The built-in still steps, so other built-ins that read its state through their own closures are unaffected (documented).
+  - Docs: docs/resources.md "Overriding a built-in" (overrides affect callers, not the built-in's own internals; full replacement still runs the built-in), plus a changelog line.
+  - Not in this ticket: per-game state inside the wrapper (OQ-E).
+- Acceptance criteria:
+  - [ ] Test: override one influence method. Another resource's call (pathing through `resources.get().influence`) sees the override, and non-overridden members return the built-in's live values after a step and after a reset (second game on a fixture).
+  - [ ] Test: the built-in's onStep runs once per step with the registered instance, and `opts.onStep` runs after it with the wrapper.
+  - [ ] Test: a config section for the resource reaches the built-in's configure.
+  - [ ] Test: override after the first step, of an unknown name, and twice each throw NodeSC2Error.
+  - [ ] Test: a full replacement (no spread) is what `get()` returns, and the built-in still steps.
+  - [ ] Type test: a factory returning an incomplete object fails to compile (`// @ts-expect-error`).
+  - [ ] lint, tsc and tests green.
+- Implementation plan:
+  - Where: engine/create-resource-manager.ts, engine/create-resource-manager.test.ts, types.ts (ResourceManager.override), docs/resources.md, docs/changelog.md.
+  - Follow: `register` (duplicate-name check, applyConfig) and the `triageError` use in `step`.
+  - Don't touch: resources/*.ts (T37 made them safe to wrap).
+- Stack: core. SENIOR.
+- Blocked by: T37.
+- Slice siblings: T37.
+
+Open for the user (OQ-E, via the lead; T38 starts with the recommendations unless told otherwise):
+- Per-game state in a wrapper: (i) an optional `opts.reset(wrapper, world)` hook, (ii) re-run the factory on every reset (the identity of `get()[name]` changes per game), or (iii) the bot's concern. Recommend (i) as a follow-up if a bot needs it; T38 ships without it.
+- A second override of the same name: throw (recommended; mirrors `register`'s duplicate check) or wrap the previous wrapper.
+- The factory receives a forwarding view, not the raw instance (needed for resets; `builtIn === registeredResource(...)` is false). Design detail of (b), recorded so it isn't a surprise.
+
+## T39 Protoss behaviors use placement's power matrix
+
+- Source: lead, 2026-10-28, after R2-T14. restorePower approximates power as "an own pylon, finished or not, within < 6.5" (behaviors/macro/protoss.ts, `POWER_RANGE_SQUARED` and the `pylons.some(...)` filter) and has no terrain-height check. Placement's private `poweredBy` (resources/placement.ts:415) is the ares power matrix: it counts pylons at or above a build progress, requires the pylon and the point on the same terrain height, and uses the strict < 6.5 range. So a structure on a cliff below a pylon counts as powered in restorePower and not in placement.
+- What to build:
+  - `placement.isPowered(pos: Point2D, opts?: { pylonBuildProgress?: number }): boolean`: `poweredBy` made public. The default `pylonBuildProgress` is 1, as in `request`'s `powered` option.
+  - `placement.wouldPower(pylonPos: Point2D, pos: Point2D): boolean`: the same height and range rule for a pylon that doesn't exist yet. restorePower needs it to pick a slot that powers the structure. `poweredBy` uses it internally, so there's one rule.
+  - The names are a proposal; the lead may rename before start.
+  - restorePower: a structure is unpowered when `!placement.isPowered(structure.pos, { pylonBuildProgress: <any started pylon> })`. That keeps the T14 comment's ares rule of passing 1e-16, so unfinished pylons count; write it as a named constant. Slots and the on-route skip use `wouldPower` instead of the bare distance.
+  - protossStaticDefence already gets its power check through `buildings.build({ placement: { powered: true } })` → `request` → `poweredBy`. Switch it only where it has its own distance-based power test; at audit it has none. Delete `POWER_RANGE_SQUARED` from protoss.ts if nothing uses it.
+  - Before placement has solved (or on Zerg), isPowered/wouldPower behave like `request`'s guard. They return false, and restorePower then does nothing, as `request` does today.
+- Acceptance criteria:
+  - [ ] Tests (resources/placement.test.ts): isPowered is true for a point < 6.5 from a finished pylon on the same height. It is false at exactly 6.5, false across a height step, and false for an unfinished pylon unless `pylonBuildProgress` allows it.
+  - [ ] Tests (behaviors/macro/protoss.test.ts): a structure within 6.5 of a pylon on a different height counts as unpowered and gets a pylon on its own height. A slot on the wrong height is never chosen. The existing T14 cases pass, including the strict-6.5 boundary and the unfinished-pylon case.
+  - [ ] `request({ powered: true })` returns the same spots as before (existing placement tests unchanged).
+  - [ ] lint, tsc and tests green; the docs delta goes to T18 (placement power API, restorePower height rule).
+- Implementation plan:
+  - Where: resources/placement.ts (export the rule through the two members), types.ts (PlacementResource), behaviors/macro/protoss.ts, resources/placement.test.ts, behaviors/macro/protoss.test.ts.
+  - Interfaces: `isPowered(pos: Point2D, opts?: { pylonBuildProgress?: number }): boolean`, `wouldPower(pylonPos: Point2D, pos: Point2D): boolean` on PlacementResource.
+  - Follow: `poweredBy` and its `terrainHeight` lookup (resources/placement.ts:415-425).
+  - Don't touch: `request`'s selection logic; resources/buildings.ts.
+- Stack: core. Junior.
+- Blocked by: T14 ✓, CS-PM18a ✓, CS-PQ06b (types.ts slot). T15 and T39 share placement.ts in either order, never together (snapshot 4). Blocks: T35 (placement.ts).
+- Slice siblings: T14.
+
+## Runnable order (snapshot 7, 2026-10-28: restart point)
+
+This is the current order. The snapshots below it are history.
+
+Restart check first: at the time of writing, all approved work after dcca27e was uncommitted in /home/bram/code/other/sc-bot-core-arch (115 changed files). If the new machine starts from the remote, confirm that batch was committed and pushed. If it wasn't, every "done" below is missing from the code.
+
+Done (R2): T01–T16, T19–T36, T20a, T21a, T28a, T39. Done (consistency): CS-I01–I14, CS-D01–D10, CS-PM01–PM04, PM05a, PM12–PM18b, CS-PQ01a, PQ02a, PQ06b, PQ07b, PQ09.
+
+In flight when the session ended (check each one's state on restart; re-run its review if it never got one):
+
+| ticket | files |
+|---|---|
+| CS-PQ07c (getAll/getByTag drop dead own units; off the types.ts chain) | systems/frame.ts, resources/units.ts, readers in resources/{roles,mining,buildings,flying,placement,map}.ts, engine/create-expansion.ts, tests, docs/units.md, changelog |
+| CS-I15 (last file) | resources/influence.test.ts |
+| R2-T17 (examples) | examples/ares/{influence-and-pathing,custom-building-placements,build-runner}.ts + tests |
+
+Remaining, in order:
+
+| step | ticket | starts when | notes |
+|---|---|---|---|
+| 1 | R2-T18 docs + changelog (junior) | T17 (it was the last R2 implementation ticket) | Includes the "Owed deltas" checklist in T18 (T10, T12, T14, T21, T25, T30, T39). It holds docs/ while it runs. |
+| 1 | CS-PM05b units/map shapes + PQ2(b)(c) (junior) | PQ07c (units.ts) | Code can run in parallel with T18; its docs/units.md and changelog edits wait for T18 to release docs/. |
+| 2 | CS-PM05c `near` names | PM05b | |
+| 3 | CS-PQ01b absence is undefined | PM05c | |
+| 4 | CS-PQ06a one expansion shape | PQ01b | |
+| 5 | CS-PQ05 sync commands | PQ06a | OQ-D (getNextExpansion sync?) still open |
+| 6 | CS-PQ07a canAfford doesn't settle | PQ05 | |
+| 7 | CS-PM06 time units (+PQ3, PQ10e) | PQ07a | |
+| 8 | CS-PM07 coordinates and grids | PM06 | |
+| 9 | CS-PQ04 townhall builds at centre (SENIOR) | PM07 | live smoke if SC2 is available |
+| 10 | CS-PM08 renames (+PQ10a) | PQ04 | |
+| 11 | CS-PQ10d nearType/targetType | PM08 | |
+| 12 | CS-PM09 public surface hygiene | PQ10d | |
+| 13 | R2-T37 RQ11' prerequisite | PM09 | |
+| 14 | R2-T38 resources.override (SENIOR) | T37 | OQ-E still open (reset hook, second override) |
+| 15 | CS-PM10 behaviors vocabulary (+PQ10c) | T38 | |
+| 16 | CS-PM11 debug namespaces | PM10 | |
+
+Why it's serial: every step from 2 on edits types.ts, and most edit the same caller files (builder-plugin.ts, agent/macro.ts, actions.ts, buildings.ts), so they run one at a time. All R2 code tickets are done, so nothing else competes for files. Each step's other file blockers are in its ticket (consistency.md for CS-*, above for T37/T38) and are all satisfied by the steps before it.
+
+Open questions still waiting on the user (recommendations are in the tickets; a ticket starts with its recommendation unless the user overrides): OQ-A, OQ-B, OQ-C (consistency.md "Further notes"; PQ02a already shipped with OQ-C's recommendation), OQ-D, OQ-E (T38).
+
+## Runnable order history (snapshots 3–6, superseded by snapshot 7)
+
+Supersedes snapshot 2 and "Runnable order with the consistency queue" (git history has both).
+
+Done: R2-T01–T09, T13, T19, T20a, T21a, T24, T28a, T36; CS-I01–I05, I07–I14, CS-D01–D10, CS-PM01–PM04, PM12–PM17.
+
+In flight (nothing below starts on these files until they land):
+
+| ticket | files |
+|---|---|
+| R2-T10 | resources/influence.ts, constants/influence.ts, resources/influence.test.ts |
+| R2-T12 | systems/builder-plugin.ts (+test), resources/openings.ts, utils/build-order/gas-steal.ts (+test) |
+| R2-T14 | behaviors/macro/protoss.ts (+test) |
+| R2-T20 | resources/pathing.ts, behaviors/combat/{individual,group}.ts (+tests) |
+| R2-T21 | resources/creep.ts (+test) |
+| R2-T25 | resources/actions.ts (+test), test/fake-client.ts |
+| R2-T28 | resources/map-analysis.ts, utils/build-order/{parse,targets}.ts (+tests) |
+| R2-T30 | resources/ability-tracker.ts (+test) |
+| R2-T33 | resources/{mining,spatial}.ts, behaviors/macro/speed-mining.ts, utils/units/supply.ts, behaviors/combat/{spells,terran}.ts, examples/ares/custom-behaviors.ts, constants/dicts/morph-source.ts (+tests) |
+| bot canAfford fix | bot/systems/economy.ts |
+| not on the lead's list, dirty tree: looks like R2-T34 | resources/units.ts, systems/unit.ts, systems/unit.test.ts |
+| not on the lead's list, dirty tree: owner unknown | docs/{agents,behaviors,build-orders,commands,compatibility,macro,map,units,changelog}.md, examples/README.md |
+
+**Snapshot 6 (2026-10-28, later).** Approved since snapshot 5: CS-PQ01a, PM18b; R2-T10, T23, T26, T27, T31, T39; CS-I15 except influence.test.ts. In flight: R2-T11 (influence.ts, constants/influence.ts + tests), R2-T15 (placement.ts, builder-plugin.ts + tests; also targets.ts if it needs it).
+
+Lead decisions after snapshot 6 (decisions.md, 2026-10-28):
+- No temporary re-export: CS-I06 waits for T15.
+- CS-PQ07c leaves the types.ts chain and runs after PQ07b and T15.
+- The "after T18" gate on CS-PM05a is dropped.
+
+In flight: CS-PQ07b (types.ts, engine/create-unit.ts, resources/{units-collection,actions,mining}.ts (+tests), utils/workers/select-builder.ts, constants/groups.ts, docs/units.md, changelog).
+
+Runnable now: none beyond the in-flight set. Next, as blockers land:
+
+| ticket | starts when | files |
+|---|---|---|
+| CS-I06 | T15, PQ07b (actions.ts) | utils/economy.ts (new, + test), agent/{macro,create-agent}.ts, resources/{actions,buildings}.ts, systems/builder-plugin.ts, behaviors/macro/{tech,structures,spawn}.ts, agent/macro.test.ts |
+| T16 | T15 (logical: Protoss placement shapes, RQ1 c) | engine/config.ts, utils/config/ares-yaml.ts, utils/placement/placer.ts, examples/ares/custom-building-placements.ts, fixtures (ares YAML) |
+| T35 | T15 (placement.ts), PQ07b (mining.ts) | resources/{map,mining,placement,intel,map-analysis,nydus}.ts, fixtures/ (arcade), tests |
+| CS-PQ07c (off the chain) | PQ07b (mining.ts, docs/units.md), T15 (placement.ts); not alongside T35 (mining.ts, placement.ts, map.ts) | systems/frame.ts, resources/units.ts, readers resources/{roles,mining,buildings,flying,placement,map}.ts and engine/create-expansion.ts only where a dead check becomes unreachable, their tests, docs/units.md, changelog |
+| T29 | T11 (influence.ts) | resources/influence.ts (+test); then CS-I15's last file, resources/influence.test.ts |
+| T32 | T16 | data/protoss_building_placements.yml, utils/placement/placer.ts, package.json |
+| T17 | T15, T16 | examples/ares/{influence-and-pathing,custom-building-placements,build-runner}.ts + tests |
+| T18 | every R2 ticket | docs/*.md, examples/README.md, docs/changelog.md |
+| CS-PM05a, then the chain | PQ07b (types.ts), CS-I06 (agent/macro.ts, create-agent.ts, builder-plugin.ts), T15; and no in-flight ticket on a canAfford caller file (grep at start; T35/T16 don't hold any at audit). No longer waits for T18. | see the ticket |
+
+After T15 lands, CS-I06, T16 and one of T35 / CS-PQ07c can run in parallel. T35 and PQ07c both edit mining.ts, placement.ts and map.ts, so they never run together; T35 is the senior one and has more blockers cleared, so it goes first if both are ready.
+
+Chain after PQ07b: PM05a → PM05b → PM05c → PQ01b → PQ06a → PQ05 → PQ07a → PM06 → PM07 → PQ04 → PM08 → PQ10d → PM09 → R2-T37 → R2-T38 → PM10 → PM11. Each also waits for its file blockers (consistency.md tickets).
+
+
+**Snapshot 5 (2026-10-28, later; superseded).** Approved since snapshot 4: CS-PQ02a, PQ06b, PQ09, PM18a; R2-T12, T14, T20, T21, T22, T28, T33, T34. In flight:
+- T10 fixes: influence.ts, constants/influence.ts, influence.test.ts.
+- T23: zerg.ts (+test).
+- T39: types.ts, placement.ts, protoss.ts (+tests).
+- T26: in review (nydus.ts, map-analysis.ts held).
+
+Runnable now, disjoint from each other and from all of the above:
 
 | ticket | blockers | files |
 |---|---|---|
-| R2-T24 spent tumors out of the abilities query (SENIOR) | CS-I05 ✓, CS-I10 ✓ | systems/unit.ts, systems/unit-abilities.test.ts (new) |
-| R2-T20a smoothPath util (junior) | none (new files) | utils/pathing/smooth.ts, utils/pathing/smooth.test.ts |
-| R2-T21a creep grid functions (SENIOR) | none (new files) | utils/map/creep.ts, utils/map/creep.test.ts |
-| R2-T28a overlord-spot generator (SENIOR) | none (new files) | utils/map/overlord-spots.ts, utils/map/overlord-spots.test.ts |
-| R2-T36 RQ9 data and util files (junior) | none (new files) | constants/dicts/ability-cooldown.ts, constants/dicts/morph-source.ts, utils/units/supply.ts, data/protoss_building_placements.yml, tests next to the code files |
-| CS-D09 docs deltas so far | CS-D08 ✓ | docs/*.md, GLOSSARY.md, docs/changelog.md, examples/README.md. Applies the deltas recorded so far (PM01, PM02, PM13, PM14, PM15, PM16, PM17, PM03, the D10 nits); PM tickets that finish later edit docs themselves |
-| CS-I15 (partial: pathing/spatial/units/flying tests) | CS-I11 ✓, CS-I12 ✓ | test/create-test-world.ts, resources/{pathing,spatial,units,flying}.test.ts. The intel/buildings/influence tests wait for CS-I13. Check CS-PM04's caller grep first: if PM04 is migrating `actions.*` calls in any of these test files, those files wait for it. |
+| CS-PQ01a Units lookups return undefined | T20 ✓, T33 ✓ | resources/units-collection.ts (+test), behaviors/combat/{terran,individual}.ts, resources/{mining,flying}.ts, utils/workers/select-builder.ts, examples/cannon-rush.ts, bot/systems/combat/{micro/basic,offense}.ts, resources/mining.test.ts and behaviors/macro/speed-mining.test.ts only if they break, docs/units.md, changelog. Re-grepped: no lookup callers in zerg.ts, creep.ts, nydus.ts, map-analysis.ts, placement.ts or protoss.ts, so nothing held is touched. |
+| R2-T31 Protoss supply −1 and buildCompleted | T19 ✓; T15 only shared builder-plugin.ts, and T15 now waits for T39 on placement.ts, so T31 goes first | systems/builder-plugin.ts, systems/builder-plugin.test.ts |
+| CS-I15 (partial: everything except influence.test.ts) | CS-I13 ✓, T20 ✓, T33 ✓, T34 ✓, PM16 ✓; pathing.test.ts already clean | test/create-test-world.ts, resources/{intel,buildings,spatial,units,flying}.test.ts. influence.test.ts waits for T29 (influence chain). |
 
-Not runnable now, and why:
-- **Only the types.ts order blocks them:** T12, T14, T15, T16 and T19 (all need T08's types), T10 (T08's types plus its influence.ts placeholders), and CS-PM05 onward (types.ts). Reordering doesn't help: types.ts is already held by two in-flight tickets (PM04 and T08). The new-file splits above are how to start more parity work now. T20/T21/T28/T30/T33/T32 then do only the wiring once T19 lands.
-- CS-I06 is held by R2-T13 (agent/macro.ts), CS-I13 (buildings.ts, builder-plugin.ts) and CS-PM04 (actions.ts).
-- R2-T25, T33 (rest), T34, T35, T26, T27, T22, T23, T29, T11, T31 are behind T19 or their lanes (order below).
+No types.ts ticket is free: T39 holds types.ts. The next in the chain is CS-PQ07b. It needs CS-PQ01a (above) and CS-I06, which follows T31, so the types.ts lane waits for T31 → CS-I06. After T39 lands, T15 is runnable (placement.ts, builder-plugin.ts after T31, targets.ts). After T10 lands: CS-PM18b → T11 → T29.
 
-Conflicts among the tickets already in flight (lead to settle):
-- **R2-T08 ↔ CS-I13 on resources/influence.ts:** T08 adds layer placeholders; I13 does the influence remnants. Recommend CS-I13 leaves influence.ts out; that's CS-I13b, which runs after T08 in the influence lane.
-- **CS-I13 ↔ CS-I14 on behaviors/combat/terran.test.ts:** I13 has the `toPoint`/`isFlying` import repoint; I14 has the helper migration. One of them takes the file and the other waits; recommend I14 owns it and does the import repoint too.
-- **CS-PM04 ↔ CS-I13 / R2-T13 on caller files:** PM04 migrates `actions.*` callers, which may include behaviors/combat/*, systems/builder-plugin.ts, resources/buildings.ts and agent/macro.ts. Recommend PM04 leaves any caller file another ticket holds until that ticket lands.
+**Snapshot 4 (2026-10-28, later; superseded).** In flight:
+- T12 rework: gas-steal.ts, builder-plugin.ts (+tests), docs/build-orders.md, changelog.
+- T21 tests: creep.test.ts, compatibility.md, changelog.
+- T20/T28 tests: pathing.test.ts, map-analysis.test.ts, targets.test.ts, pathing.ts, smooth.ts.
+- T33 nits: mining.ts, speed-mining.ts (+tests).
+- CS-PQ09: data-storage.ts (+test).
+- Reviews of T10 (influence.ts files) and T26 (nydus.ts, map-analysis.ts), read-only but held.
 
-## Runnable order with the consistency queue (2026-10-28)
+Runnable now, disjoint from each other and from all of the above:
 
-The order runs from left to right. Tickets on the same row can run in parallel; their file sets don't overlap. T09 (lead, new files only) is left out. In flight from consistency.md's last snapshot: CS-PM14, PM16, PM17, I02, I05, I12, CS-DFIX → D08; nothing below starts on their files until they land.
+| ticket | blockers | files |
+|---|---|---|
+| CS-PQ06b one event per occurrence (next types.ts ticket) | T34 ✓, PM18a ✓ | types.ts, systems/unit.ts, systems/unit.test.ts, bot/systems/log.ts, docs/agents.md (events table); changelog line queued behind T12/T21 |
+| CS-PQ02a queue defaults to false | T25 ✓, LIVE-1 bot fix ✓ | resources/actions.ts, resources/actions.test.ts, engine/create-unit.ts, engine/create-unit.test.ts, examples/tutorial.ts, bot/systems/economy.ts, docs/commands.md; changelog line queued |
+| R2-T22 tumorSpreadCreep, useTransfuse | T21 (code approved; only its tests are outstanding, and T22 doesn't touch creep.ts) | behaviors/combat/zerg.ts, behaviors/combat/zerg.test.ts |
+
+Next on types.ts after PQ06b: R2-T39 (placement.ts is free, and T15 still waits for T12). Still held: CS-PM18b and T11 (T10 review); T15, T16 and T31 (T12); CS-PQ01a (T33 nits on mining.ts, T20 tests); T27 and T35 (T26 review).
+
+**Runnable now (snapshot 3)** (disjoint from each other and from everything above):
+
+| ticket | blockers | files |
+|---|---|---|
+| CS-PM18a one owned-effect type (junior) | none | types.ts, resources/{map,buildings,intel}.ts, systems/map.ts, systems/map-effects.test.ts (type assertion). Not influence.ts (CS-PM18b). If an in-flight ticket needs types.ts, it asks the lead first. |
+| CS-PQ09 earmarks latest-wins + raw unit data (junior) | none | engine/data-storage.ts, engine/data-storage.test.ts; docs/macro.md, docs/units.md, docs/changelog.md once the docs holder is done |
 
 **Shared-file chains** (strictly serial; each later ticket also needs its other blockers):
-- types.ts (as run, 2026-10-28): CS-PM03 ✓ → CS-PM04 + R2-T08 (in flight together, lead's call) → CS-PM18 → R2-T19 → CS-PM05 → PM06 → PM07 → PM08 → PM09 → PM10.
-- systems/builder-plugin.ts: T12 → T15 → T31 → CS-I06 → CS-I13a.
-- resources/influence.ts: T08 → T10 → T11 → T29 → CS-I13b.
-- resources/placement.ts: T08 → CS-I04 → T15 → T35 → CS-PM05 → PM06.
-- resources/actions.ts: CS-I07 → CS-I08 → T25 → CS-PM04 → CS-I06 → CS-PM05.
-- resources/mining.ts: CS-I07 → CS-I08 → T33 → T35 → CS-PM09.
-- resources/map-analysis.ts: T19 → T28 → T26 → T35.
-- systems/unit.ts: CS-I05 → T24 → T34 → CS-I10.
-- systems/map.ts: CS-PM17 → CS-I04 → CS-I08 → CS-I10 → CS-PM07.
-- agent/macro.ts: T13 → CS-I07 → CS-I08 → CS-I06 → CS-PM05.
+- types.ts: CS-PM18a ✓ → PQ06b → R2-T39 → PQ07b → PM05a → PM05b → PM05c → PQ01b → PQ06a → PQ05 → PQ07a → PM06 → PM07 → PQ04 → PM08 → PQ10d → PM09 → T37 → T38 → PM10 → PM11.
+- resources/influence.ts: T10 → CS-PM18b → T11 → T29 → CS-I15 (influence.test.ts).
+- systems/builder-plugin.ts: T12 ✓ → {T15, T31 in either order, never together} → CS-I06 → PM05a → PM05b → PQ01b → PQ06a → PQ05 → PQ07a → PM06 → PQ04 → PM08 → PQ10d → PM11.
+- resources/actions.ts: T25 → CS-PQ02a → CS-I06 → PQ07b → PM05c → PQ01b → PQ05 → T37.
+- engine/create-unit.ts: CS-PQ02a → PQ07b → PQ05 → PM06 → PM08.
+- resources/units-collection.ts: CS-PQ01a → PQ07b → PM05b.
+- resources/units.ts: T34 → PQ07c → PM05b → PM08 → T37.
+- systems/unit.ts: T34 → CS-PQ06b → T37.
+- systems/frame.ts: CS-PQ07c → PM09 → T37.
+- resources/mining.ts: T33 → CS-PQ01a → T35 and PQ07b (either order, never together) → PM09.
+- resources/placement.ts: {T15, T39 in either order} → T35 → PM05c → PM06 → T37.
+- resources/map-analysis.ts: T28 → T26 → T35.
+- resources/map.ts: PM18a → PM05b → PQ01b → PM07 → PM09 → T37 (T35 also edits it; it runs before PM05b).
+- systems/map.ts: PM18a → PM05b → PM07 → PM09 → T37.
+- resources/buildings.ts: PM18a → CS-I06 → PM05a → PQ06a → PM06 → PQ04 → PM08.
+- agent/macro.ts: CS-I06 → PM05a → PQ01b → PQ06a → PQ05 → PQ04 → PM08.
+- agent/create-agent.ts: CS-I06 → PM05a → PQ07a.
+- behaviors/macro/structures.ts: CS-I06 → PM05c → PQ06a → PQ04 → PM08 → PM10.
 - behaviors/combat/zerg.ts: T22 → T23 → T27.
-- behaviors/combat/individual.ts, group.ts: T20 → CS-I13a (helpers/terran only, no overlap) → CS-PM10.
-- docs/: CS-D08 → CS-D09 → T18 (later PM tickets edit docs after T18).
+- behaviors/combat/individual.ts, group.ts: T20 → CS-PQ01a → PM10.
+- resources/creep.ts: T21 → T37.
+- resources/openings.ts: T12 → T37.
+- utils/build-order/parse.ts, targets.ts: T28 → T15 (targets.ts only) → PQ10d.
+- engine/data-storage.ts: CS-PQ09.
+- bot/systems/economy.ts: bot fix → CS-PQ02a → PM05a → PM05b → PQ05. bot/systems/military/production.ts: PM05a → PQ07a.
+- docs/ and docs/changelog.md: one ticket at a time, handed over by the lead; T18 after every R2 ticket; tickets from PM05a on edit docs themselves (the after-T18 gate is dropped, lead 2026-10-28).
 
-**Waves:**
+**Waves** (a row starts when its blockers land; rows in the same wave have disjoint files):
 
-| wave | tickets (parallel) | starts when | file sets |
+| wave | ticket | starts when | file sets |
 |---|---|---|---|
-| 1 (now) | T13 | — (T04 ✓, RQ5 a) | agent/macro.ts:341-386, new agent/expansion.test.ts (agent/macro.test.ts is CS-I12's) |
-| 1 | T24 | CS-I05 lands | systems/unit.ts, systems/unit-abilities.test.ts (new) |
-| 2 | T08 | CS-PM14 lands | types.ts, constants/influence.ts, resources/influence.ts, resources/placement.ts (stubs), behaviors/macro/protoss.ts, utils/config/ares-yaml.ts, utils/placement/placer.ts, behaviors/index.ts, index.ts |
-| 2 | CS-PM01 | CS-I02 lands | engine/errors.ts, systems/create-system.ts, engine/create-resource-manager.ts, engine/create-engine.ts, engine/create-client.ts (+ tests) |
-| 3 | T19 | T08, CS-I05 | types.ts, engine/create-world.ts, resources/{actions,map-analysis,mining,spatial,units,map}.ts (stub lines), new resources/{creep,nydus,ability-tracker}.ts, behaviors/combat/zerg.ts, behaviors/macro/speed-mining.ts, utils/pathing/smooth.ts, utils/units/supply.ts, constants/build-target.ts, behaviors/index.ts, index.ts, utils/placement/placer.ts |
-| 3 | T10 | T08, T09 | resources/influence.ts, constants/influence.ts, resources/influence.test.ts |
-| 3 | T12 | T08 | new utils/build-order/gas-steal.ts, systems/builder-plugin.ts, resources/openings.ts (+ tests) |
-| 3 | T14 | T08 | behaviors/macro/protoss.ts (+ test) |
-| 3 | CS-I04 | T08, CS-I02, CS-PM17 | resources/placement.ts, utils/map/blockers.ts, systems/map.ts |
-| 4 | T20 | T19 | utils/pathing/smooth.ts, resources/pathing.ts, behaviors/combat/individual.ts, group.ts (+ tests) |
-| 4 | T21 | T19 | resources/creep.ts (+ test) |
-| 4 | T28 | T19 | utils/map/overlord-spots.ts, resources/map-analysis.ts, utils/build-order/parse.ts, utils/build-order/targets.ts (+ tests) |
-| 4 | T30 | T19 | resources/ability-tracker.ts, constants/dicts/ability-cooldown.ts (+ test) |
-| 4 | T11 | T10 | resources/influence.ts, constants/influence.ts (+ test) |
-| 4 | T15 | T12, CS-I04 | resources/placement.ts, systems/builder-plugin.ts (+ tests; targets.ts only if T28 has landed) |
-| 4 | CS-I07 | T13, T19, CS-PM01, CS-I02, CS-I05 | utils/collections.ts, utils/get-random.ts, resources/{actions,roles,mining,behaviors,flying,debug,squads,units-collection}.ts, agent/{macro,create-agent}.ts, engine/create-engine.ts, systems/{create-system,unit-plugin}.ts |
-| 5 | T22 | T21 | behaviors/combat/zerg.ts (+ test) |
-| 5 | T29 | T11 | resources/influence.ts (+ test) |
-| 5 | T16 | T15 | engine/config.ts, utils/config/ares-yaml.ts, utils/placement/placer.ts, examples/ares/custom-building-placements.ts, fixtures (ares YAML) |
-| 5 | T31 | T15 | systems/builder-plugin.ts (+ test) |
-| 5 | CS-I08 | CS-I07, CS-I04 | utils/geometry/{point,units}.ts, resources/{units-collection,map,mining,actions}.ts, utils/combat/combat-sim.ts, engine/create-unit.ts, systems/map.ts, agent/macro.ts, engine/data-storage.ts |
-| 6 | T23 | T22 | behaviors/combat/zerg.ts |
-| 6 | T25 | CS-I08 | resources/actions.ts, test/fake-client.ts (+ test) |
-| 6 | T33 | CS-I08 | resources/{mining,spatial}.ts, behaviors/macro/speed-mining.ts, utils/units/supply.ts, behaviors/combat/{spells,terran}.ts, examples/ares/custom-behaviors.ts, constants/dicts/morph-source.ts |
-| 6 | T32 | T16 | data/protoss_building_placements.yml, utils/placement/placer.ts, package.json |
-| 6 | CS-PM03 | T19, CS-I08 | types.ts, utils/geometry/point.ts, engine/data-storage.ts, resources/map.ts (callers), bot/ (anchor.ts, offense.ts) |
-| 6 | CS-I13b | T29 | resources/influence.ts |
-| 7 | T26 | T25, T28 | resources/nydus.ts, resources/map-analysis.ts (+ tests) |
-| 7 | T34 | T33, T24 | resources/units.ts, systems/unit.ts (+ tests) |
-| 7 | CS-I06 | T31, CS-I08, T25 | utils/economy.ts, agent/{macro,create-agent}.ts, resources/{actions,buildings}.ts, systems/builder-plugin.ts, behaviors/macro/{tech,structures,spawn}.ts (+ tests) |
-| 7 | CS-PM04 | CS-PM03, T25 | types.ts, resources/actions.ts, every actions.* caller (grep at start; wait for any caller file in flight), examples/, bot/ |
-| 8 | T27 | T26, T23 | behaviors/combat/zerg.ts |
-| 8 | CS-I13a | CS-I06, T33, CS-I07, CS-I08 | resources/{buildings,intel}.ts, systems/builder-plugin.ts, behaviors/combat/{helpers,terran}.ts |
-| 8 | CS-I10 | T34, CS-I08 | engine/per-world.ts, systems/unit.ts, systems/map.ts, utils/map/blockers.ts |
-| 9 | T35 | T26, T28, T33, T15, CS-I13a | resources/{map,mining,placement,intel,map-analysis,nydus}.ts, fixtures/ (arcade), tests |
-| 9 | T17 | T02, T03, T10, T12, T15, T16, T20 | examples/ares/{influence-and-pathing,custom-building-placements,build-runner}.ts + tests |
-| 9 | CS-I14 | T20, T22, T23, T27, T33, CS-I12 | behaviors/{combat,macro}/*.test.ts, test/behavior-helpers.ts |
-| 9 | CS-I15 | CS-I13a/b, T20, T29, T33, T34, CS-PM16 | test/create-test-world.ts, resources/{intel,buildings,influence,pathing,spatial,units,flying}.test.ts |
-| 10 | CS-PM05 → PM06 → PM07 → PM08 → PM09 → PM10 → PM11 | serially, each after the previous and after T35, CS-I13a/b, CS-I10 | per consistency.md tickets (broad caller sets; run alone) |
-| 10 | CS-D09 → T18 | CS-D08; T18 after every R2 ticket | docs/*.md, examples/README.md, docs/changelog.md |
+| 0 (now) | CS-PM18a | — | see "Runnable now" |
+| 0 (now) | CS-PQ09 | — | see "Runnable now" |
+| 1 | CS-PM18b | T10, PM18a | resources/influence.ts |
+| 1 | T15 | T12 | resources/placement.ts, systems/builder-plugin.ts (+tests; targets.ts only if T28 has landed) |
+| 1 | T22 | T21 | behaviors/combat/zerg.ts (+test) |
+| 1 | T26 | T25, T28 | resources/nydus.ts, resources/map-analysis.ts (+tests) |
+| 1 | CS-PQ02a | T25, bot fix | resources/actions.ts, engine/create-unit.ts (+tests), examples/tutorial.ts, bot/systems/economy.ts, docs/commands.md |
+| 1 | CS-PQ01a | T20, T33 | resources/units-collection.ts (+test), behaviors/combat/{terran,individual}.ts, resources/{mining,flying}.ts, utils/workers/select-builder.ts, examples/cannon-rush.ts, bot/systems/combat/{micro/basic,offense}.ts, docs/units.md |
+| 1 | CS-PQ06b | T34, PM18a | types.ts, systems/unit.ts, systems/unit.test.ts, bot/systems/log.ts, examples/ grep hits, docs (events) |
+| 2 | T11 | PM18b | resources/influence.ts, constants/influence.ts (+test) |
+| 2 | T16 | T15 | engine/config.ts, utils/config/ares-yaml.ts, utils/placement/placer.ts, examples/ares/custom-building-placements.ts, fixtures (ares YAML) |
+| 2 | T31 | T15 | systems/builder-plugin.ts (+test) |
+| 2 | T23 | T22 | behaviors/combat/zerg.ts |
+| 2 | T39 | T14, T15, PM18a; not alongside PQ06b (types.ts) | resources/placement.ts, types.ts (PlacementResource), behaviors/macro/protoss.ts, resources/placement.test.ts, behaviors/macro/protoss.test.ts |
+| 3 | T29 | T11 | resources/influence.ts (+test) |
+| 3 | T32 | T16 | data/protoss_building_placements.yml, utils/placement/placer.ts, package.json |
+| 3 | CS-I06 | T31, T25, PQ02a | utils/economy.ts, agent/{macro,create-agent}.ts, resources/{actions,buildings}.ts, systems/builder-plugin.ts, behaviors/macro/{tech,structures,spawn}.ts (+tests) |
+| 3 | T27 | T26, T23 | behaviors/combat/zerg.ts |
+| 3 | T35 | T26, T28, T33, T15, T39, PQ01a | resources/{map,mining,placement,intel,map-analysis,nydus}.ts, fixtures/ (arcade), tests |
+| 4 | CS-I15 | T20, T29, T33, T34 (and after T35 if T35 edits intel/buildings tests) | test/create-test-world.ts, resources/{intel,buildings,influence,pathing,spatial,units,flying}.test.ts |
+| 4 | CS-PQ07b | PQ06b, PQ01a, CS-I06, PQ02a; not alongside T35 (mining.ts) | types.ts, engine/create-unit.ts, resources/units-collection.ts, resources/{actions,mining}.ts, utils/workers/select-builder.ts, constants/groups.ts (+tests), docs/units.md |
+| 4 | T17 | T10, T12, T15, T16, T20 | examples/ares/{influence-and-pathing,custom-building-placements,build-runner}.ts + tests |
+| 5 | T18 | every R2 ticket | docs/*.md, examples/README.md, docs/changelog.md |
+| 6 (serial) | CS-PM05a → PM05b → PM05c → PQ01b → PQ06a → PQ05 → PQ07a → PM06 → PM07 → PQ04 (SENIOR) → PM08 → PQ10d → PM09 → R2-T37 → R2-T38 (SENIOR) → PM10 → PM11 | after CS-PQ07b, CS-I06 and T15 (no longer after T18; lead 2026-10-28) | per ticket (consistency.md; T37/T38 above). Each has broad caller sets in core, examples and bot/, so nothing runs beside them. |
 
 Notes:
-- CS-I13 is split into CS-I13a (buildings/builder-plugin/intel/behaviors helpers) and CS-I13b (influence.ts) so the influence lane doesn't wait on the builder-plugin lane (consistency.md updated).
-- Seniors: T21, T23, T24, T25, T26, T28, T35 (and T09). Everything else is junior.
+- Seniors still to run: T23, T26, T35, CS-PQ04, T38 (T21, T25, T28 in flight). Everything else is junior.
+- Edges added by snapshot 3 to approved tickets (sequencing only; the ticket bodies are unchanged): T35 also waits for CS-PQ01a (mining.ts) and T39 (placement.ts); CS-I06 also waits for CS-PQ02a (actions.ts); T11 waits for CS-PM18b (influence.ts).

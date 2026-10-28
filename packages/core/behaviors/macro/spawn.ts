@@ -1,4 +1,4 @@
-import { REQUIRES_TECHLAB } from '../../agent/macro.ts';
+import { REQUIRES_TECHLAB } from '../../utils/economy.ts';
 import { Race } from '../../constants/enums.ts';
 import { reactorTypes, techLabTypes } from '../../constants/groups.ts';
 import { WorkerRace } from '../../constants/race-map.ts';
@@ -60,7 +60,7 @@ export function spawnController({
             const ignoreProportions = freeflow || total < ignoreProportionsBelowUnitCount;
             const amountFor = (unitType: number, limit: number) => {
                 let count = limit;
-                while (count > 0 && !agent.canAfford(unitType, null, { count, supply: true })) count -= 1;
+                while (count > 0 && !agent.canAfford(unitType, { count, supply: true })) count -= 1;
                 return count;
             };
 
@@ -100,7 +100,7 @@ export function spawnController({
 
                 const amount = amountFor(unitType, maximum);
                 if (amount <= 0) continue;
-                const done = await agent.train(unitType, amount, spawnTarget);
+                const done = await agent.train(unitType, { count: amount, near: spawnTarget });
                 trainedOf.set(unitType, done);
                 trained += done;
             }
@@ -108,7 +108,7 @@ export function spawnController({
             if (techReady.length === 1 && overProduceOnLowTech && readyToBuild.length > 0 && maximum > 1) {
                 const [unitType] = readyToBuild;
                 const amount = amountFor(unitType, Math.max(maximum - (trainedOf.get(unitType) ?? 0), 0));
-                if (amount > 0) trained += await agent.train(unitType, amount, spawnTarget);
+                if (amount > 0) trained += await agent.train(unitType, { count: amount, near: spawnTarget });
             }
 
             return trained > 0;

@@ -50,7 +50,7 @@ export const buildProduction = async (agent: Agent, resources: ResourceManager, 
             return;
         }
 
-        if (!agent.canAfford(unitType, 'production')) {
+        if (!agent.canAfford(unitType, { earmark: 'production' })) {
             const { mineralCost, vespeneCost } = data.getUnitTypeData(unitType)
             data.addEarmark({ name: 'production', minerals: mineralCost ?? 0, vespene: vespeneCost ?? 0 })
             return

@@ -137,6 +137,18 @@ describe('individual combat behaviors', () => {
         danger(world, 'ground', { x: 14.4, y: 14 });
         const [moved, [command]] = await runBehavior(world, pathUnitToTarget({ unit: marine, target }));
         expect([moved, command.abilityId, isSafe(world, command.pos!)]).toEqual([true, MOVE, true]);
+
+        const [, [raw]] = await runBehavior(world, pathUnitToTarget({ unit: marine, target, sensitivity: 8 }));
+        const [, [smooth]] = await runBehavior(
+            world,
+            pathUnitToTarget({ unit: marine, target, sensitivity: 8, smoothing: true }),
+        );
+        const [, [viaSafe]] = await runBehavior(
+            world,
+            moveToSafeTarget({ unit: marine, target, sensitivity: 8, smoothing: true }),
+        );
+        expect(smooth.pos).not.toEqual(raw.pos);
+        expect(viaSafe.pos).toEqual(smooth.pos);
     });
 
     it('keepUnitSafe and pathUnitToTarget follow a custom grid instead of the world layer', async () => {

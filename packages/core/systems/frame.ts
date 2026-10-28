@@ -107,8 +107,10 @@ const createFrameSystem = (isRealtime: () => boolean): FrameSystem => ({
             const deadUnits = units.getByTag(event.deadUnits!);
 
             deadUnits.forEach((unit) => unit.labels.set('dead', true));
-            // enemies are kept as memory after leaving vision, so a dead one would otherwise linger forever
-            deadUnits.forEach((unit) => forgetUnit(units, Alliance.ENEMY, unit.tag!));
+            // enemies are kept as memory after leaving vision, so a dead one would otherwise linger forever; own units are never refreshed again
+            deadUnits.forEach((unit) => {
+                if (unit.alliance !== Alliance.NEUTRAL) forgetUnit(units, unit.alliance!, unit.tag!);
+            });
 
             deadUnits.forEach((unit) =>
                 events.write({

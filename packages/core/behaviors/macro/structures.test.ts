@@ -102,7 +102,7 @@ describe('autoSupply', () => {
         const { world } = await setup(structures(UnitType.HATCHERY, 1), { race: Race.ZERG, foodUsed: 23 });
         const train = spyOn(world.agent, 'train').mockResolvedValue(1);
         expect(await executeBehavior(world, autoSupply({ returnTrueIfSupplyRequired: false }))).toBe(true);
-        expect(train).toHaveBeenCalledWith(UnitType.OVERLORD, 1);
+        expect(train).toHaveBeenCalledWith(UnitType.OVERLORD);
 
         train.mockResolvedValue(0);
         expect(await executeBehavior(world, autoSupply({ returnTrueIfSupplyRequired: false }))).toBe(false);

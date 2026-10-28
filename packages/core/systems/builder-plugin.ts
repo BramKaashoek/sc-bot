@@ -13,8 +13,9 @@ import { BUILD_RUNNER_SCOUT, GATHERING, PERSISTENT_BUILDER } from '../constants/
 import { autoSupply } from '../behaviors/macro/structures.ts';
 import { generalAbility } from '../engine/data-storage.ts';
 import { NodeSC2Error } from '../engine/errors.ts';
-import { affordable } from '../agent/macro.ts';
+import { affordable } from '../utils/economy.ts';
 import { createdTypeByAbility } from '../resources/units.ts';
+import { createGasStealState, handleGasSteal, releaseGuards } from '../utils/build-order/gas-steal.ts';
 import { parseBuildOrder } from '../utils/build-order/parse.ts';
 import { resolveTarget, scoutWaypoints, structurePlacement } from '../utils/build-order/targets.ts';
 import type {
@@ -47,6 +48,8 @@ let pluginCount = 0;
 const PERSISTENT_EARLY_SUPPLY = 13;
 const PERSISTENT_EARLY_TIME = 3;
 const PERSISTENT_LATE_TIME = 9;
+const FIRST_PYLON_BEFORE = 60;
+const PERSISTENT_FIRST_PYLON_BEFORE = 30;
 const ORBITAL_TECH_READY = 0.95;
 const townhallMorphs = [MORPH_ORBITALCOMMAND, MORPH_PLANETARYFORTRESS];
 
@@ -147,6 +150,7 @@ function builderPlugin(system: EventReader<System>): void {
     let currentOpening: string | undefined;
     let currentWorld: World | undefined;
     let persistent: { picked: boolean; tag?: string } = { picked: false };
+    let gasSteal = createGasStealState();
 
     const systemOnGameStart = system.onGameStart ? system.onGameStart.bind(system) : NOOP;
     const { onStep } = system as unknown as BuildSystemObject;
@@ -189,7 +193,13 @@ function builderPlugin(system: EventReader<System>): void {
     }
 
     function normalizeBuildOrder(world: World, steps: Array<BuildTask | BuildOrderStep>) {
-        const bo = parseBuildOrder(steps, world.agent.race!);
+        const isProtoss = world.agent.race === Race.PROTOSS;
+        // ares build_order_runner.py:307-318: the probe leaves one supply early
+        const bo = parseBuildOrder(steps, world.agent.race!).map((step): typeof step => {
+            if (!isProtoss || !Array.isArray(step)) return step;
+            const [supply, task] = step;
+            return task.type === 'build' && task.id !== PYLON ? [supply - 1, task] : step;
+        });
         if (system.buildOptions!.fillWorkers === false) {
             return bo.map((step, i) => (Array.isArray(step) ? createTask(step[1], i, step[0]) : createTask(step, i)));
         }
@@ -263,6 +273,7 @@ function builderPlugin(system: EventReader<System>): void {
     system.onGameStart = async function (world: World) {
         currentWorld = world;
         persistent = { picked: false };
+        gasSteal = createGasStealState();
         defs = undefined;
         currentOpening = undefined;
 
@@ -302,6 +313,8 @@ function builderPlugin(system: EventReader<System>): void {
         }
         releasePersistent(currentWorld);
         persistent = { picked: false };
+        releaseGuards(currentWorld, gasSteal);
+        gasSteal = createGasStealState();
         const tasks = openingTasks(currentWorld, name) as BuildTaskRuntime[];
         const kept = remove ? removeCompleted(currentWorld, tasks) : tasks;
         system.setState({
@@ -312,6 +325,11 @@ function builderPlugin(system: EventReader<System>): void {
 
     const isOpen = ({ status }: BuildTaskRuntime) =>
         status === BuildOrder.COMMAND_GIVEN || status === BuildOrder.IN_PROGRESS || status === BuildOrder.NOT_STARTED;
+
+    Object.defineProperty(system, 'buildCompleted', {
+        get: () => !!system.state?.[completeSym],
+        configurable: true,
+    });
 
     const runTasks = async function (this: EventReader<System>, world: World, gameLoop: number) {
         if (system.buildOptions!.paused) {
@@ -458,7 +476,12 @@ function builderPlugin(system: EventReader<System>): void {
 
     system.onStep = async function (world: World, gameLoop: number) {
         const active = () => defs && !system.buildOptions!.paused && !this.state[completeSym];
-        if (active()) reclaimPersistent(world);
+        if (active()) {
+            reclaimPersistent(world);
+            guardGas(world, gameLoop, this.state[buildSym].find(isOpen));
+        } else if (defs) {
+            releaseGuards(world, gasSteal);
+        }
         const result = await runTasks.call(this, world, gameLoop);
         if (active()) await runOpeningOptions(world, this.state[buildSym].find(isOpen));
         return result;
@@ -526,7 +549,15 @@ function builderPlugin(system: EventReader<System>): void {
                 ? undefined
                 : targeted && 'near' in targeted
                   ? undefined
-                  : placement.request(task.id, targeted?.placement ?? placementRequest(world, task));
+                  : placement.request(
+                        task.id,
+                        withFirstPylon(
+                            world,
+                            task,
+                            targeted?.placement ?? placementRequest(world, task),
+                            PERSISTENT_FIRST_PYLON_BEFORE,
+                        ),
+                    );
         const point =
             (targeted && 'at' in targeted && targeted.at) ||
             (targeted && 'near' in targeted && targeted.near) ||
@@ -566,7 +597,7 @@ function builderPlugin(system: EventReader<System>): void {
             agent.canAfford(workerType) &&
             units.getById(townhallTypes).some((th) => th.isFinished() && th.noQueue)
         ) {
-            if (!holdsTownhall(world, current)) await agent.train(workerType, 1);
+            if (!holdsTownhall(world, current)) await agent.train(workerType);
         }
 
         if (def.autoSupplyAtSupply !== undefined && agent.supplyUsed >= def.autoSupplyAtSupply) {
@@ -580,6 +611,19 @@ function builderPlugin(system: EventReader<System>): void {
         ) {
             assignPersistent(world, def);
         }
+    };
+
+    // before the tasks run, so a guard already on the geyser takes a gas step the runner would give to another worker
+    const guardGas = (world: World, gameLoop: number, current?: BuildTaskRuntime) => {
+        if (defs![currentOpening!].shouldHandleGasSteal === false) return releaseGuards(world, gasSteal);
+        handleGasSteal(world, gasSteal, current, (task, geyser, worker) => {
+            if (!affordsTask(world, task)) return false;
+            const earmark = earmarkOf(task);
+            if (!world.resources.get().buildings.build(task.id, { at: geyser, worker, earmark })) return false;
+            task.status = BuildOrder.COMMAND_GIVEN;
+            task.commanded = gameLoop;
+            return true;
+        });
     };
 
     const defaultAnchor = ({ resources }: World): Point2D => {
@@ -627,13 +671,27 @@ function builderPlugin(system: EventReader<System>): void {
 
     // a @RAMP/@NAT_WALL request would otherwise pick a spot no pylon powers, which the engine rejects forever
     const powered = (world: World, task: BuildTaskRuntime, request: PlacementRequest): PlacementRequest =>
-        world.agent.race === Race.PROTOSS && task.id !== PYLON ? { ...request, powered: true } : request;
+        world.agent.race === Race.PROTOSS && task.id !== PYLON
+            ? { ...request, powered: true }
+            : withFirstPylon(world, task, request);
+
+    // sets the flag either way, so the persistent pre-move's 30 s limit overrides the 60 s default
+    const withFirstPylon = (
+        world: World,
+        task: BuildTaskRuntime,
+        request: PlacementRequest,
+        before = FIRST_PYLON_BEFORE,
+    ): PlacementRequest =>
+        world.agent.race === Race.PROTOSS && task.id === PYLON
+            ? { ...request, firstPylon: world.resources.get().frame.time() < before || undefined }
+            : request;
 
     const placementRequest = (world: World, task: BuildTaskRuntime): PlacementRequest => {
         const { units } = world.resources.get();
         const [nearUnit] = task.opts?.near ? units.getById(task.opts.near) : [];
         const near = nearUnit?.pos && { base: nearUnit.pos, closestTo: nearUnit.pos };
-        if (world.agent.race === Race.PROTOSS) return { ...near, powered: task.id !== PYLON };
+        if (world.agent.race === Race.PROTOSS)
+            return withFirstPylon(world, task, { ...near, powered: task.id !== PYLON });
         const flags: PlacementFlag[] =
             task.id === SUPPLYDEPOT ? ['supplyDepot'] : addonHostTypes.includes(task.id) ? ['production'] : [];
         return { ...near, flags };
@@ -711,7 +769,7 @@ function builderPlugin(system: EventReader<System>): void {
         }
 
         if (!affordsTask(world, task)) return BuildResult.CANNOT_SATISFY;
-        const settle = () => agent.canAfford(task.id, earmarkOf(task));
+        const settle = () => agent.canAfford(task.id, { earmark: earmarkOf(task) });
 
         const { actions, buildings, placer } = resources.get();
 
@@ -798,7 +856,7 @@ function builderPlugin(system: EventReader<System>): void {
         const { actions } = resources.get();
 
         if (task.opts?.at) {
-            const trained = await agent.train(id, 1, resolveTarget(world, task.opts.at));
+            const trained = await agent.train(id, { near: resolveTarget(world, task.opts.at) });
             return trained > 0 ? BuildResult.SUCCESS : BuildResult.CANNOT_SATISFY;
         }
 
@@ -836,7 +894,7 @@ function builderPlugin(system: EventReader<System>): void {
     buildFns[buildFnSyms.upgrade] = async function ({ agent, resources }: World, task: BuildTaskRuntime) {
         const { actions, units } = resources.get();
 
-        if (!agent.canAffordUpgrade(task.id, task.earmarked ? earmarkName(task) : null))
+        if (!agent.canAffordUpgrade(task.id, { earmark: task.earmarked ? earmarkName(task) : null }))
             return BuildResult.CANNOT_SATISFY;
 
         const upgradeFacilities = units.getUpgradeFacilities(task.id);

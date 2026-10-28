@@ -91,6 +91,7 @@ describe('parseBuildOrder', () => {
                     '30 lair',
                     '40 hive',
                     '13 overlord_scout',
+                    '14 overlord_scout @ enemy_nat_hg_spot',
                 ],
                 Race.PROTOSS,
             ),
@@ -102,6 +103,7 @@ describe('parseBuildOrder', () => {
             [30, ability(Ability.MORPH_LAIR)],
             [40, ability(Ability.MORPH_HIVE)],
             [13, { type: 'scout', opts: { scout: 'overlord', waypoints: ['ENEMY_NAT_VISION'] } }],
+            [14, { type: 'scout', opts: { scout: 'overlord', waypoints: ['ENEMY_NAT_HG_SPOT'] } }],
         ]);
     });
 
@@ -114,7 +116,6 @@ describe('parseBuildOrder', () => {
     it.each([
         ['14 pylonz', 'unknown command "PYLONZ"'],
         ['14 supply @ moon', 'unknown target "MOON"'],
-        ['14 overlord_scout @ enemy_nat_hg_spot', 'ENEMY_NAT_HG_SPOT is not supported'],
         [{ '14 worker_scout': ['nowhere'] }, 'unknown target "NOWHERE"'],
         ['21 addonswap factory', 'ADDONSWAP needs exactly 2 structures'],
         ['21 addonswap factory marine', '"marine" is not a structure'],

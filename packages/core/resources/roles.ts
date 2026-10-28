@@ -73,7 +73,7 @@ export const rolesResource: ResourceDefinition<'roles'> = {
                 const units = wantedRoles.flatMap((role) =>
                     [...(tagsByRole.get(role) ?? [])].flatMap((tag) => {
                         const unit = ownByTag(store, tag);
-                        if (!unit || !unit.isCurrent() || unit.labels.has('dead')) return [];
+                        if (!unit || !unit.isCurrent()) return [];
                         if (included && !included.includes(unit.unitType)) return [];
                         if (excluded?.includes(unit.unitType)) return [];
                         return [unit];
@@ -111,16 +111,16 @@ export const rolesResource: ResourceDefinition<'roles'> = {
 
         [...state.roleByTag.keys()].forEach((tag) => {
             const unit = ownByTag(store, tag);
-            if (!unit || unit.labels.has('dead')) unassign(state, tag);
+            if (!unit) unassign(state, tag);
         });
         state.seen.forEach((tag) => {
             const unit = ownByTag(store, tag);
-            if (!unit || unit.labels.has('dead')) state.seen.delete(tag);
+            if (!unit) state.seen.delete(tag);
         });
 
         store.getAll(Alliance.SELF).forEach((unit) => {
             const tag = unit.tag!;
-            if (state.seen.has(tag) || !unit.isCurrent() || unit.labels.has('dead') || unit.buildProgress! < 1) return;
+            if (state.seen.has(tag) || !unit.isCurrent() || unit.buildProgress! < 1) return;
             state.seen.add(tag);
             const role = state.settings.defaultRole(unit);
             if (role !== undefined) assignTag(state, tag, role);

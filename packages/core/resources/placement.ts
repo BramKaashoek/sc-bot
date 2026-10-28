@@ -1,7 +1,6 @@
 import createDebug from 'debug';
 import Color from '../constants/color.ts';
 import { Race } from '../constants/enums.ts';
-import { NodeSC2Error } from '../engine/errors.ts';
 import { addonHostTypes, flyingStructureTypes, gasMineTypes } from '../constants/groups.ts';
 import * as UnitType from '../constants/unit-type.ts';
 import { distance, distanceSquared, towards } from '../utils/geometry/point.ts';
@@ -48,12 +47,14 @@ type State = {
     solved: boolean;
     grids?: FormationGrids;
     pending: UserPlacement[];
+    gatekeepers: Array<{ base: Point2D; pos: Point2D }>;
     lastReservationCheck: number;
 };
 
 const DEFAULT_SETTINGS: PlacementSettings = { reservationTimeout: 60 };
 const RESERVATION_CHECK_LOOPS = 16;
 const RAMP_EXCLUSION_SQUARED = 36;
+const FIRST_PYLON_AVOID = 16;
 const POWER_RANGE_SQUARED = 6.5 ** 2;
 const CREEP_EXEMPT = [UnitType.HATCHERY, UnitType.NYDUSCANAL];
 const SIZE_BY_WIDTH: Record<number, BuildingSize> = { 2: '2x2', 3: '3x3', 5: '5x5' };
@@ -66,6 +67,7 @@ const freshState = (settings: PlacementSettings): State => ({
     spots: [],
     solved: false,
     pending: [],
+    gatekeepers: [],
     lastReservationCheck: 0,
 });
 
@@ -195,7 +197,9 @@ function canPlace(world: World, unitType: number, pos: Point2D, includeAddon = a
 function closestBase(world: World, pos: Point2D): Point2D {
     const { map } = world.resources.get();
     const bases = map.getExpansions().map((expansion) => ({ pos: expansion.townhallPosition }));
-    return closest(bases, pos)?.pos ?? pos;
+    // ares only considers expansions on the placement's own terrain height
+    const sameHeight = bases.filter(({ pos: base }) => map.getTerrainHeight(base) === map.getTerrainHeight(pos));
+    return closest(sameHeight.length > 0 ? sameHeight : bases, pos)?.pos ?? pos;
 }
 
 function addSpot(state: State, size: BuildingSize, base: Point2D, pos: Point2D, flags: PlacementFlag[] = []) {
@@ -204,7 +208,15 @@ function addSpot(state: State, size: BuildingSize, base: Point2D, pos: Point2D, 
 
 function addUserPlacements(world: World, state: State, placements: UserPlacement[]) {
     const grids = state.grids!;
+    let firstPylon: Point2D | undefined;
     for (const placement of placements) {
+        if (placement.gateKeeper) {
+            state.gatekeepers.push({ base: closestBase(world, placement.pos), pos: placement.pos });
+            continue;
+        }
+        const isFirstPylon = world.agent.race === Race.PROTOSS && placement.flags?.includes('firstPylon');
+        // ares records the spot before checking it can be placed
+        if (isFirstPylon) firstPylon = placement.pos;
         const size = placement.size ?? (placement.unitType ? sizeOf(world, placement.unitType) : undefined) ?? '3x3';
         const checkType = placement.unitType ?? (size === '2x2' ? UnitType.SUPPLYDEPOT : UnitType.BARRACKS);
         if (
@@ -215,8 +227,21 @@ function addUserPlacements(world: World, state: State, placements: UserPlacement
             debugPlacement(`skipping user placement ${placement.pos.x},${placement.pos.y}: it can't be placed`);
             continue;
         }
-        addSpot(state, size, closestBase(world, placement.pos), placement.pos, ['custom', ...(placement.flags ?? [])]);
+        addSpot(state, size, closestBase(world, placement.pos), placement.pos, [
+            'custom',
+            ...(isFirstPylon ? (['wall'] as const) : []),
+            ...(placement.flags ?? []),
+        ]);
         markSpot(grids, placement.pos, size, world.agent.race === Race.TERRAN);
+    }
+    if (firstPylon) {
+        markAvoid(
+            grids,
+            Math.trunc(firstPylon.x - FIRST_PYLON_AVOID / 2),
+            Math.trunc(firstPylon.y - FIRST_PYLON_AVOID / 2),
+            FIRST_PYLON_AVOID,
+            FIRST_PYLON_AVOID,
+        );
     }
 }
 
@@ -412,23 +437,30 @@ function solveTerran(world: World, state: State) {
     }
 }
 
+function wouldPower(state: State, pylonPos: Point2D, pos: Point2D) {
+    const grids = state.grids;
+    if (!grids) return false;
+    const heightAt = (at: Point2D) => grids.terrainHeight[Math.floor(at.y) * grids.width + Math.floor(at.x)];
+    return heightAt(pylonPos) === heightAt(pos) && distanceSquared(pylonPos, pos) < POWER_RANGE_SQUARED;
+}
+
 function poweredBy(world: World, state: State, buildProgress: number) {
-    const grids = state.grids!;
-    const heightAt = (pos: Point2D) => grids.terrainHeight[Math.floor(pos.y) * grids.width + Math.floor(pos.x)];
     const pylons = world.resources
         .get()
         .units.getById(UnitType.PYLON)
         .filter((pylon) => pylon.buildProgress! >= buildProgress);
-    return (pos: Point2D) =>
-        pylons.some(
-            (pylon) => heightAt(pylon.pos) === heightAt(pos) && distanceSquared(pylon.pos, pos) < POWER_RANGE_SQUARED,
-        );
+    return (pos: Point2D) => pylons.some((pylon) => wouldPower(state, pylon.pos, pos));
 }
 
 function select(world: World, candidates: Spot[], base: Point2D, opts: PlacementRequest): Spot | undefined {
     const closestTo = opts.closestTo ?? base;
     const flags = opts.flags ?? [];
     const withFlag = (flag: PlacementFlag) => candidates.filter((spot) => spot.flags.has(flag));
+
+    if (opts.firstPylon) {
+        const picked = closest(withFlag('firstPylon'), closestTo);
+        if (picked) return picked;
+    }
 
     if (flags.includes('wall')) {
         const { map } = world.resources.get();
@@ -470,7 +502,7 @@ function updateBookkeeping(world: World, state: State) {
     for (const spot of state.spots) {
         if (spot.state === 'taken') {
             const occupant = grounded.find((structure) => structure.tag === spot.tag);
-            if (occupant && !occupant.labels.has('dead') && onSpot(spot)(occupant)) continue;
+            if (occupant && onSpot(spot)(occupant)) continue;
             spot.state = 'available';
             spot.tag = undefined;
         }
@@ -553,6 +585,16 @@ export const placementResource: ResourceDefinition<'placement'> = {
                 }
                 return picked.pos;
             },
+            isPowered(pos, { pylonBuildProgress = 1 } = {}) {
+                const state = stateByPlacement.get(placement)!;
+                if (world.agent.race === Race.ZERG || !state.solved) return false;
+                return poweredBy(world, state, pylonBuildProgress)(pos);
+            },
+            wouldPower(pylonPos, pos) {
+                const state = stateByPlacement.get(placement)!;
+                if (world.agent.race === Race.ZERG || !state.solved) return false;
+                return wouldPower(state, pylonPos, pos);
+            },
             reserve(pos) {
                 const spot = stateByPlacement.get(placement)!.spots.find((candidate) => samePos(candidate.pos, pos));
                 if (!spot || spot.state !== 'available') return false;
@@ -594,11 +636,21 @@ export const placementResource: ResourceDefinition<'placement'> = {
                 refreshLive(world, state.grids);
                 addUserPlacements(world, state, placements);
             },
-            getGatekeeperPositions() {
-                throw new NodeSC2Error('not implemented: getGatekeeperPositions');
+            getGatekeeperPositions(base) {
+                const { gatekeepers } = stateByPlacement.get(placement)!;
+                const key = base && closestBase(world, base);
+                return gatekeepers
+                    .filter((entry) => !key || samePos(entry.base, key))
+                    .map((entry) => ({ ...entry.pos }));
             },
             getNatGatekeeperPosition() {
-                throw new NodeSC2Error('not implemented: getNatGatekeeperPosition');
+                const natural = world.resources.get().map.getNatural();
+                const first =
+                    natural &&
+                    stateByPlacement
+                        .get(placement)!
+                        .gatekeepers.find((entry) => samePos(entry.base, natural.townhallPosition));
+                return first && { ...first.pos };
             },
             configure(settings) {
                 Object.assign(stateByPlacement.get(placement)!.settings, settings);
@@ -625,8 +677,9 @@ export const placementResource: ResourceDefinition<'placement'> = {
     },
     onStep(placement, world) {
         const state = stateByPlacement.get(placement)!;
+        const { map } = world.resources.get();
+        if (map.isArcade()) return;
         if (!state.solved) {
-            const { map } = world.resources.get();
             // expansions, race and the first map state arrive on different dispatches at game start
             if (map.getExpansions().length === 0 || world.agent.race === undefined || !map._mapState.creep) return;
             state.solved = true;

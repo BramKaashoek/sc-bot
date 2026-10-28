@@ -105,6 +105,7 @@ export const flyingResource: ResourceDefinition<'flying'> = {
                 if (addons.length === 0) return false;
 
                 const target = addons.closestTo(host);
+                if (!target) return false;
                 const attached = units
                     .getStructures()
                     .find((unit) => unit.addOnTag === target.tag && unit.tag !== host.tag);
@@ -142,7 +143,6 @@ export const flyingResource: ResourceDefinition<'flying'> = {
                 if (
                     !unit ||
                     !unit.isCurrent() ||
-                    unit.labels.has('dead') ||
                     (landed && distanceSquared(unit.pos, plan.destination) <= ARRIVED_SQUARED)
                 ) {
                     plans.delete(tag);

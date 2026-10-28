@@ -336,7 +336,7 @@ export async function onStep({ agent, data }: World) {
     data.addEarmark({ name: 'barracks', minerals: data.mineralCost(BARRACKS), vespene: 0 });
     console.log(data.getEarmarkTotals());
 
-    if (agent.canAfford(BARRACKS, 'barracks')) {
+    if (agent.canAfford(BARRACKS, { earmark: 'barracks' })) {
         // the earmark is settled: the money is yours to spend on the barracks now
     }
 }

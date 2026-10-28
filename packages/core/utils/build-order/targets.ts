@@ -1,7 +1,6 @@
 import * as BuildTargets from '../../constants/build-target.ts';
 import { Alliance } from '../../constants/enums.ts';
 import { gasMineTypes, townhallTypes } from '../../constants/groups.ts';
-import { NodeSC2Error } from '../../engine/errors.ts';
 import { distance, towards } from '../geometry/point.ts';
 import type { BuildTarget, Expansion, PlacementFlag, PlacementRequest, Point2D, World } from '../../types.ts';
 
@@ -41,6 +40,7 @@ const PROXY_TARGETS: BuildTarget[] = [
 
 const RAMP_ENEMY_DISTANCE = 10;
 const ENEMY_NAT_VISION_DISTANCE = 10;
+const ENEMY_NAT_HG_DISTANCE = 10;
 const SCOUT_POINT_SPACING = 4;
 const SCOUT_POINT_INSET = 2;
 const SCOUT_RAMP_CLEARANCE = 8;
@@ -78,7 +78,9 @@ export function resolveTarget(world: World, target: BuildTarget): Point2D {
         case BuildTargets.NAT_WALL:
             return resolveTarget(world, BuildTargets.NAT);
         case BuildTargets.ENEMY_NAT_HG_SPOT:
-            throw new NodeSC2Error('not implemented: ENEMY_NAT_HG_SPOT');
+            return mapAnalysis.takeOverlordSpot(
+                towards(resolveTarget(world, BuildTargets.ENEMY_NAT), map.getCenter(true), ENEMY_NAT_HG_DISTANCE),
+            );
         default:
             return start;
     }

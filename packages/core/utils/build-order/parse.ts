@@ -57,7 +57,6 @@ function parseHead(step: string): [supply: number, command: string, args: string
 }
 
 function buildTarget(step: string, name: string): BuildTarget {
-    if (name === 'ENEMY_NAT_HG_SPOT') fail(step, 'ENEMY_NAT_HG_SPOT is not supported');
     return own<BuildTarget>(BuildTargets, name) ?? fail(step, `unknown target "${name}"`);
 }
 

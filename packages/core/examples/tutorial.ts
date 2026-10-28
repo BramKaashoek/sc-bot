@@ -75,14 +75,14 @@ const eightGateAllIn = createSystem({
             const { units, actions } = resources.get();
 
             const threeWorkers = units.getMineralWorkers().closestNUnits(newBuilding.pos, 3);
-            return actions.mine(threeWorkers, newBuilding);
+            return actions.mine(threeWorkers, newBuilding, { queue: true });
         }
     },
     async onUnitCreated({ resources }: World, newUnit: Unit) {
         const { actions, map } = resources.get();
 
         if (newUnit.isWorker()) {
-            return actions.gather(newUnit);
+            return actions.gather(newUnit, undefined, { queue: true });
         } else if (combatTypes.includes(newUnit.unitType!)) {
             return actions.attackMove([newUnit], map.getCombatRally());
         }

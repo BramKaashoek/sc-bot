@@ -12,7 +12,6 @@ import type {
     IntelFlag,
     IntelResource,
     IntelSettings,
-    OwnedEffect,
     Point2D,
     ResourceDefinition,
     Unit,
@@ -215,7 +214,7 @@ export const intelResource: ResourceDefinition<'intel'> = {
             const cached = detectorCache.get(alliance);
             if (cached?.loop === loop) return cached.detectors;
             const detectors: Detector[] = [];
-            for (const effect of map.getEffects() as OwnedEffect[]) {
+            for (const effect of map.getEffects()) {
                 const pos = effect.pos?.[0];
                 if (effect.effectId === Effect.SCANNERSWEEP && effect.alliance === alliance && pos)
                     detectors.push({ pos: { x: pos.x!, y: pos.y! }, range: SCANNER_SWEEP_RANGE });
@@ -260,7 +259,8 @@ export const intelResource: ResourceDefinition<'intel'> = {
                 return stateByIntel.get(intel)!.detected.get(flag);
             },
             getProxies() {
-                return Units.from(proxiesOf([...world.resources.get().memory.getEnemies()], places(world)));
+                const { memory, map } = world.resources.get();
+                return map.isArcade() ? Units.from([]) : Units.from(proxiesOf([...memory.getEnemies()], places(world)));
             },
             getEnemyDetectors() {
                 return detectorsFor(Alliance.ENEMY);
@@ -299,7 +299,8 @@ export const intelResource: ResourceDefinition<'intel'> = {
         const state = stateByIntel.get(intel)!;
         trackThreats(world, state);
 
-        const { frame, events } = world.resources.get();
+        const { frame, events, map } = world.resources.get();
+        if (map.isArcade()) return;
         const gameLoop = frame.getGameLoop();
         evaluateFlags(world, state).forEach((flag) => {
             if (state.detected.has(flag)) return;

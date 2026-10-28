@@ -48,7 +48,8 @@ export class BasicMicro {
         const idle = units.filter((unit) => unit.isIdle());
         if (mopUpTargets.length && idle.length) {
             for (const unit of idle) {
-                await actions.attackMove([unit], mopUpTargets.closestTo(unit.pos).pos);
+                const closest = mopUpTargets.closestTo(unit.pos);
+                if (closest) await actions.attackMove([unit], closest.pos);
             }
             log(
                 { resources },

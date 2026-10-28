@@ -114,8 +114,10 @@ export const attackTargets = async ({
     for (const attack of Object.entries(nextAttacks)) {
         const [positionString, { unitTags }] = attack;
         const alive = units.getCombatUnits().tagsIn(unitTags);
+        const aliveCenter = alive.center;
+        if (!aliveCenter) continue;
         const aliveCost = getUnitsCost(alive);
-        const enemies = units.getCombatUnits(Alliance.ENEMY).closerThan(15, alive.center);
+        const enemies = units.getCombatUnits(Alliance.ENEMY).closerThan(15, aliveCenter);
         const enemiesCost = getUnitsCost(enemies);
 
         if (enemiesCost < aliveCost * 1.2) {

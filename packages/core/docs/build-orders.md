@@ -152,7 +152,7 @@ The object form gives a scout its waypoints: `{ '17 worker_scout': ['enemy_nat',
 
 - a string with fewer than two words (no `<command>`);
 - an unknown command, an upgrade name missing from the game data included;
-- an unknown target, and `ENEMY_NAT_HG_SPOT`, which isn't supported;
+- an unknown target;
 - `CHRONO` without a unit type target, or with an unknown one;
 - `ADDONSWAP` with other than two names, or a name that isn't a structure;
 - an object step whose key isn't a scout, or whose targets aren't a list;
@@ -231,6 +231,7 @@ type OpeningDefinition = {
     constantWorkerProductionTill?: number; // a worker supply; above 0, trains workers constantly up to it and runs in supply-gate mode
     autoSupplyAtSupply?: number; // from this supply used on, the autoSupply controller runs every step
     persistentWorker?: boolean; // false turns off the persistent builder (default on; Terran and Protoss only)
+    shouldHandleGasSteal?: boolean; // false turns off the gas-steal guard (default on)
 };
 ```
 
@@ -292,6 +293,8 @@ An opening with `constantWorkerProductionTill` above 0 sets `fillWorkers` to `fa
 A worker scout takes a worker through `mining.selectWorker` when [`mining`](macro.md#mining) is enabled, else the `GATHERING` mineral worker closest to the main townhall, and gives it the role `BUILD_RUNNER_SCOUT`. A worker carrying resources returns them first; then it moves through the waypoints with queued moves, as owner `role:BUILD_RUNNER_SCOUT`. Without a worker the step can't be satisfied, so the order waits for one. An overlord scout is the first overlord without that role. A scout keeps its role after the last waypoint and isn't given back to mining.
 
 With `persistentWorker` on, a Terran or Protoss opening keeps one builder. At 3 seconds, when its first supply structure is at 13 supply or less or at `NAT`, else at 9 seconds, it takes a worker with the role `PERSISTENT_BUILDER` and moves it to the placement point of that structure. That worker is handed to the builds that go through the [tracker](macro.md#buildings) (targeted steps such as `'expand @nat'`, `placer` positions and the placement solver), unless it is busy on a tracked build. Gas, an untargeted townhall, add-ons and the `actions.findPlacement` fallback pick their own worker. It goes back to mining when the opening completes, on `switchOpening`, and for Protoss also once a pylon step completes.
+
+With `shouldHandleGasSteal` on (the default), while the order is active and enemy workers stand in your main, the opening puts a `GAS_STEAL_PREVENTER` worker on each free main geyser, attacks enemy workers in range with it, and lets it build the gas when the current step is an unstarted gas step. A guard goes back to mining when the enemy workers leave, a gas building stands within 5 of the geyser, the opening completes or is paused, the opening sets `shouldHandleGasSteal: false`, or on `switchOpening`. A guard that another system gave a different role is left alone.
 
 ## openings resource
 

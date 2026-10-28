@@ -4,7 +4,7 @@ import createEngine from '../engine/create-engine.ts';
 import createAgent from '../agent/create-agent.ts';
 import { createFakeClient } from './fake-client.ts';
 import type { FakeClient, FakeClientOptions, Fixture } from './fake-client.ts';
-import type { Agent, CoreConfigInput, Engine, World } from '../types.ts';
+import type { Agent, CoreConfigInput, Engine, Point2D, World } from '../types.ts';
 
 export type TestWorld = World & { client: FakeClient; engine: Engine };
 
@@ -63,13 +63,25 @@ export type ObservationEdit = {
     add?: SC2APIProtocol.Unit[];
     hide?: string[];
     fog?: boolean;
+    fogAt?: Point2D[];
+    fogRadius?: number;
+    patch?: Record<string, Partial<SC2APIProtocol.Unit>>;
     edit?: (units: SC2APIProtocol.Unit[]) => SC2APIProtocol.Unit[];
 };
 
 export function observationAt(
     world: TestWorld,
     loop: number,
-    { base = 896, add = [], hide = [], fog = false, edit = (units) => units }: ObservationEdit = {},
+    {
+        base = 896,
+        add = [],
+        hide = [],
+        fog = false,
+        fogAt = [],
+        fogRadius = 2,
+        patch = {},
+        edit = (units) => units,
+    }: ObservationEdit = {},
 ): SC2APIProtocol.ResponseObservation {
     const baseObservation = world.client.fixture.observations[base];
     if (!baseObservation) throw new Error(`fixture has no observation for loop ${base}`);
@@ -78,14 +90,17 @@ export function observationAt(
     const { rawData } = responseObservation.observation!;
     responseObservation.observation!.gameLoop = loop;
     const hidden = rawData!.units!.filter((raw) => hide.includes(raw.tag!));
-    rawData!.units = edit([...rawData!.units!.filter((raw) => !hide.includes(raw.tag!)), ...add]);
+    rawData!.units = edit([...rawData!.units!.filter((raw) => !hide.includes(raw.tag!)), ...add]).map((raw) =>
+        patch[raw.tag!] ? { ...raw, ...patch[raw.tag!] } : raw,
+    );
 
-    if (fog) {
+    const centers = [...(fog ? hidden.map(({ pos }) => pos!) : []), ...fogAt];
+    if (centers.length > 0) {
         const { data, size } = rawData!.mapState!.visibility!;
-        hidden.forEach(({ pos }) => {
-            for (let dy = -2; dy <= 2; dy++)
-                for (let dx = -2; dx <= 2; dx++)
-                    data![(Math.floor(pos!.y!) + dy) * size!.x! + Math.floor(pos!.x!) + dx] = 1;
+        centers.forEach(({ x, y }) => {
+            for (let dy = -fogRadius; dy <= fogRadius; dy++)
+                for (let dx = -fogRadius; dx <= fogRadius; dx++)
+                    data![(Math.floor(y!) + dy) * size!.x! + Math.floor(x!) + dx] = 1;
         });
     }
     return responseObservation;

@@ -3,28 +3,14 @@ import { Ability, UnitType, Upgrade } from '../constants/index.ts';
 import { Alliance } from '../constants/enums.ts';
 import { GAME_LOOPS_PER_SECOND } from '../constants/time.ts';
 import { NodeSC2Error } from '../engine/errors.ts';
-import { createTestWorld, observationAt, stepTo } from '../test/create-test-world.ts';
+import { createTestWorld, observationAt, stepTo, stepWith } from '../test/create-test-world.ts';
 import { rawUnit } from '../test/factories.ts';
 import { Units } from './units-collection.ts';
-import type { ObservationEdit, TestWorld } from '../test/create-test-world.ts';
+import type { TestWorld } from '../test/create-test-world.ts';
 import type { Unit } from '../types.ts';
 
 const tagsOf = (group: Unit[]) => group.map((unit) => unit.tag);
 const sortedTags = (group: Unit[]) => tagsOf(group).sort();
-
-const editedObservation = (
-    world: TestWorld,
-    base: number,
-    gameLoop: number,
-    edit: NonNullable<ObservationEdit['edit']>,
-) => observationAt(world, gameLoop, { base, edit });
-
-function fogAround(responseObservation: SC2APIProtocol.ResponseObservation, center: { x: number; y: number }) {
-    const { data, size } = responseObservation.observation!.rawData!.mapState!.visibility!;
-    for (let dy = -2; dy <= 2; dy++)
-        for (let dx = -2; dx <= 2; dx++) data![(Math.floor(center.y) + dy) * size!.x! + Math.floor(center.x) + dx] = 1;
-    return responseObservation;
-}
 
 function pick(world: TestWorld, ...tags: string[]): Units {
     const { units } = world.resources.get();
@@ -33,6 +19,7 @@ function pick(world: TestWorld, ...tags: string[]): Units {
 
 const ZERGLINGS = ['4354473985', '4354736129'];
 const OVERLORD = '4353949698';
+const MARINE_TAG = '4354211841';
 const ENEMY_SNAPSHOTS = ['8603041799', '8617918489', '8619032579'];
 
 describe('UnitResource', () => {
@@ -97,22 +84,18 @@ describe('UnitResource', () => {
             UnitType.CYBERNETICSCORE,
             UnitType.FACTORY,
         ].map((unitType) => rawUnit({ unitType }));
-        await stepTo(
-            world,
-            editedObservation(world, 896, 900, (raws) => [
-                ...raws,
-                larva,
-                gateway,
-                warpGate,
-                hydralisk,
-                hydraliskDen,
-                lurkerDen,
-                lair,
-                greaterSpire,
-                cyberneticsCore,
-                factory,
-            ]),
-        );
+        await stepWith(world, 900, [
+            larva,
+            gateway,
+            warpGate,
+            hydralisk,
+            hydraliskDen,
+            lurkerDen,
+            lair,
+            greaterSpire,
+            cyberneticsCore,
+            factory,
+        ]);
 
         expect(tagsOf(units.getLarva())).toEqual([larva.tag]);
         expect({
@@ -153,13 +136,7 @@ describe('UnitResource', () => {
         const { units } = world.resources.get();
 
         const zerglingsSpot = { x: 14.7, y: 24.8 };
-        await stepTo(
-            world,
-            fogAround(
-                editedObservation(world, 896, 940, (raws) => raws.filter((unit) => !ZERGLINGS.includes(unit.tag!))),
-                zerglingsSpot,
-            ),
-        );
+        await stepTo(world, observationAt(world, 940, { hide: ZERGLINGS, fogAt: [zerglingsSpot] }));
 
         const [zergling] = pick(world, ZERGLINGS[0]);
         const [hatchery, overlord] = pick(world, '8617918489', OVERLORD);
@@ -174,16 +151,35 @@ describe('UnitResource', () => {
         expect([hatchery.isMemory(), hatchery.isSnapshot(), hatchery.age()]).toEqual([false, true, 0]);
         expect([overlord.isMemory(), overlord.isSnapshot(), overlord.age()]).toEqual([false, false, 0]);
 
-        const killed = fogAround(
-            editedObservation(world, 896, 944, (raws) => raws.filter((unit) => !ZERGLINGS.includes(unit.tag!))),
-            zerglingsSpot,
-        );
+        const killed = observationAt(world, 944, { hide: ZERGLINGS, fogAt: [zerglingsSpot] });
         killed.observation!.rawData!.event = { deadUnits: [ZERGLINGS[0]] };
         await stepTo(world, killed);
 
         expect(zergling.isMemory()).toBe(false);
         expect(pick(world, ZERGLINGS[1]).map((unit) => unit.isMemory())).toEqual([true]);
         expect(sortedTags(units.getAll(Alliance.ENEMY))).toEqual([ZERGLINGS[1], OVERLORD, ...ENEMY_SNAPSHOTS].sort());
+    });
+
+    it('drops a killed own unit from the store while the destroyed event and the Unit keep it', async () => {
+        const world = await createTestWorld('blueshift', { loop: 896 });
+        const { units, events } = world.resources.get();
+        const marine = units.getByTag(MARINE_TAG)!;
+        const reader = events.createReader();
+
+        const killed = observationAt(world, 900, { hide: [MARINE_TAG] });
+        killed.observation!.rawData!.event = { deadUnits: [MARINE_TAG] };
+        await stepTo(world, killed);
+
+        expect(units.getByTag(MARINE_TAG)).toBeUndefined();
+        expect(tagsOf(units.getAll())).not.toContain(MARINE_TAG);
+        expect(tagsOf(units.getAll(Alliance.SELF))).not.toContain(MARINE_TAG);
+        expect(marine.labels.has('dead')).toBe(true);
+        expect(
+            events
+                .read(reader)
+                .filter(({ name }) => name === 'unitDestroyed')
+                .map(({ data }) => data),
+        ).toEqual([marine]);
     });
 
     it('values combat units by cost, with pending production for own and ghosts for enemy', async () => {
@@ -205,19 +201,15 @@ describe('UnitResource', () => {
 
         await stepTo(
             world,
-            fogAround(
-                editedObservation(world, 896, 900, (raws) => [
-                    ...raws
-                        .filter((raw) => raw.tag !== ZERGLINGS[0])
-                        .map((raw) => {
-                            if (raw.tag === '4350541825') return { ...raw, orders: [trainMarine, trainMarine] };
-                            if (raw.tag === '4342677505') return { ...raw, orders: [{ abilityId: Ability.TRAIN_SCV }] };
-                            return raw;
-                        }),
-                    ...producing,
-                ]),
-                zerglingsSpot,
-            ),
+            observationAt(world, 900, {
+                hide: [ZERGLINGS[0]],
+                fogAt: [zerglingsSpot],
+                add: producing,
+                patch: {
+                    '4350541825': { orders: [trainMarine, trainMarine] },
+                    '4342677505': { orders: [{ abilityId: Ability.TRAIN_SCV }] },
+                },
+            }),
         );
 
         expect({

@@ -163,7 +163,7 @@ Audits done (.agent-work/audits/); architect writing consolidation.md. Gate: no 
 | R2-T13 agent expansion picker | in progress | junior-backend-r213 |
 | CS-I13 hot-file remnants | in progress | junior-backend-csi13 |
 | CS-I14 behaviors test helpers | in progress | junior-backend-csi14 |
-| CS-I06 | runnable; held until R2-T13 + PM04 leave agent/macro.ts | — |
+| CS-I06 | approved (pure move) | jb-csi06 |
 | batch-8 review | PM04, I13, I14, T08 approved (nits done); T13 CHANGES → senior-backend-r213b | reviewer, junior-backend-b8nits |
 | R2-T24 | approved | senior-backend-r224 |
 | R2-T20a | approved (faithful MA port, harness diff 0) | senior-backend-r220b |
@@ -172,6 +172,42 @@ Audits done (.agent-work/audits/); architect writing consolidation.md. Gate: no 
 | R2-T36 | approved | junior-backend-r236 |
 | CS-D09 | approved | junior-backend-csd09, junior-backend-d09b |
 | R2-T19 scaffolding C | approved | junior-backend-r219, senior-backend-r213c |
-| LIVE-1 canAfford vs build/train throw | root cause: bot check-then-act race; awaiting user choice | senior-backend-bug-afford |
+| LIVE-1 canAfford vs build/train throw | done (bot/economy.ts re-check + sequential train; docs note agents.md:98) | lead, senior-backend-bug-afford |
 | LIVE-2 unpowered cyber core stuck + LIVE-3 refinery spam | approved (tests mutation-checked; not live-confirmed) | senior-backend-bug-build, bug-build2 |
 | R2-T13 | approved (guard covers all active statuses) | senior-backend-r213c |
+| R2-T10 | approved (ares overrides, tactical Infinity walls, perf 1.83→1.49ms) | jb-r210, sb-r210b |
+| R2-T12 | approved (guards released on switch/opt-out/complete; pause path untested) | jb-r212, sb-r212b |
+| R2-T14 | approved (faithful port; power-height gap → follow-up ticket) | jb-r214, sb-r214b |
+| R2-T20 | approved | jb-r220, jb-t20t28 |
+| R2-T21 | approved | sb-r221, jb-r221c |
+| R2-T25 | approved (docs nit → next docs pass; exitTowards → T26) | sb-r225 |
+| R2-T28 | approved | sb-r228, jb-t20t28 |
+| R2-T30 | approved (clear-both reset kept; docs nit → next docs pass) | jb-r230 |
+| R2-T33 | approved (gas speed-mining branch = documented divergence → T18) | jb-r233, jb-t33b |
+| R2-T34 | approved (snapshots; hallucination skip) | jb-r234, sb-r234b |
+| R2-T26 | approved (faithful port; deviation 10 reverted) | sb-r226, sb-r226b |
+| docs deltas T20/T25/T28/T33 | done | jb-docs-r2 |
+| CS-PM18a | approved (type-only; docs: map.md getEffects OwnedEffect[]) | jb-pm18a |
+| CS-PQ09 | approved (docs delta: macro.md earmark replace, units.md raw data, changelog) | jb-pq09 |
+| CS-PQ06b | approved | jb-pq06b |
+| CS-PQ02a | approved | jb-pq02a |
+| R2-T22 | approved (12 mutants killed; transfuse dedupe WeakMap = deviation) | jb-r222 |
+| R2-T39 | approved (docs delta → T18: macro.md isPowered/wouldPower, behaviors.md restorePower height) | jb-r239 |
+| R2-T23 | approved (docs: add queenSpreadCreep/tumorSpreadCreep/useTransfuse to behaviors.md → T18) | sb-r223 |
+| CS-PQ01a | approved (docs → T18) | jb-pq01a |
+| R2-T31 | approved (docs → T18) | jb-r231 |
+| CS-I15 (partial) | approved; flying.test + influence.test remain | jb-csi15 |
+| R2-T27 | approved (docs → T18: nydusPathUnitToTarget) | jb-r227 |
+| R2-T15 | approved (item 1 left as is) | jb-r215, jb-r215b |
+| CS-I15 flying.test | done (already migrated; wrapper needs edit) | jb-csi15b |
+| CS-PM18b | approved | jb-pm18b |
+| R2-T11 | approved | jb-r211, jb-r211b |
+| CS-PQ07b | approved (changelog → T18) | jb-pq07b |
+| R2-T16 | approved (ares parity; PylonsWall ignored; docs → T18) | jb-r216, sb-r216b |
+| R2-T35 | approved (deviations + docs → T18: map.md/running-games.md isArcade) | sb-r235 |
+| CS-PM05a | approved (docs + changelog done) | jb-pm05a |
+| R2-T29 | approved (influence-only; docs → T18) | jb-r229 |
+| CS-PQ07c | done (quick review running; changelog line in dev report) | jb-pq07c |
+| CS-I15 influence.test | done (CS-I15 complete) | jb-csi15c |
+| R2-T32 | approved | jb-r232 |
+| R2-T17 | done, UNREVIEWED (test-gate flagged "ships a Protoss bot…" test in custom-building-placements.test.ts — decide on restart) | jb-r217 |

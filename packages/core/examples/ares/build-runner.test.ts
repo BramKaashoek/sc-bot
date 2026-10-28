@@ -5,13 +5,18 @@ import { Race } from '@sc-bot/core/constants/enums';
 import { BUILD_RUNNER_SCOUT } from '@sc-bot/core/constants/unit-role';
 import { resolveConfig } from '../../engine/config.ts';
 import { createTestWorld, loadFixture, stepTo } from '../../test/create-test-world.ts';
-import { configFile, createBuildRunner } from './build-runner.ts';
+import { aresYamlFile, configFile, createBuildRunner, createYamlBuildRunner } from './build-runner.ts';
 import type { RaceName } from './build-runner.ts';
 
 const MINER_TAG = '4345561089';
 const RACES = { terran: Race.TERRAN, protoss: Race.PROTOSS };
 
-async function startRunner(race: keyof typeof RACES, choices: Record<string, string[]>, rushed = false) {
+async function startRunner(
+    race: keyof typeof RACES,
+    choices: Record<string, string[]>,
+    rushed = false,
+    runner = createBuildRunner(race as RaceName),
+) {
     const fixture = loadFixture('blueshift');
     fixture.gameInfo.playerInfo!.find(({ playerId }) => playerId === 1)!.raceRequested = RACES[race];
     fixture.gameInfo.playerInfo!.find(({ playerId }) => playerId !== 1)!.raceRequested = Race.ZERG;
@@ -22,7 +27,7 @@ async function startRunner(race: keyof typeof RACES, choices: Record<string, str
             spyOn(resources.get().intel, 'has').mockImplementation((flag) => rushed && flag === 'rushed');
         },
     });
-    agent.use(createBuildRunner(race as RaceName));
+    agent.use(runner);
     const world = await createTestWorld(fixture, { agent, config, loop: 896 });
 
     const { _system } = world.agent.systems.find(({ name }) => name === 'BuildRunnerWrapper')! as unknown as {
@@ -47,6 +52,27 @@ describe('build-runner example', () => {
         expect([system.getOpening!(), tasks.map(({ type, id, opts }) => ({ type, id, opts }))]).toEqual([
             'ThreeRax',
             parsed.map(([, { type, id, opts }]) => ({ type, id, opts })),
+        ]);
+    });
+
+    it('loads an ares YAML file directly and queues the same steps as the translated config', async () => {
+        const yaml = await startRunner(
+            'terran',
+            {},
+            false,
+            createYamlBuildRunner('terran', aresYamlFile('terran'), 'ThreeRax'),
+        );
+        const translated = await startRunner('terran', { Zerg: ['ThreeRax'] });
+
+        const queued = ({ system }: typeof yaml) =>
+            (system.state[Object.getOwnPropertySymbols(system.state)[0]] as BuildTaskI[]).map(({ type, id, opts }) => ({
+                type,
+                id,
+                opts,
+            }));
+        expect([yaml.system.getOpening!(), queued(yaml)]).toEqual([
+            translated.system.getOpening!(),
+            queued(translated),
         ]);
     });
 

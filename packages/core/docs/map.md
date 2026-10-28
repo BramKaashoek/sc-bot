@@ -58,7 +58,7 @@ The expansion with the shortest `map.path` from `point` to a cell 3 off its town
 
 #### `map.getAvailableExpansions() => Expansion[]`
 
-Expansions with no known base (or whose base is labelled `dead`), in `getExpansions()` order. A spot a pending townhall build is heading to still counts as available here; `buildings.getNextExpansion` skips it (see [macro.md](macro.md#buildings)).
+Expansions with no known base (or whose base died), in `getExpansions()` order. A spot a pending townhall build is heading to still counts as available here; `buildings.getNextExpansion` skips it (see [macro.md](macro.md#buildings)).
 
 #### `map.getOccupiedExpansions(alliance: Alliance = Alliance.SELF) => Expansion[]`
 
@@ -350,6 +350,14 @@ The region's cells that are next to an unwalkable or off-map cell, as cell centr
 
 The ramp of the choke guarding the enemy main on the way to your start. `undefined` without an enemy main expansion, or when that choke isn't a ramp.
 
+#### `mapAnalysis.getOverlordSpots() => Point2D[]`
+
+The overlord spots not yet taken, computed on the first call; a copy is returned.
+
+#### `mapAnalysis.takeOverlordSpot(near: Point2D) => Point2D`
+
+Removes the spot closest to `near` from the remaining ones and returns it; the map centre when none is left. Each call consumes a spot, which is how `ENEMY_NAT_HG_SPOT` resolves.
+
 #### `mapAnalysis.configure(settings: Partial<MapAnalysisSettings>) => void`
 
 Changes the settings; the analysis is recomputed on the next query. A new game keeps the settings but not the analysis; see [per-game reset](resources.md#per-game-reset). The config file's `resources.mapAnalysis` section is passed here.
@@ -466,19 +474,19 @@ Per effect id: the default `{ cost, range }` (psionic storm 600 / 3.5, corrosive
 
 Paths over an influence layer (`'ground'` by default, or any `InfluenceGrid`, as `layer`), with an 8-connected A* that doesn't cut corners; diagonals cost the square root of 2 times a cell. Entering a cell costs its value, so paths go around danger when that is cheaper. A blocked goal is moved to the closest open cell within 3, and out-of-bounds points are clamped to the map. See the top of this page for when to use it instead of `map.path`.
 
-`PathOptions` is `{ layer?, sensitivity?, maxExpanded? }`.
+`PathOptions` is `{ layer?, sensitivity?, maxExpanded?, smoothing? }`.
 
 #### `pathing.findPath(start: Point2D, goal: Point2D, opts?: PathOptions) => Point2D[]`
 
-Cell centers from `start` (excluded) to `goal`, or `[]` when there is no path or `maxExpanded` runs out. `sensitivity` (default `1`) keeps every nth point.
+Cell centers from `start` (excluded) to `goal`, or `[]` when there is no path or `maxExpanded` runs out. `sensitivity` (default `1`) keeps every nth point. `smoothing` (default `false`) straightens the path first, with the SC2MapAnalysis algorithm, so it never cuts through a blocked cell.
 
 #### `pathing.nextPoint(start: Point2D, goal: Point2D, opts?: PathOptions & { senseDanger = true, dangerDistance = 20, dangerThreshold = 5 }) => Point2D`
 
-The point to move to next: the `sensitivity`th point of the path (default `5`), or the last one if the path is shorter, or `goal` when there is no path. With `senseDanger` it returns `goal` without searching when no cell within `dangerDistance` of `start` reaches `dangerThreshold`.
+The point to move to next: the `sensitivity`th point of the path (default `5`, smoothed first when `smoothing` is set), or the last one if the path is shorter, or `goal` when there is no path. With `senseDanger` it returns `goal` without searching when no cell within `dangerDistance` of `start` reaches `dangerThreshold`.
 
 #### `pathing.findLowPriorityPath(start: Point2D, goal: Point2D, opts?: { layer? }) => Point2D[]`
 
-A coarse path for units that don't need precision: eight points spread evenly along the path, then `goal`. `[goal]` when there is no path or it is shorter than about 40 cells.
+A coarse path for units that don't need precision: eight points spread evenly along the path, then `goal`. `[goal]` when there is no path or it is shorter than about 40 cells. Never smoothed.
 
 #### `pathing.closestSafeSpot(from: Point2D, opts?: { layer?, radius = 11 }) => Point2D | undefined`
 

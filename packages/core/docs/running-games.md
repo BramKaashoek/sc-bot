@@ -174,7 +174,7 @@ engine.shutdown();
 
 ### Lower-level control
 
-#### `engine.createGame(map?: string, playerSetup?: PlayerSetup[], realtime = false, options?: { randomSeed?, disableFog? }) => Promise<ResponseCreateGame | undefined>`
+#### `engine.createGame(map?: string, playerSetup?: PlayerSetup[], options?: { realtime = false, randomSeed?, disableFog? }) => Promise<ResponseCreateGame | undefined>`
 
 Creates a game on the client; `map` is resolved as under [Finding maps](#finding-maps). The game doesn't start until the players in the setup join. It resolves with `undefined`, without creating anything, under a ladder manager, and (with a console warning) when the client isn't in the launched or ended state. It rejects with `NodeSC2Error` (`Could not create a game on "<map>" ...`) when SC2 doesn't move to the game, so a `createGame` plus `joinGame` caller needs no check of its own.
 

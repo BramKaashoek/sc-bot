@@ -1,4 +1,4 @@
-import { createAgent, createEngine, createPlayer } from '@sc-bot/core';
+import { createAgent, createEngine, createPlayer, totalSupply } from '@sc-bot/core';
 import type { Behavior, Unit, World } from '@sc-bot/core';
 import { aMove, plan } from '@sc-bot/core/behaviors';
 import { MORPH_SIEGEMODE, MORPH_UNSIEGE } from '@sc-bot/core/constants/ability';
@@ -19,7 +19,7 @@ export const customSiegeTankDecision = ({ unit }: { unit: Unit }): Behavior => (
 
         if (unit.unitType === SIEGETANK) {
             const closeToTank = [...spatial.unitsInRange(unit, 6.5, 'enemyGround')];
-            const supply = nearEnemyGround.reduce((sum, enemy) => sum + (enemy.data().foodRequired ?? 0), 0);
+            const supply = totalSupply(nearEnemyGround);
             if (closeToTank.length === 0 && supply >= 4 && nearEnemyGround.length > 3) {
                 ctx.order(unit, MORPH_SIEGEMODE);
                 return true;

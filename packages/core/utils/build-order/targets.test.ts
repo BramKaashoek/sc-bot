@@ -4,7 +4,7 @@ import { Alliance } from '../../constants/enums.ts';
 import { COMMANDCENTER, MARINE, REFINERY, SUPPLYDEPOT } from '../../constants/unit-type.ts';
 import { createTestWorld, stepTo } from '../../test/create-test-world.ts';
 import { rawUnit } from '../../test/factories.ts';
-import { distance } from '../geometry/point.ts';
+import { distance, towards } from '../geometry/point.ts';
 import { resolveTarget, scoutWaypoints, structurePlacement } from './targets.ts';
 import type { TestWorld } from '../../test/create-test-world.ts';
 import type { Point2D } from '../../types.ts';
@@ -58,7 +58,23 @@ describe('build targets', () => {
         expect(distance(vision, map.getCenter(true))).toBeLessThan(
             distance(map.getEnemyNatural()!.townhallPosition, map.getCenter(true)),
         );
-        expect(() => resolveTarget(world, T.ENEMY_NAT_HG_SPOT)).toThrow('not implemented: ENEMY_NAT_HG_SPOT');
+
+        const spots = mapAnalysis.getOverlordSpots();
+        const aim = towards(map.getEnemyNatural()!.townhallPosition, map.getCenter(true), 10);
+        const nearest = spots.reduce((best, spot) => (distance(spot, aim) < distance(best, aim) ? spot : best));
+        expect(resolveTarget(world, T.ENEMY_NAT_HG_SPOT)).toEqual(nearest);
+        expect(mapAnalysis.getOverlordSpots()).toHaveLength(spots.length - 1);
+    });
+
+    it('asks for the overlord spot 10 towards the centre from the enemy natural, or resolves to the centre when none exist', async () => {
+        const world = await createTestWorld('acropolis', { loop: 896 });
+        const { map, mapAnalysis } = world.resources.get();
+        const take = spyOn(mapAnalysis, 'takeOverlordSpot');
+        resolveTarget(world, T.ENEMY_NAT_HG_SPOT);
+        expect(take).toHaveBeenCalledWith(towards(map.getEnemyNatural()!.townhallPosition, map.getCenter(true), 10));
+
+        const empty = await createTestWorld('simple64', { loop: 896 });
+        expect(resolveTarget(empty, T.ENEMY_NAT_HG_SPOT)).toEqual(empty.resources.get().map.getCenter(true));
     });
 
     it('turns structure targets into placement requests, townhall spots, proxies or nothing', async () => {

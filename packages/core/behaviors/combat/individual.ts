@@ -132,6 +132,7 @@ export function pathUnitToTarget({
     layer,
     successAtDistance = 0,
     sensitivity = 5,
+    smoothing = false,
     senseDanger = true,
     dangerDistance = 20,
     dangerThreshold = 5,
@@ -143,6 +144,7 @@ export function pathUnitToTarget({
             const next = ctx.world.resources.get().pathing.nextPoint(unit.pos, target, {
                 layer: layerFor(unit, layer),
                 sensitivity,
+                smoothing,
                 senseDanger,
                 dangerDistance,
                 dangerThreshold,

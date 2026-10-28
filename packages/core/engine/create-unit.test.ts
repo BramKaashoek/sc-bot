@@ -103,6 +103,14 @@ describe('createUnit', () => {
             buffIds: [Buff.CARRYMINERALFIELDMINERALS],
         });
         const builder = rawUnit({ orders: [{ abilityId: Ability.BUILD_SUPPLYDEPOT }] });
+        const movesThenGathers = rawUnit({
+            orders: [{ abilityId: Ability.MOVE }, { abilityId: Ability.HARVEST_GATHER_SCV }],
+        });
+        const mule = rawUnit({ orders: [{ abilityId: Ability.HARVEST_GATHER_MULE }] });
+        const queuedBuilder = rawUnit({
+            orders: [{ abilityId: Ability.MOVE }, { abilityId: Ability.BUILD_SUPPLYDEPOT }],
+        });
+        const depot = rawUnit({ unitType: UnitType.SUPPLYDEPOT, buildProgress: 0.5 });
         const sieging = rawUnit({
             unitType: UnitType.SIEGETANKSIEGED,
             orders: [{ abilityId: Ability.MORPH_SIEGEMODE }],
@@ -121,6 +129,10 @@ describe('createUnit', () => {
                 gatherer,
                 returnsLater,
                 builder,
+                movesThenGathers,
+                mule,
+                queuedBuilder,
+                depot,
                 sieging,
                 tank,
                 idler,
@@ -130,8 +142,19 @@ describe('createUnit', () => {
         });
 
         expect(unitOf(world, gatherer).isGathering()).toBe(true);
-        expect(unitOf(world, returnsLater).isReturning()).toBe(true);
-        expect(unitOf(world, builder).isConstructing()).toBe(true);
+        expect(unitOf(world, returnsLater).isReturning()).toBe(false);
+        expect(unitOf(world, returnsLater).hasOrder(Ability.HARVEST_RETURN)).toBe(true);
+        expect(unitOf(world, movesThenGathers).isGathering()).toBe(false);
+        expect(unitOf(world, movesThenGathers).hasOrder(Ability.HARVEST_GATHER)).toBe(true);
+        expect(unitOf(world, gatherer).hasOrder([Ability.MOVE, Ability.HARVEST_GATHER])).toBe(true);
+        expect(unitOf(world, idler).hasOrder(Ability.MOVE)).toBe(false);
+        expect(unitOf(world, mule).isGathering()).toBe(true);
+        expect(unitOf(world, builder).hasBuildOrder()).toBe(true);
+        expect(unitOf(world, queuedBuilder).hasBuildOrder()).toBe(true);
+        expect(unitOf(world, queuedBuilder).isConstructingScv()).toBe(false);
+        expect(unitOf(world, idler).hasBuildOrder()).toBe(false);
+        expect(unitOf(world, depot).isUnderConstruction()).toBe(true);
+        expect(unitOf(world, idler).isUnderConstruction()).toBe(false);
         expect(unitOf(world, mover).isMoving()).toBe(true);
         expect(unitOf(world, mover).isAttacking()).toBe(false);
         expect(unitOf(world, mover).isUsingAbility([Ability.PATROL, Ability.MOVE])).toBe(true);
@@ -265,7 +288,7 @@ describe('createUnit', () => {
             {
                 abilityId: Ability.MORPH_SPINECRAWLERROOT,
                 unitTags: [uprooted.tag!],
-                queueCommand: true,
+                queueCommand: false,
                 targetWorldSpacePos: { x: 5, y: 6 },
             },
         ]);

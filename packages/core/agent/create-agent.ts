@@ -5,7 +5,8 @@ import { halfSupplyTypes } from '../constants/groups.ts';
 import { trainedFrom } from '../constants/dicts/trained-from.ts';
 import { NodeSC2Error } from '../engine/errors.ts';
 import { NOOP } from '../utils/collections.ts';
-import { affordable, macroHelpers } from './macro.ts';
+import { macroHelpers } from './macro.ts';
+import { affordable } from '../utils/economy.ts';
 import type { Agent, Cost, EventReader, AgentObject, World, SystemWrapper, System } from '../types.ts';
 
 const debug = createDebug('sc2:debug:Bot');
@@ -169,17 +170,17 @@ export default function createAgent(blueprint: EventReader<AgentObject> = {} as 
             ...blueprint.settings,
         },
         interface: blueprint.interface || { raw: true, score: true, rawCropToPlayableArea: true },
-        canAfford(unitTypeId, earmarkName, { count = 1, supply = false } = {}) {
+        canAfford(unitTypeId, { earmark, count = 1, supply = false } = {}) {
             const unitCost = this.calculateCost(unitTypeId);
             const total = { minerals: unitCost.minerals * count, vespene: unitCost.vespene * count };
-            if (!affordable(this._world, total, earmarkName)) return false;
+            if (!affordable(this._world, total, earmark)) return false;
             if (supply && this.calculateSupplyCost(unitTypeId) * count > this.supplyLeft) return false;
-            if (earmarkName) this._world.data.settleEarmark(earmarkName);
+            if (earmark) this._world.data.settleEarmark(earmark);
             return true;
         },
-        canAffordUpgrade(upgradeId, earmarkName) {
-            if (!affordable(this._world, this.calculateUpgradeCost(upgradeId), earmarkName)) return false;
-            if (earmarkName) this._world.data.settleEarmark(earmarkName);
+        canAffordUpgrade(upgradeId, { earmark } = {}) {
+            if (!affordable(this._world, this.calculateUpgradeCost(upgradeId), earmark)) return false;
+            if (earmark) this._world.data.settleEarmark(earmark);
             return true;
         },
         hasTechFor(unitTypeId) {

@@ -4,13 +4,13 @@ Source: user, 2026-10-27 overnight (core-arch.decisions.md, last entry): "make t
 Raw audits (file:line detail, blast-radius counts, method): audits/cs-public.md (PUB-nn), audits/cs-internal.md (INT-nn), audits/cs-comments.md (comment sweep), audits/cs-docs.md (DOC-nn, target doc structure, migration tables). Audited at a8b1f38 + the dirty tree (R2-T01 scaffolding in flight). Code wins over docs; high-severity claims re-checked by the architect against the code.
 Not redone: consolidation.md (CN-*).
 
-Status: DRAFT. CS-I, CS-D and CS-PM tickets are runnable in the order below; CS-PQ items wait for PQ1–PQ10. DQ1 (doc layout) is not an API change; the lead may settle it. Public split per user (via lead, 2026-10-27): minor public changes run overnight and migrate bot/ call sites; only removing/reshaping core concepts and semantic changes wait.
+Status: DRAFT. CS-I, CS-D and CS-PM tickets are runnable in the order below. PQ1–PQ10 answered (user, 2026-10-28; core-arch.decisions.md last entry): tickets in "Answered questions (CS-PQ tickets)"; folds into CS-PM05a/b/c, PM06, PM08, PM10 are marked "Changed per PQn". PQ8 superseded (no ticket). DQ1 settled (a) by the lead. Public split per user (via lead, 2026-10-27): minor public changes run overnight and migrate bot/ call sites; only removing/reshaping core concepts and semantic changes wait.
 
 ## Summary
 
 | class | findings | high | med | low | tickets |
 |---|---|---|---|---|---|
-| public | 46 | 9 | 19 | 18 | CS-PM01–PM18 (runnable); PQ1–PQ10 (user); 4 no-change |
+| public | 46 | 9 | 19 | 18 | CS-PM01–PM18 (PM05 split a/b/c, PM18 split a/b); CS-PQ01a, PQ01b, PQ02a, PQ04, PQ05, PQ06a, PQ06b, PQ07a, PQ07b, PQ07c, PQ09, PQ10d; 4 no-change |
 | internal | 23 | 0 | 7 | 16 | CS-I01–I15 (runnable; I06, I13, I14, I15 wait for R2 tickets) |
 | docs | 58 | 4 | 26 | 28 | CS-D01–D10 (runnable) |
 | total | 127 | 13 | 52 | 62 | |
@@ -192,18 +192,24 @@ Start now: CS-I01, CS-I09 (senior), CS-I11, CS-D01–CS-D07. Next as blockers cl
 
 ## Interleaving with parity round 2 (2026-10-28, after the RQ answers)
 
-The authoritative cross-queue order is parity-r2.md "Runnable order with the consistency queue": waves, shared-file chains and file sets for R2-T08–T35 plus CS-PM03+, CS-I04, I06, I07, I08, I10, I13a/b, I14, I15 and CS-D09. Edges it adds to tickets in this file:
+The authoritative cross-queue order is parity-r2.md "Runnable order (snapshot 7)": the remaining order for every remaining R2, CS-I, CS-PM and CS-PQ ticket and R2-T37/T38. Edges it adds to tickets in this file:
 - types.ts chain: CS-PM14 → R2-T08 → R2-T19 → CS-PM03 → … (the R2 scaffolding goes first).
 - CS-I04 also waits for R2-T08 (placement.ts stubs).
 - CS-I07 also waits for R2-T13 (agent/macro.ts), R2-T19 (stub lines in actions/mining) and CS-PM01 (create-engine.ts, create-system.ts).
-- CS-I06 also waits for R2-T31 (builder-plugin.ts) and R2-T25 (actions.ts).
+- CS-I06 also waits for R2-T31 (builder-plugin.ts), R2-T25 and CS-PQ02a (actions.ts).
+- R2-T35 also waits for CS-PQ01a (mining.ts; added 2026-10-28 with the PQ tickets).
+- CS-PM18b sits between R2-T10 and R2-T11 on influence.ts.
 - CS-I10 also waits for R2-T24 and R2-T34 (systems/unit.ts).
 - CS-I14 also waits for R2-T20, T22, T23, T27, T33 (behaviors files and tests).
 - CS-I15 also waits for R2-T20, T29, T33, T34 (pathing/influence/spatial/units tests).
-- CS-PM04 also waits for R2-T25 (actions.ts). CS-PM05 onward run alone, after R2-T35 and CS-I13a/b, CS-I10.
+- CS-PM04 also waits for R2-T25 (actions.ts). Superseded 2026-10-28: the types.ts chain is now PM18a → PQ06b → R2-T39 → PQ07b → PM05a → PM05b → PM05c → PQ01b → PQ06a → PQ05 → PQ07a → PM06 → PM07 → PQ04 → PM08 → PQ10d → PM09 → R2-T37 → R2-T38 → PM10 → PM11. PM05a starts after PQ07b, CS-I06 and R2-T15 (lead 2026-10-28: no T18 gate). CS-PQ07c is off the chain and runs after PQ07b and T15.
 - CS-D09 runs before R2-T18 (both edit docs/).
 
-## Runnable now (snapshot 2026-10-28)
+## Runnable now
+
+Current snapshot: parity-r2.md "Runnable order (snapshot 7, restart point)". It covers every remaining ticket: CS-PQ07c, CS-I15 (influence.test.ts) and R2-T17 finishing; then R2-T18, and the serial chain CS-PM05b → … → PM11, including R2-T37/T38. Older snapshots (including the one below) are history.
+
+### Snapshot 1 (superseded, kept for history)
 
 Done: CS-I01, I03, I09, I11, PM02, PM12, PM13, PM15; R2-T01, T02, T03, T05, T06. In flight: R2-T04 rework (resources/buildings.ts, systems/builder-plugin.ts, behaviors/macro/structures.ts, types.ts, their tests), R2-T07 review (behaviors/combat/spells.ts + test), CS-DFIX (docs/*.md, examples/README.md), then CS-D08. R2-T08–T18 wait on RQs.
 
@@ -594,7 +600,7 @@ Rules for every CS-PM ticket:
 - Gate: `bun run check-types` and `bun test` in packages/core, `bun run check-types` in bot/ (repo-root turbo), `biome format`.
 - bot/ has uncommitted BOT-3 edits (bot/systems/build.ts, combat/offense.ts, combat/utils.ts): the lead commits them before a PM ticket touches bot/. Two PM tickets editing the same bot/ file are serial (Blocked by covers the known ones; the lead re-checks at start).
 - Docs: each ticket ends with a "Docs delta" note in its task (old → new names, behaviour line for the changelog). CS-D09 applies every delta recorded before it starts; a PM ticket finishing after CS-D09 edits docs/ and docs/changelog.md itself.
-- types.ts is one shared file: the PM tickets that touch it form one serial chain after R2-T01 lands (PM12 → PM14 → PM03 → PM04 → PM05 → PM06 → PM07 → PM08 → PM09 → PM10).
+- types.ts is one shared file: the PM and PQ tickets that touch it form one serial chain. Done: PM12 → PM14 → PM03 → PM04. Remaining (2026-10-28): PM18a → PQ06b → R2-T39 → PQ07b → PM05a → PM05b → PM05c → PQ01b → PQ06a → PQ05 → PQ07a → PM06 → PM07 → PQ04 → PM08 → PQ10d → PM09 → R2-T37 → R2-T38 → PM10 → PM11.
 - types.ts after R2-T04 (lead decision 2026-10-28, design C6 / ares): `BuildOptions` has no `checkSafe`; tracker retargets use `getNextExpansion`'s default. `BuildingTracker.getNextExpansion(opts?: { checkSafe?: boolean }): Point2D | undefined` (default true) and `isExpansionBlocked(pos)` exist, and `expansionController` passes its flag through to getNextExpansion. Every chain ticket keeps these members as they are (no PM ticket renames or re-defaults them). The types.ts line numbers cited in PM tickets predate R2: re-grep at start. Specific touch points: CS-PM03 leaves `getNextExpansion`'s `Point2D | undefined` as is (already honest); CS-PM05's `near` rename doesn't apply to BuildOptions (`at` is an exact target); CS-PM10 renames the behavior's pass-through option to getNextExpansion's name (`checkLocationIsSafe` → `checkSafe`).
 
 ### CS-PM01 Handler errors visible; error name casing
@@ -709,7 +715,8 @@ Rules for every CS-PM ticket:
 - Stack: backend. Junior. Blocked by: None (R2-T04 approved; no queued ticket in flight on systems/map.ts). CS-I04, CS-I08, CS-I10 and CS-PM07 (systems/map.ts) wait for it.
 - Not folded into an existing ticket: the queued tickets that touch systems/map.ts are internal-only (CS-I04, I08, I10, which may not change behaviour) or far down the types.ts chain (CS-PM07). A standalone ticket lands the fix now.
 
-### CS-PM18 One owned-effect type
+### CS-PM18 One owned-effect type (split 2026-10-28: PM18a now, PM18b on influence.ts)
+- Split (architect, sequencing only, lead to confirm): resources/influence.ts is held by R2-T10 and then T11/T29, while every other PM18 file is free now. **CS-PM18a** = everything below except resources/influence.ts; runnable now. **CS-PM18b** = replace influence.ts's local alias with types.ts `OwnedEffect`; one-file junior ticket, after R2-T10 and PM18a, before R2-T11 in the influence.ts chain. AC for both: the grep AC below, scoped to their files.
 - Source: lead, 2026-10-28, after CS-PM17. Four local aliases of `SC2APIProtocol.Effect & { alliance?; owner? }`: resources/buildings.ts:~374, resources/intel.ts:32, resources/influence.ts:41, systems/map.ts (`OwnedEffect`). The bundled proto typings lack those fields; the raw data carries them.
 - Why minor: type-only and additive. `map.getEffects()` returns the same objects with two optional fields now typed; nothing breaks for callers.
 - What to build: `export type OwnedEffect = SC2APIProtocol.Effect & { alliance?: SC2APIProtocol.Alliance; owner?: number }` in types.ts; `MapResource.getEffects(): OwnedEffect[]` (and `setActiveEffects`); the four local aliases replaced by it.
@@ -717,7 +724,7 @@ Rules for every CS-PM ticket:
   - [ ] grep: no local `Effect & {` alias left; `getEffects()` typed `OwnedEffect[]`; callers drop their casts.
   - [ ] Gate passes; no runtime change.
 - Implementation plan: Where: types.ts, resources/map.ts (`getEffects`, `setActiveEffects`), systems/map.ts, resources/{buildings,intel,influence}.ts. Docs delta: map.md getEffects return type. Don't touch: frame.ts (`frame.getEffects` stays raw proto).
-- Stack: backend. Junior. Blocked by: CS-PM04 and R2-T08 (types.ts; then it takes the next types.ts slot, ahead of R2-T19 since it's small), CS-I13 (buildings.ts, intel.ts, influence.ts), R2-T08 (influence.ts). If the lead wants it sooner, CS-I13 can do the three resources' alias removal once PM18's type exists.
+- Stack: backend. Junior. Blocked by: PM18a: none (CS-PM04 ✓, R2-T08 ✓, CS-I13 ✓; types.ts, map.ts, systems/map.ts, buildings.ts, intel.ts all free at snapshot 3). PM18b: R2-T10 (influence.ts), CS-PM18a. Blocks: CS-PQ06b (next types.ts slot), R2-T11 (PM18b, influence.ts).
 
 ### CS-PM03 Honest return types
 - Source: PUB-12.
@@ -740,32 +747,63 @@ Rules for every CS-PM ticket:
 - Implementation plan: Where: types.ts (ActionManager), resources/actions.ts, core callers (grep `actions\.(do|move|attack|...)\(` incl. behaviors/ and systems/builder-plugin.ts), examples/, bot/systems/military/production.ts:122 and other bot/ grep hits. Follow: `Unit.useAbility(abilityId, { target, queue })` (create-unit.ts:584).
 - Stack: backend. Junior. Blocked by: CS-PM03 (types.ts), CS-PM02 (create-unit.ts), CS-I07, CS-I08 (actions.ts), R2-T04 (builder-plugin.ts caller), BOT-3 commit.
 
-### CS-PM05 Agent, units and engine call shapes; `near`
-- Source: PUB-04 (filter type), PUB-08 (option shape only), PUB-21, PUB-29, PUB-30, PUB-43.
-- Why minor: option-shape, argument-order and parameter-name tweaks; results and defaults unchanged.
+### CS-PM05 Agent, units and engine call shapes; `near` (split into PM05a/b/c, 2026-10-28)
+- Source: PUB-04 (filter type), PUB-08, PUB-21, PUB-29, PUB-30, PUB-43.
+- Split (architect, granularity only, lead to confirm): the original ticket touched ~60 call sites across agent, units, placement and engine and wouldn't fit one context. PQ2(b) and PQ2(c) are folded into PM05b because they change the same getters PM05 reshapes. The three run serially in the types.ts chain.
+- Rules for all three: shape-only unless an item says "Changed per PQ"; gate as in "Public changes"; each edits its docs page and docs/changelog.md itself (they finish after R2-T18).
+
+#### CS-PM05a Agent and engine call shapes
+- Why minor: option-shape and parameter-name tweaks; results and defaults unchanged.
 - What to build:
-  - `agent.train(type, { count, near, idleOnly })`; `agent.canAfford(type, { earmark, count, supply })` and `canAffordUpgrade(upgradeId, { earmark })` (settling behaviour untouched; PQ7).
-  - Boolean flags become options: `units.getWorkers({ includeBusy })` (same default, PQ2 owns the semantics), `map.getCenter({ pathable })`, `Units.sorted(key, { reverse })`, `sortedByDistanceTo(pos, { reverse })`.
-  - Every UnitResource typed getter accepts `number | UnitFilter` (today only some do; the runtime path is identical).
-  - `Units.closerThan/furtherThan(position, distance)` position-first like every other Units helper.
-  - Proximity parameters are named `near`: `PlacementRequest.closestTo`, `WarpInOptions.nearPosition`, `autoSupply` `closestTo`, the `agent.train` param.
-  - `engine.createGame(map, players, { realtime, ... })` matching runGame. Builds on CS-PM13 (landed): `createGame` itself throws NodeSC2Error on a failed create (status check after `_client.createGame`, create-engine.ts:362-368, with its why comment), and runGame/runBotVsBot call it without `assertGameCreated`. The reshape changes only the parameter list: keep the status-based check and its message, update the internal calls at create-engine.ts:207 and :255, and keep runGame's no-agent NodeSC2Error (:201-202) ahead of the call. PM13's tests in engine/create-engine.test.ts move to the new call shape with the same assertions.
+  - `agent.train(type, { count, near, idleOnly })` (today `train(type, amount, closestTo, trainOnlyIdleBuildings)`).
+  - `agent.canAfford(type, { earmark, count, supply })` and `canAffordUpgrade(upgradeId, { earmark })`. Settling is untouched here; CS-PQ07a removes it.
+  - `engine.createGame(map, players, { realtime, ... })` matching runGame. Builds on CS-PM13 (landed): `createGame` itself throws NodeSC2Error on a failed create (status check after `_client.createGame`, with its why comment), and runGame/runBotVsBot call it without `assertGameCreated`. The reshape changes only the parameter list: keep the status-based check and its message, update the internal calls in runGame/runBotVsBot, and keep runGame's no-agent NodeSC2Error ahead of the call. PM13's tests in engine/create-engine.test.ts move to the new call shape with the same assertions.
 - Acceptance criteria:
-  - [ ] Each item done; no `closestTo`/`nearPosition` option names left on public types.
-  - [ ] Existing tests pass with call sites updated.
+  - [ ] Each item done; no positional `earmarkName`, `amount`, `closestTo`, `trainOnlyIdleBuildings` or `realtime` left on Agent/Engine types.
+  - [ ] Existing agent, builder-plugin and engine tests pass with call sites updated; one test per reshaped call asserts the same result as the old call.
   - [ ] Gate passes.
-- Implementation plan: Where: types.ts, agent/macro.ts (train), agent/create-agent.ts (canAfford*), resources/units.ts, resources/units-collection.ts, resources/map.ts (getCenter), resources/placement.ts, resources/actions.ts (warpIn), behaviors/macro/structures.ts (autoSupply), engine/create-engine.ts (createGame), all core callers (canAfford ~23 incl. resources/buildings.ts and systems/builder-plugin.ts; closerThan ~9), examples/, bot/ (closerThan 18, canAfford 8, agent.train 1).
-- Stack: backend. Junior. Blocked by: CS-PM04 (types.ts, actions.ts), CS-PM13 (create-engine.ts), CS-PM16 (buildings.ts), CS-I06 (agent/macro.ts, create-agent.ts), CS-I13 (buildings.ts, builder-plugin.ts), R2-T04 (structures.ts); R2-T15 (placement.ts) if started.
+- Implementation plan: Where: types.ts (Agent, Engine), agent/macro.ts (train), agent/create-agent.ts (canAfford*), engine/create-engine.ts (createGame), core canAfford callers (~23: grep `canAfford(`, incl. resources/buildings.ts, systems/builder-plugin.ts, behaviors/), agent.train callers (systems/builder-plugin.ts train task), examples/, bot/ (canAfford 8: economy.ts, training.ts, production.ts, wall.ts; agent.train 1: training.ts). Don't touch: data-storage.ts (CS-PQ09).
+- Stack: backend. Junior. Blocked by: CS-PQ07b (types.ts chain), CS-I06 (agent/macro.ts, create-agent.ts, builder-plugin.ts), R2-T15 (builder-plugin.ts), and no in-flight ticket on a canAfford caller file (grep at start). Changed per lead decision 2026-10-28: no longer waits for R2-T18 or for every other R2 ticket.
+
+#### CS-PM05b Units and map shapes; getWorkers and getter defaults (Changed per PQ2(b), PQ2(c))
+- Why: shape items are minor; the two PQ items are user-approved semantic changes (decisions 2026-10-28).
+- What to build:
+  - `map.getCenter({ pathable })`, `Units.sorted(key, { reverse })`, `sortedByDistanceTo(pos, { reverse })`.
+  - `Units.closerThan/furtherThan(position, distance)` position-first like every other Units helper.
+  - Every UnitResource typed getter accepts `number | UnitFilter` (today only some do; the runtime path is identical).
+  - Changed per PQ2(c): `units.getWorkers()` returns every own worker (no flag). New `units.getAvailableWorkers()` returns the ones without the internal `command` label (today's `getWorkers()`). `getIdleWorkers`/`getMineralWorkers` keep their results by building on `getAvailableWorkers`; `getConstructingWorkers` builds on `getWorkers()`. Core callers that want today's filtered view move to `getAvailableWorkers()`, callers of `getWorkers(true)` to `getWorkers()`. This replaces the old PM05 item `getWorkers({ includeBusy })`.
+  - Changed per PQ2(b): typed getters of player units default to `Alliance.SELF`. At audit only `getUnfinished` (today all alliances) changes; getById, getStructures, getBases, getCombatUnits, getGasMines and inProgress already default to SELF. `getByType` is removed in favour of `getById(ids, { alliance })`. Its core callers: systems/map.ts (vespene geysers, mineral fields: pass `Alliance.NEUTRAL`), resources/map.ts gas mines (needs SELF and ENEMY: two calls or a getAlive filter, internal choice), systems/builder-plugin.ts ability-task casters (SELF; today all alliances, which could pick an enemy caster: changelog line). Not changed (OQ-B, see Further notes): `getMineralFields`/`getGasGeysers` (neutral units; a SELF default would return nothing), `getAll`/`getAlive`/`withLabel` (not typed getters).
+- Acceptance criteria:
+  - [ ] Each item done; no boolean positional on getCenter/sorted/sortedByDistanceTo; closerThan/furtherThan take position first; no `getByType` on UnitResource.
+  - [ ] Tests: a worker with the `command` label is in `getWorkers()` and not in `getAvailableWorkers()`; getIdleWorkers/getMineralWorkers return the same as before on the existing fixtures; `getUnfinished()` excludes an enemy structure under construction; `getById(type, { alliance: ENEMY })` returns what `getByType` returned for enemy units.
+  - [ ] bot/ migrated: bot/index.ts:47 keeps `getWorkers()` (now counts every worker, the PQ2(c) fix); bot/systems/economy.ts `getWorkers(true)` → `getWorkers()`; closerThan/furtherThan call sites (bot ~18, core ~9) swapped.
+  - [ ] Gate passes.
+- Implementation plan: Where: types.ts (UnitResource, MapResource.getCenter), resources/units.ts, resources/units-collection.ts, resources/map.ts, systems/map.ts, systems/builder-plugin.ts (getByType caller), core callers (grep `closerThan|furtherThan|getCenter\(|sorted\(|sortedByDistanceTo|getWorkers|getByType|getUnfinished`), examples/, bot/systems/** and bot/index.ts.
+- Stack: backend. Junior. Blocked by: CS-PM05a (types.ts chain), CS-PQ01a and CS-PQ07b (units-collection.ts), R2-T34 (units.ts), CS-PQ02a (bot/systems/economy.ts).
+
+#### CS-PM05c Proximity parameters are named `near`
+- Why minor: option renames; values and behaviour unchanged.
+- What to build: `PlacementRequest.closestTo` → `near`, `WarpInOptions.nearPosition` → `near`, `autoSupply`'s `closestTo` → `near`.
+- Acceptance criteria:
+  - [ ] No `closestTo`/`nearPosition` option names left on public types.
+  - [ ] Existing placement, warpIn and autoSupply tests pass with call sites updated.
+  - [ ] Gate passes.
+- Implementation plan: Where: types.ts (PlacementRequest, WarpInOptions, autoSupply options), resources/placement.ts, resources/actions.ts (warpIn), behaviors/macro/structures.ts (autoSupply), callers (grep `closestTo:|nearPosition`), examples/, bot/ grep hits.
+- Stack: backend. Junior. Blocked by: CS-PM05b (types.ts chain), R2-T35 (placement.ts), CS-PQ07b (actions.ts chain).
 
 ### CS-PM06 Time units in names
 - Source: PUB-06 (names), PUB-25.
 - Why minor: renames that put the unit in the name; values and units unchanged.
-- What to build: settings that take seconds get a `Seconds` suffix (`BuildingSettings.timeout` → `timeoutSeconds`, `MemorySettings.expireGround/expireAir` → `expireGroundSeconds/expireAirSeconds`, `PlacementSettings.reservationTimeout` → `reservationTimeoutSeconds`, `IntelSettings.greedyTwoBaseBefore/greedyThreeHatchBefore` → `...BeforeSeconds`, `RunGameOptions.gameTimeLimit` → `gameTimeLimitSeconds`); loop timestamps get a `Loop` suffix (`TrackedBuild.requestedAt` → `requestedAtLoop`, `FlightPlan.startedAt` → `startedAtLoop`, intel `detectedAt` → `detectedAtLoop`); `Placement.reservedAt` → `reservedAtSeconds` (its unit change is PQ3); `Unit.getLife()` (0..100, 0 callers) → `healthPercent()`.
+- What to build: settings that take seconds get a `Seconds` suffix (`BuildingSettings.timeout` → `timeoutSeconds`, `MemorySettings.expireGround/expireAir` → `expireGroundSeconds/expireAirSeconds`, `PlacementSettings.reservationTimeout` → `reservationTimeoutSeconds`, `IntelSettings.greedyTwoBaseBefore/greedyThreeHatchBefore` → `...BeforeSeconds`, `RunGameOptions.gameTimeLimit` → `gameTimeLimitSeconds`); loop timestamps get a `Loop` suffix (`TrackedBuild.requestedAt` → `requestedAtLoop`, `FlightPlan.startedAt` → `startedAtLoop`, intel `detectedAt` → `detectedAtLoop`); `Unit.getLife()` (0..100, 0 callers) → `healthPercent()`.
+  - Changed per PQ3 (user, 2026-10-28): `Placement.reservedAt` becomes `reservedAtLoop` and stores the game loop (`frame.getGameLoop()`, today `frame.time()` seconds). The reservation-timeout check converts once (loops vs `reservationTimeoutSeconds`). `OpeningRecord.duration` stays seconds (persisted ares-format field). Replaces the old item `reservedAt` → `reservedAtSeconds`.
+  - Changed per PQ10(e) (user, 2026-10-28): System `buildOptions.earmarks` (a delay in loops) → `buildOptions.earmarkDelayLoops`; the `earmarkDelay()` method keeps its name; default 1000 and `null` (disabled) unchanged (CS-PM12).
 - Acceptance criteria:
   - [ ] Each rename done across core, examples and bot/; no old name left on a public type.
-  - [ ] Gate passes.
-- Implementation plan: Where: types.ts, resources/{buildings,memory,placement,intel,flying}.ts, engine/create-engine.ts (gameTimeLimit), engine/create-unit.ts (getLife), examples/ (gameTimeLimit sites), bot/ grep hits.
-- Stack: backend. Junior. Blocked by: CS-PM05 (types.ts, placement.ts, create-engine.ts), CS-PM16 (buildings.ts), R2-T04, R2-T05, CS-I13 (buildings.ts, intel.ts).
+  - [ ] Test: a reservation made at loop L expires at the same game time as before (timeout seconds × 22.4 loops later), and `reservedAtLoop === L`.
+  - [ ] Test: `buildOptions: { earmarkDelayLoops: null }` disables earmark timeouts; omitted → 1000.
+  - [ ] Gate passes; docs (macro.md, build-orders.md, resources.md settings tables) and changelog edited by this ticket.
+- Implementation plan: Where: types.ts, resources/{buildings,memory,placement,intel,flying}.ts, engine/create-engine.ts (gameTimeLimit), engine/create-unit.ts (getLife), systems/builder-plugin.ts (earmarks reads/default/earmarkDelay setter), examples/ (gameTimeLimit sites, buildOptions), bot/ grep hits.
+- Stack: backend. Junior. Blocked by: CS-PQ07a (types.ts chain; builder-plugin.ts), CS-PM05c (placement.ts), CS-PQ05 (create-unit.ts), CS-PQ06a (buildings.ts).
 
 ### CS-PM07 Coordinates and grids
 - Source: PUB-05 (additive part), PUB-23, PUB-24, PUB-39, PUB-41 (param).
@@ -775,17 +813,19 @@ Rules for every CS-PM ticket:
   - [ ] Each item done; map.path tests assert Point2D output with the same cells.
   - [ ] Gate passes.
 - Implementation plan: Where: types.ts, resources/map.ts, engine/create-expansion.ts, utils/map/townhall.ts, systems/map.ts (pathFrom*), utils/map/region.ts or other path consumers (grep), bot/ grep hits (getExpansions 9 compile unchanged).
-- Stack: backend. Junior. Blocked by: CS-PM06 (types.ts), CS-I10 (systems/map.ts).
+- Stack: backend. Junior. Blocked by: CS-PM06 (types.ts), CS-I10 ✓, CS-PQ01b (resources/map.ts). CS-PQ04 (PQ4 (a): townhall builds take `townhallCenter`) follows.
 
 ### CS-PM08 One name per concept (renames and additions)
 - Source: PUB-17 (verb), PUB-19, PUB-26 (rename), PUB-35, PUB-42 (isOwn).
 - Why minor: renames to the names the rest of the surface already uses, plus additive members; behaviour of every call unchanged.
-- What to build: `agent.research` → `agent.upgrade` (six names already say upgrade); `Unit.isConstructing()` → `hasBuildOrder()` and a new `Unit.isUnderConstruction()` (`buildProgress < 1`); `units.getAlive()` → `getVisible()` (same filter; whether getAll drops dead own units is PQ7); root index.ts exports the full point-helper set (`nClosestPoint`, `add`, `subtract`, `multiply`, `normalize`, `areEqual`, `distanceX/Y`), `center` dropped from behaviors/index.ts (Units#center and avgPoints cover it); new `Unit.isOwn()`.
+- What to build: `agent.research` → `agent.upgrade` (six names already say upgrade); `units.getAlive()` → `getVisible()` (same filter; CS-PQ07c then drops dead own units from getAll); root index.ts exports the full point-helper set (`nClosestPoint`, `add`, `subtract`, `multiply`, `normalize`, `areEqual`, `distanceX/Y`), `center` dropped from behaviors/index.ts (Units#center and avgPoints cover it); new `Unit.isOwn()`.
+  - Moved to CS-PQ07b (Changed per PQ7(b)): `Unit.isConstructing()` → `hasBuildOrder()` and `Unit.isUnderConstruction()`; they belong with the one predicate rule.
+  - Changed per PQ10(a) (user, 2026-10-28): `buildings.buildGas` → `buildings.buildGasMine`, matching `actions.buildGasMine` and the glossary term. Callers: behaviors/macro/structures.ts (gas controller), systems/builder-plugin.ts (gas step), behaviors/macro/structures.test.ts spies. bot 0 / examples 0.
 - Acceptance criteria:
-  - [ ] Each item done across core, examples, bot/ (getAlive bot 4, core ~32).
-  - [ ] Gate passes.
-- Implementation plan: Where: types.ts, agent/macro.ts, engine/create-unit.ts, resources/units.ts, index.ts, behaviors/index.ts, all getAlive/isConstructing callers, examples/, bot/.
-- Stack: backend. Junior. Blocked by: CS-PM07 (types.ts), R2-T03, R2-T04, R2-T05, R2-T06, R2-T07 (getAlive callers and behaviors/index.ts in hot files).
+  - [ ] Each item done across core, examples, bot/ (getAlive bot 4, core ~32); no `buildGas` member left on BuildingTracker.
+  - [ ] Gate passes; docs and changelog edited by this ticket.
+- Implementation plan: Where: types.ts, agent/macro.ts, engine/create-unit.ts (isOwn), resources/units.ts, resources/buildings.ts (buildGas), behaviors/macro/structures.ts, systems/builder-plugin.ts, index.ts, behaviors/index.ts, all getAlive callers, examples/, bot/.
+- Stack: backend. Junior. Blocked by: CS-PQ04 (types.ts chain; agent/macro.ts, buildings.ts, structures.ts, builder-plugin.ts), CS-PM05b (units.ts).
 
 ### CS-PM09 Public surface hygiene
 - Source: PUB-27, PUB-37, INT-03.
@@ -796,17 +836,19 @@ Rules for every CS-PM ticket:
   - [ ] getSettings/defaults/validation on every resource with configure; one test per resource for an invalid value.
   - [ ] Gate passes.
 - Implementation plan: Where: types.ts, resources/{map,frame}.ts, systems/{map,frame}.ts, every resource with configure, index.ts. Follow: mining.ts:142-149, constants/influence.ts INFLUENCE_DEFAULTS.
-- Stack: backend. Junior. Blocked by: CS-PM08 (types.ts, index.ts), CS-I13 (hot resources), CS-I04 (internal `_` reads gone first).
+- Stack: backend. Junior. Blocked by: CS-PQ10d (types.ts chain), CS-PM08 (index.ts), CS-PQ07c (systems/frame.ts), CS-I13 ✓, CS-I04 ✓. R2-T37 (RQ11'(b) prerequisite, parity-r2.md) follows and builds on the writer types: it reroutes engine writers to the registered instance, so PM09 only has to split the types.
 
 ### CS-PM10 Behaviors vocabulary
 - Source: PUB-31, PUB-34; GLOSSARY.md "Known deviations" (CS-D10, 2026-10-28).
 - Why minor: option renames on behaviors, which are unreleased (consolidation Q6); behaviour unchanged except squared-distance params taking plain distances, which the rename makes compile-visible.
 - What to build: one count word (`toCount`; spawnController `maximum` → `toCount`), `buildStructure` keeps `maxOnRoute` (changed 2026-10-28: it counts workers on the way to an unstarted structure, not pending builds, so renaming it `maxPending` would add a third meaning; the two existing `maxPending` options are PQ10(c)); `buildStructure`'s `structureType` → `unitType` (as `buildings.build`); `gasBuildingController` → `gasMineController` (glossary term "gas mine"), `bonusDistance` everywhere (`inAttackRange` `extraRange`), plain distances (`distanceSquaredCheck` / `distanceCheckSquared` → `distance`, squared inside), group behaviors accept `Iterable<Unit>`; R2's AoE/spell option names follow (`closeEnemy` vs `targets`: pick `targets`); `expansionController`'s `checkLocationIsSafe` → `checkSafe` (behaviors/macro/structures.ts:152, :158, :173), the name of the `buildings.getNextExpansion` option it passes through to (default stays true).
+  - Changed per PQ10(c) (user, 2026-10-28): `gasMineController`'s `maxPending` counts `agent.alreadyPending(gasMineType)` (orders, unfinished, tracked), like `expansionController`'s, instead of `buildings.pending` (tracked only). The `max` it passes to `buildings.buildGasMine` stays (tracker-level cap).
 - Acceptance criteria:
-  - [ ] No option names from the left-hand list on behaviors' public types; tests updated, same behaviour.
-  - [ ] Gate passes.
+  - [ ] No option names from the left-hand list on behaviors' public types; tests updated, same behaviour except the PQ10(c) count.
+  - [ ] Test: a gas mine ordered outside the tracker (worker with the build order, no tracked build) counts toward `maxPending`; with `maxPending: 1` the controller builds nothing more.
+  - [ ] Gate passes; docs and changelog edited by this ticket.
 - Implementation plan: Where: behaviors/** and their tests, types.ts (behavior option types), examples/, bot/ grep hits (`closeEnemy|group:` 3).
-- Stack: backend. Junior. Blocked by: CS-PM09 (types.ts), R2-T03, R2-T06, R2-T07, CS-I14.
+- Stack: backend. Junior. Blocked by: R2-T38 (types.ts chain), R2-T20 and CS-PQ01a (individual.ts, group.ts), CS-I14 ✓.
 
 ### CS-PM11 Debug namespace scheme
 - Source: INT-17.
@@ -816,9 +858,253 @@ Rules for every CS-PM ticket:
   - [ ] Every `createDebug(` string follows the scheme; bot/index.ts DEBUG strings migrated.
   - [ ] Gate passes.
 - Implementation plan: Where: every `createDebug(` site (agent/, engine/, systems/, resources/, utils/build-order/parse.ts), bot/index.ts.
-- Stack: backend. Junior. Blocked by: CS-PM02 (last of the cold-file chain on those modules), CS-I13, R2-T04 (builder-plugin.ts).
+- Stack: backend. Junior. Blocked by: CS-PM10 (last of the serial wave; it touches every module that logs).
 
-## Questions for the user (CS-PQ, not runnable overnight)
+## Answered questions (CS-PQ tickets, 2026-10-28)
+
+Answers: core-arch.decisions.md, 2026-10-28 (user): PQ1 (a), PQ2 a+b+c, PQ3 yes, PQ4 (a), PQ5 yes, PQ6 a+b+c, PQ7 a+b+c+d, PQ8 superseded, PQ9 latest wins, PQ10 a, c, d, e yes and b no.
+These are user-approved semantic changes, so the CS-PM "no behaviour change" rule doesn't apply to the item each ticket names; everything else in the ticket stays behaviour-preserving. Each ticket migrates the core, examples and bot/ call sites it changes (user's exception to the bot/ hints-only rule, as for CS-PM), and edits its docs page and docs/changelog.md itself; the changelog line says what an unchanged call now does differently. Gate as in "Public changes". docs/ is one serial resource: the lead hands it to one ticket at a time.
+
+Where each answer went:
+
+| answer | ticket |
+|---|---|
+| PQ1 (a), Units part | CS-PQ01a (with PQ7 (d)) |
+| PQ1 (a), absence and agent returns | CS-PQ01b |
+| PQ2 (a) | CS-PQ02a |
+| PQ2 (b), (c) | folded into CS-PM05b |
+| PQ3 | folded into CS-PM06 |
+| PQ4 (a) | CS-PM07 adds `townhallCenter`; CS-PQ04 moves townhall builds to it |
+| PQ5 | CS-PQ05 |
+| PQ6 (a) | CS-PQ06a |
+| PQ6 (b) | CS-PQ06b |
+| PQ6 (c) | CS-PQ09 (same file as PQ9) |
+| PQ7 (a) | CS-PQ07a |
+| PQ7 (b) | CS-PQ07b (takes `hasBuildOrder`/`isUnderConstruction` from CS-PM08) |
+| PQ7 (c) | CS-PQ07c |
+| PQ7 (d) | CS-PQ01a |
+| PQ8 | superseded (user pushed with stubs); no ticket |
+| PQ9 | CS-PQ09 |
+| PQ10 (a) | folded into CS-PM08 |
+| PQ10 (b) | no change |
+| PQ10 (c) | folded into CS-PM10 |
+| PQ10 (d) | CS-PQ10d |
+| PQ10 (e) | folded into CS-PM06 |
+
+Conflicts with the PM05–PM11 chain, and how they're settled:
+- PQ5 (sync) vs PM05 call shapes: different aspects of the same members. PM05a reshapes the parameters first, CS-PQ05 changes the return type after it, so each call site is edited once per ticket and never by two tickets at once.
+- PQ2 (c) vs PM05's `getWorkers({ includeBusy })`: the option item is dropped; PM05b implements `getWorkers()` + `getAvailableWorkers()` instead.
+- PQ2 (b) vs PM05's "every typed getter accepts number | UnitFilter": same getters, so both are in PM05b.
+- PQ7 (a) vs PM05's canAfford options: PM05a reshapes, CS-PQ07a then removes the settle; no caller is edited by both at once.
+- PQ7 (b) vs PM08's `isConstructing` rename: moved into CS-PQ07b, so the `is*` = first order / `has*` = any order rule lands in one ticket.
+- PQ3 vs PM06's `reservedAtSeconds`: PM06 now renames straight to `reservedAtLoop`; there is no intermediate name.
+- PQ4 vs PM07: PM07 adds the field (unchanged); CS-PQ04 moves the builds after PM07 and CS-PQ06a.
+- PQ6 (a) vs CS-PQ04: PQ06a changes the return shape with coordinates unchanged; PQ04 then changes coordinates. Splitting them keeps the senior part (tracker matching) apart from the mechanical shape change.
+- PQ10 (a), (c), (e): small renames and one count on code PM06/PM08/PM10 already edit, so they're folded in instead of getting slots of their own.
+
+### CS-PQ01a Units lookups return undefined; furthestNUnits furthest first
+- Decision: PQ1 (a), Units part, and PQ7 (d). Source: PUB-09, PUB-10.
+- What to build:
+  - On an empty collection, `Units.first`, `random`, `closestTo`, `furthestTo` and `inClosestDistanceToGroup` return `undefined` (typed `Unit | undefined`) and `center` returns `undefined` (`Point2D | undefined`), instead of throwing.
+  - `closestDistanceTo` / `furthestDistanceTo` on empty return `Infinity` / `-Infinity` (Math.min/max of nothing). OQ-A: values recommended, not user-confirmed.
+  - `inDistanceOfGroup(other, d)` with an empty `other` returns an empty Units.
+  - `byTag` (the throwing twin of `findByTag`, 0 callers outside tests) is removed; `findByTag` stays. OQ-A.
+  - `furthestNUnits(pos, n)` returns furthest first (today ascending). `closestNUnits` unchanged.
+  - `assertNotEmpty` goes if nothing uses it. CS-PM02's "empty Units.first throws NodeSC2Error" test is replaced by the undefined test.
+- Acceptance criteria:
+  - [ ] Test per member on an empty Units: the value above, no throw.
+  - [ ] Test: `furthestNUnits(p, 3)[0]` is `furthestTo(p)`, and the order is non-increasing in distance.
+  - [ ] Every core, examples and bot/ caller compiles with an explicit guard; `!` only where the line before checks the collection is non-empty.
+  - [ ] Gate passes; docs/units.md empty-collection table; changelog.
+- Implementation plan:
+  - Where: resources/units-collection.ts, resources/units-collection.test.ts; callers the compiler finds (at audit: behaviors/combat/{terran,individual}.ts, resources/{mining,flying}.ts, utils/workers/select-builder.ts, examples/cannon-rush.ts, bot/systems/combat/micro/basic.ts:51 `closestTo(...).pos`, bot/systems/combat/offense.ts:118 `alive.center`); docs/units.md, docs/changelog.md.
+  - Interfaces: `get first(): Unit | undefined`, `get random(): Unit | undefined`, `get center(): Point2D | undefined`, `closestTo(p): Unit | undefined`, `furthestTo(p): Unit | undefined`, `inClosestDistanceToGroup(o): Unit | undefined`.
+  - Follow: `findByTag`, `randomOr` (units-collection.ts).
+  - Don't touch: types.ts (Units is the class), sorted/closerThan shapes (CS-PM05b).
+- Stack: backend. Junior. Blocked by: R2-T20 (individual.ts), R2-T33 (mining.ts, terran.ts). Blocks: CS-PQ07b, CS-PM05b (units-collection.ts), R2-T35 (mining.ts), CS-PM10 (individual.ts).
+
+### CS-PQ01b Absence is undefined; agent refusals return values
+- Decision: PQ1 (a). Source: PUB-01, PUB-11.
+- What to build:
+  - `actions.findPlacement` → `Promise<Point2D | undefined>` (false → undefined).
+  - `map.queryPathing` → `Promise<number | undefined>` (null → undefined).
+  - Ramp getters (`barracksInMiddle`, `depotInMiddle`, `barracksCorrectPlacement`, `protossWallPylon`, `protossWallWarpin`) return `undefined` instead of `null`.
+  - `map.closestPathable(point, radius)` returns `Point2D | undefined` instead of throwing when nothing is pathable in range. OQ-A: the PQ1 text lists "not found" shapes; this one throws today, so it's included by the rule, not by name.
+  - `agent.research` (CS-PM08 renames it `upgrade`) returns false for an upgrade missing from the researched-from table instead of throwing NodeSC2Error.
+  - `agent.expandNow` returns the `TrackedBuild` it requested, or `undefined` when it requested nothing (no spot, unaffordable, already pending).
+  - actions.* already throw ActionManagerError subclasses (BuildError/TrainError/GatherError; no plain Error in actions.ts at audit). One test pins it: every refusal path in actions.ts throws an `ActionManagerError`.
+  - Not here: `agent.getNextExpansion` null → undefined (CS-PQ06a). `data.getUnitTypeData` keeps throwing on an unknown id (CS-PM03's call; OQ-A). Boolean predicates (`canPlace`, `isPlaceableAt`) stay boolean; list returns stay `[]`.
+- Acceptance criteria:
+  - [ ] Types as above; grep types.ts: no `| null` or `| false` used as "not found" on a public return.
+  - [ ] Tests: findPlacement with no spot → undefined; queryPathing unreachable → undefined; a Ramp of the wrong size → undefined getters; closestPathable on a fully blocked area → undefined; research(unknown) → false; expandNow returns the TrackedBuild, and undefined on the repeat call in the same step.
+  - [ ] Callers compile and behave the same: bot economy.ts/production.ts `if (position)` unchanged; bot wall.ts/log.ts ramp `?.` unchanged.
+  - [ ] Gate passes; docs (commands.md failure table, map.md, agents.md); changelog.
+- Implementation plan:
+  - Where: types.ts (ActionManager.findPlacement, MapResource.queryPathing/closestPathable, Agent.research/expandNow), resources/actions.ts, resources/map.ts, utils/map/ramp.ts, agent/macro.ts; callers: resources/placement.ts, systems/builder-plugin.ts, examples/cannon-rush.ts, scripts/capture-fixtures.ts, bot/ (compile check); tests next to each.
+  - Follow: `buildings.build` (returns `TrackedBuild | undefined`).
+  - Don't touch: Units lookups (CS-PQ01a), agent.getNextExpansion (CS-PQ06a).
+- Stack: backend. Junior. Blocked by: CS-PM05c (types.ts chain; actions.ts), CS-PM05a (agent/macro.ts), CS-PM05b (resources/map.ts), R2-T31 and CS-I06 (builder-plugin.ts).
+
+### CS-PQ02a `queue` defaults to false everywhere
+- Decision: PQ2 (a). Source: PUB-03.
+- What to build:
+  - `actions.gather` and `actions.mine` default to `queue: false`; `Unit.toggle` defaults to `queue: false`.
+  - Internal callers that relied on the old default pass `queue: true`: actions.build's gather after a gas-mine build (actions.ts:527 at audit). Grep the rest at start (audit: no other core gather/mine/toggle caller).
+  - `actions.gather` keeps forcing `queue: true` for a worker with the internal `command` label (it protects a pending build order). Its console.warn fires only when the caller passed `queue: false` explicitly, not on the default, or every default call on a building worker would warn. OQ-C.
+  - bot/: bot/systems/economy.ts passes `{ queue: true }` on its two `gather` calls (onUnitCreated, onUnitIdle) and its `mine` call (onUnitFinished): lines 10, 17, 22 now; re-grep after the bot canAfford fix lands. examples/tutorial.ts:78, :85 the same.
+- Acceptance criteria:
+  - [ ] Tests: gather/mine/toggle without options send `queueCommand: false`, with `{ queue: true }` true; a `command`-labelled worker is still forced to queue and warns only on an explicit `queue: false`.
+  - [ ] actions.build on a gas mine still queues the gather behind the build (existing test).
+  - [ ] bot/ and examples call sites send the same proto as before (queue true).
+  - [ ] Gate passes; docs/commands.md defaults line; changelog (unchanged calls to gather/mine/toggle now replace the current order).
+- Implementation plan:
+  - Where: resources/actions.ts, engine/create-unit.ts (toggle), resources/actions.test.ts, engine/create-unit.test.ts, examples/tutorial.ts, bot/systems/economy.ts, docs/commands.md, docs/changelog.md.
+  - Don't touch: resources/command-arbiter.ts.
+- Stack: backend. Junior. Blocked by: R2-T25 (actions.ts, actions.test.ts), the bot/systems/economy.ts canAfford fix (in flight). Blocks: CS-I06 (actions.ts), CS-PQ07b (create-unit.ts), CS-PM05b (bot economy.ts).
+
+### CS-PQ04 Townhall builds target `townhallCenter` (SENIOR)
+- Decision: PQ4 (a). Source: PUB-05. Supersedes CN-B04's acceptance criterion (the code already returns centres from getExpansionLocations).
+- Senior because: the tracker matches build targets against cell-keyed state by distance (error-44 blocked set keyed by `townhallPosition`, CS-PM16's pending-spot skip, retargetTownhall, `isExpansionBlocked`). Moving targets to the centre shifts every comparison by ~0.71, and a threshold that stops matching silently re-picks a blocked spot or sends a second townhall to a pending one. It also changes the point SC2 receives for every townhall build.
+- What to build:
+  - Every townhall build core issues targets `expansion.townhallCenter` (CS-PM07): `agent.expandNow` when it picks the spot (a caller's `location` is used as given), `expansionController`, builder-plugin's townhall branch, and the tracker's retarget. The townhall `placement.canPlace(type, at)` checks use the same point.
+  - `townhallPosition` stays the floored cell and is documented as "grid cell". State keyed by it (placement bases, intel, the blocked set) stays cell-keyed; every comparison between a build target and a cell key goes through one helper in utils/map/townhall.ts.
+  - `map.getExpansionLocations()` already returns centres (unchanged).
+- Acceptance criteria:
+  - [ ] Tests: expandNow, expansionController and a build-order townhall step each send BUILD at (x + 0.5, y + 0.5) of the chosen expansion.
+  - [ ] The blocked set (error 44), the pending-spot skip and retarget still match a centre-targeted build to its expansion: existing buildings.test.ts cases pass, plus one case per path with a centre target.
+  - [ ] grep: no core townhall build issued with `townhallPosition`.
+  - [ ] Live: one game where the bot expands at least twice, townhalls placed (EX-T07-style smoke), if SC2 is available; otherwise say so in the task.
+  - [ ] Gate passes; docs (map.md: townhallPosition is the grid cell, builds use townhallCenter; macro.md); changelog.
+- Implementation plan:
+  - Where: agent/macro.ts (expandNow), behaviors/macro/structures.ts (expansionController), systems/builder-plugin.ts (townhall branch), resources/buildings.ts (retarget, nextExpansion, blocked-set matching), utils/map/townhall.ts (match helper), tests next to each. bot/: none (it uses townhallPosition for distances and keys only).
+  - Follow: `isBlocked` and the expansion-match distance in resources/buildings.ts.
+  - Don't touch: placement/intel keys.
+- Stack: backend. SENIOR. Blocked by: CS-PM07 (townhallCenter; types.ts chain), CS-PQ06a (getNextExpansion returns Expansion). Blocks: CS-PM08.
+
+### CS-PQ05 Command calls are synchronous
+- Decision: PQ5. Source: PUB-20.
+- What to build:
+  - Members that only queue commands become synchronous and return `void`: actions.do/smart/move/patrol/attack/attackMove/swapBuildings/gather/mine/build/buildGasMine/train/upgrade/warpIn/stop/holdPosition/repair/returnResource; Unit.useAbility/inject/blink/burrow/toggle. Check each body: anything that awaits a client request stays async (findPlacement, canPlace, sendQuery, sendAction, chatSend, toggleAutocast, surrender, flushQueuedActions, unloadByTag, Unit.fetchAvailableAbilities, map.queryPathing).
+  - `agent.train` (number), `agent.research`/`upgrade` (boolean) and `agent.expandNow` (`TrackedBuild | undefined`, CS-PQ01b) become synchronous with the same values.
+  - Refusals throw synchronously.
+  - `agent.getNextExpansion` stays async as the answer lists it. OQ-D: since R2-T13 it no longer queries the server.
+  - Migration: drop `await` on these calls in core, examples and bot/. `Promise.all(xs.map((x) => actions.train(...)))` becomes a loop (bot/systems/economy.ts svc, bot/systems/military/training.ts:16). Today every element is attempted even when one rejects; a sync throw would stop the map at the first refusal. So the bot loops keep attempting the remaining units (pre-check or per-call try/catch, matching today's behaviour).
+- Acceptance criteria:
+  - [ ] Types: no Promise return on the listed members; check-types green across core, examples and bot/.
+  - [ ] Tests: a refusal throws synchronously (`expect(() => actions.build(...)).toThrow(BuildError)`); a queued command is flushed in the same step as before.
+  - [ ] grep: no `await` on a listed call in core, examples or bot/.
+  - [ ] bot/ loops over several producers still issue to every producer when one refuses (test or reasoning in the task, pointing at the line).
+  - [ ] Gate passes; docs/commands.md (sync vs async table); changelog (breaking: `.catch` on the result no longer works).
+- Implementation plan:
+  - Where: types.ts (ActionManager, Unit, Agent), resources/actions.ts, engine/create-unit.ts, agent/macro.ts; callers: grep `await .*\b(actions|agent)\.(…)` and Unit command calls in behaviors/, systems/builder-plugin.ts, resources/, examples/, bot/systems/** (~17 sites).
+  - Follow: `buildings.build`, `ctx.order` (already sync).
+- Stack: backend. Junior. Blocked by: CS-PQ06a (types.ts chain), CS-PQ01b (actions.ts, agent/macro.ts), CS-PQ02a and CS-PQ07b (create-unit.ts). Blocks: CS-PQ07a, CS-PM06.
+
+### CS-PQ06a One expansion shape
+- Decision: PQ6 (a). Source: PUB-15.
+- What to build:
+  - `agent.ownedExpansions()` and the `OwnedExpansion` type are removed; `map.getOccupiedExpansions()` covers them.
+  - `agent.getNextExpansion(): Promise<Expansion | undefined>` (still async, see OQ-D) and `buildings.getNextExpansion(opts?): Expansion | undefined` return the Expansion.
+  - Coordinates don't change in this ticket: callers that used the returned cell use `expansion.townhallPosition`. CS-PQ04 then moves townhall builds to the centre.
+  - `isExpansionBlocked(pos)` keeps taking a point.
+- Acceptance criteria:
+  - [ ] Types as above; grep: no `OwnedExpansion` or `ownedExpansions`.
+  - [ ] Tests (agent/expansion.test.ts, resources/buildings.test.ts) assert the returned Expansion is the same spot as before; expandNow, expansionController and the builder-plugin townhall branch build at the same point as before (tests unchanged).
+  - [ ] Gate passes; docs (agents.md, macro.md); changelog.
+- Implementation plan:
+  - Where: types.ts (Agent, BuildingTracker, OwnedExpansion), agent/macro.ts, resources/buildings.ts, behaviors/macro/structures.ts (expansionController), systems/builder-plugin.ts (townhall branch), index.ts if it exports OwnedExpansion, tests (agent/macro.test.ts, agent/expansion.test.ts, resources/buildings.test.ts, behaviors/macro/structures.test.ts). bot/ 0, examples 0.
+- Stack: backend. Junior. Blocked by: CS-PQ01b (types.ts chain; agent/macro.ts), CS-PM05a (buildings.ts canAfford callers). Blocks: CS-PQ04, CS-PQ05.
+
+### CS-PQ06b One event per occurrence
+- Decision: PQ6 (b). Source: PUB-16.
+- What to build:
+  - Drop `unitDamaged` (keep `unitTookDamage`, which carries the amount; both fire under the same condition today).
+  - Drop `buildingConstructionStarted`/`buildingConstructionComplete`, keep `structureConstructionStarted`/`structureConstructionComplete`.
+  - `unitCreated` and `unitSpawned` both stay; docs state their filters.
+  - Before deleting, compare the two branches in systems/unit.ts: the new-unit branch writes building* for new own structures, and the existing-unit branch writes buildingConstructionComplete on finish (check its alliance filter: it may also fire for enemy structures, which structure* never does). Every own-structure case building* covered must fire structure*. A case only building* covered (for example enemy completions) either moves to structure* or is named in the changelog as dropped.
+  - bot/: bot/systems/log.ts:41, :44 → `onStructureConstructionStarted` / `onStructureConstructionComplete`. examples/: grep `onBuildingConstruction|onUnitDamaged`.
+- Acceptance criteria:
+  - [ ] Tests (systems/unit.test.ts): one structureConstructionStarted and one structureConstructionComplete per own structure lifecycle (placed → finished, and appearing finished); none of the dropped names is written; own damage writes unitTookDamage once.
+  - [ ] SystemObject has no onUnitDamaged / onBuildingConstruction*; bot/ and examples compile.
+  - [ ] Gate passes; docs (events table); changelog (which handler to move to, and any dropped case).
+- Implementation plan:
+  - Where: types.ts (SystemObject handlers), systems/unit.ts, systems/unit.test.ts, bot/systems/log.ts, examples/ grep hits, docs.
+  - Don't touch: resources/event-channel.ts.
+- Stack: backend. Junior. Blocked by: R2-T34 (systems/unit.ts, systems/unit.test.ts; dirty now), CS-PM18a (types.ts chain). Blocks: CS-PQ07b (types.ts chain), R2-T37 (systems/unit.ts).
+
+### CS-PQ07a `canAfford` doesn't settle; `agent.settleEarmark`
+- Decision: PQ7 (a). Source: PUB-14.
+- What to build:
+  - `agent.canAfford(type, { earmark, count, supply })` and `canAffordUpgrade(id, { earmark })` (shapes from CS-PM05a) are pure. `earmark` still names the earmark left out of the reserved totals (today's arithmetic); nothing is settled.
+  - New `agent.settleEarmark(name: string): void` settles (delegates to `data.settleEarmark`).
+  - Callers that relied on the settle call it where canAfford returned true: systems/builder-plugin.ts `settle` helper (`agent.canAfford(task.id, earmarkOf(task))`, :734 at audit); bot/systems/military/production.ts:53-55 (when `canAfford(unitType, { earmark: 'production' })` is true, `agent.settleEarmark('production')` before building, today's behaviour). Grep the rest at start (audit: no other caller passes a name).
+- Acceptance criteria:
+  - [ ] Test: canAfford with an earmark name returns the same boolean as before and leaves `data.get('earmarks')` unchanged; settleEarmark removes it.
+  - [ ] builder-plugin earmark tests (BG-T01, BG-AM, CN-B02 cases) pass unchanged.
+  - [ ] grep: no core or bot/ caller relies on canAfford to settle.
+  - [ ] Gate passes; docs/macro.md earmarks; changelog.
+- Implementation plan:
+  - Where: types.ts (Agent), agent/create-agent.ts, systems/builder-plugin.ts, bot/systems/military/production.ts, agent/create-agent.test.ts, systems/builder-plugin.test.ts, docs.
+  - Follow: macro.ts `affordable` (the existing non-settling internal check).
+- Stack: backend. Junior. Blocked by: CS-PQ05 (types.ts chain; builder-plugin.ts), CS-PM05a (canAfford shape), CS-PQ09 (earmark semantics first).
+
+### CS-PQ07b One rule for Unit activity predicates
+- Decision: PQ7 (b). Source: PUB-18, PUB-19 (moved from CS-PM08).
+- What to build:
+  - Every `Unit.is<Activity>()` checks the first order through `isUsingAbility` (remap-aware): `isHolding`, `isReturning` and `isGathering` move to it; the first-order ones are unchanged.
+  - New `Unit.hasOrder(abilityIds: number | number[]): boolean`: any order, remap-aware like isUsingAbility.
+  - `Unit.isConstructing()` → `hasBuildOrder()` (any order: the `has` prefix means any order) and new `Unit.isUnderConstruction()` (`buildProgress < 1`), moved from CS-PM08.
+  - Units `gathering`/`returning`/`collecting` give the same answer as `isGathering`/`isReturning`/`isCollecting` per unit; MULE gather counts as gathering everywhere.
+  - Core callers that need any order today move to `hasOrder`/`hasBuildOrder`, so their behaviour doesn't change (audit: resources/actions.ts 1, resources/mining.ts 3, utils/workers/select-builder.ts 2; check each).
+  - bot/: bot/systems/combat/micro/basic.ts:16, :63 (isAttacking, isMoving) are already first-order; compile only.
+- Acceptance criteria:
+  - [ ] Tests: a worker with [move, gather] orders: `isGathering()` false, `hasOrder(gather)` true; with [gather] both true; a MULE gathering is `isGathering()` and in `Units#gathering`; on a fixture the Units getters equal the per-unit methods.
+  - [ ] Existing mining, speed-mining and builder tests pass unchanged.
+  - [ ] Gate passes; docs/units.md (predicate rule); changelog.
+- Implementation plan:
+  - Where: types.ts (Unit), engine/create-unit.ts, resources/units-collection.ts, constants/groups.ts (if the MULE id joins a shared list), callers above, engine/create-unit.test.ts, resources/units-collection.test.ts.
+  - Follow: `isUsingAbility` (create-unit.ts).
+- Stack: backend. Junior. Blocked by: CS-PQ06b (types.ts chain), CS-PQ01a (units-collection.ts; it follows R2-T33 on mining.ts), CS-I06 (actions.ts), CS-PQ02a (create-unit.ts). Blocks: CS-PM05a (types.ts chain), CS-PM05b, CS-PM05c, CS-PQ05.
+
+### CS-PQ07c `getAll` and `getByTag` drop dead own units
+- Decision: PQ7 (c). Source: PUB-26.
+- What to build:
+  - Own units that die leave the units store in the loop they're labelled dead (systems/frame.ts:109-110, as enemy units already do), so `units.getAll()` and `getByTag()` no longer return them.
+  - The `dead` label stays on the Unit object for holders of a reference (unitDestroyed handlers, roles/mining/buildings/flying state).
+  - Readers that look a unit up and check `labels.has('dead')` already handle `undefined`. Remove a dead check only where it becomes unreachable. Any core handler that looks a destroyed unit up by tag uses the event's unit instead.
+- Acceptance criteria:
+  - [ ] Test: an own unit killed in a fixture: unitDestroyed fires with the unit, `getByTag(tag)` is undefined, `getAll()` excludes it, and the Unit object has 'dead'.
+  - [ ] Each reader releases the unit as before (existing tests plus one per reader where none exists): resources/{roles,mining,buildings,flying,placement}.ts, resources/map.ts occupied/available expansions, engine/create-expansion.ts alliance.
+  - [ ] Gate passes; docs/units.md; changelog.
+- Implementation plan:
+  - Where: systems/frame.ts, resources/units.ts (store helper if needed), the readers above, tests.
+  - Follow: the enemy branch at systems/frame.ts:110.
+- Stack: backend. Junior. Blocked by: CS-PQ07b (mining.ts, docs/units.md), R2-T15 (placement.ts), R2-T34 ✓ (units.ts); not alongside R2-T35 (mining.ts, placement.ts, map.ts). Changed per lead decision 2026-10-28: off the types.ts chain (no types.ts change); runs before CS-PM05b and PM08 on units.ts. Blocks: CS-PM05b (units.ts), CS-PM09 (systems/frame.ts).
+
+### CS-PQ09 Re-added earmarks take the new amount; `getUnitTypeData` is raw
+- Decisions: PQ9 (a) latest wins; PQ6 (c). Source: PUB-13; data-storage.ts.
+- What to build:
+  - `data.addEarmark` with an existing name replaces that earmark's amounts (debug line on change). Core per-step re-adds of the same cost behave the same (systems/builder-plugin.ts, resources/buildings.ts).
+  - `data.getUnitTypeData(id)` returns the raw API data (no Zerg-structure −50); `data.mineralCost(id)` follows. The net cost lives only in `agent.calculateCost` (agent/create-agent.ts `unitCost` already subtracts the drone itself). `Unit.data()` becomes raw too.
+- Acceptance criteria:
+  - [ ] Tests: addEarmark('x', 100 minerals) then ('x', 150) → totals 150; the same amount twice → one earmark; `getUnitTypeData(HATCHERY).mineralCost` equals the raw value; `agent.calculateCost(HATCHERY)` unchanged.
+  - [ ] grep the cost readers of getUnitTypeData / mineralCost / `.data()`, and list in the task every number that changes. At audit only behaviors/combat/spells.ts:177 (an enemy Zerg structure's value, +50); changelog line, no edit there.
+  - [ ] Gate passes; docs (macro.md earmarks, units.md data readers); changelog.
+- Implementation plan:
+  - Where: engine/data-storage.ts, engine/data-storage.test.ts, docs/macro.md, docs/units.md, docs/changelog.md.
+  - Don't touch: agent/create-agent.ts, behaviors/combat/spells.ts (R2-T33).
+- Stack: backend. Junior. Blocked by: None. The docs edits wait for whoever holds docs/ now (dirty at snapshot 3); the lead hands docs over. Blocks: CS-PQ07a.
+
+### CS-PQ10d Build-task options that take a unit type: `nearType`, `targetType`
+- Decision: PQ10 (d).
+- What to build: build-task `opts.near` → `nearType` and the ability task's `opts.target` → `targetType` (BuildTaskI opts). The builder-plugin readers, the task functions and the string-step parser (which fills the field) follow. The string-step grammar is unchanged.
+- Acceptance criteria:
+  - [ ] grep: no `opts.near`/`opts.target` on build tasks; parse tests produce `nearType`/`targetType`; builder-plugin behaviour unchanged (existing tests).
+  - [ ] Gate passes; docs/build-orders.md; changelog.
+- Implementation plan: Where: types.ts (BuildTaskI), systems/builder-plugin.ts (near/target readers), utils/build-order/parse.ts (+ test), utils/build-order task functions, examples/ (build-runner openings if they set either). Don't touch: `opts.at` (a BuildTarget, unchanged).
+- Stack: backend. Junior. Blocked by: CS-PM08 (types.ts chain), CS-PQ07c, R2-T28 (parse.ts, targets.ts), CS-PQ04 (builder-plugin.ts). Blocks: CS-PM09 (types.ts chain).
+
+## Questions for the user (CS-PQ, answered 2026-10-28; texts kept for reference)
 
 "yes" accepts the recommendation. Blast counts: bot / examples / core non-test lines (approximate; audits/cs-public.md).
 
@@ -918,6 +1204,12 @@ Rules for every CS-PM ticket:
 - Recommend (a): the duplication is the main defect class (DOC-13–27) and one copy already drifted (DOC-05).
 
 ## Further notes
+
+Open points from ticketing the PQ answers (2026-10-28). Each ticket carries the recommendation, marked with its OQ id; the user confirms or overrides through the lead before that ticket starts:
+- OQ-A (PQ1 edges, CS-PQ01a/b): empty `closestDistanceTo`/`furthestDistanceTo` return `Infinity`/`-Infinity`; `Units.byTag` removed (`findByTag` stays); `map.closestPathable` returns undefined instead of throwing; `data.getUnitTypeData` keeps throwing on an unknown id (CS-PM03's call stands).
+- OQ-B (PQ2 (b), CS-PM05b): "every typed getter defaults to SELF" is applied to getters of player units only. `getMineralFields`/`getGasGeysers` keep their all-alliance default: the units are neutral, so SELF would return nothing. `getAll`/`getAlive`/`withLabel` aren't typed getters and are unchanged.
+- OQ-C (PQ2 (a), CS-PQ02a): gather still forces `queue: true` for a worker with the `command` label, and warns only on an explicit `queue: false`.
+- OQ-D (PQ5/PQ6 (a)): `agent.getNextExpansion` stays async as answered, but since R2-T13 it no longer queries the server. Recommend making it sync in CS-PQ05; that needs a yes.
 
 - R2-T04 lead decisions (2026-10-28): `BuildOptions.checkSafe` was removed, and retargets use getNextExpansion's default `checkSafe: true` (design C6 / ares). This dropped the former PQ2(d). RQ10 DEV-1 (blocked-spot clearing) stays implemented while it waits for the user. No CS ticket depends on the RQ10 answer: CS-PM16 changes only which spots count as taken by pending builds, not how blocked spots clear (resources/buildings.ts `clearBlocked`).
 
